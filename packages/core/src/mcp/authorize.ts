@@ -8,6 +8,7 @@ import { auth } from "@ai-sdk/mcp";
 import { isHttpServer, type McpServerConfig } from "./config";
 import { clearMcpAuth, oauthClientOptions, readMcpAuth, restoreMcpAuth, McpOAuthProvider } from "./oauth";
 import { startCallbackServer } from "../auth/oauth-callback";
+import { McpUnsupportedServerError, unsupportedRemoteServer } from "./providers";
 
 const LOGIN_TIMEOUT_MS = 180_000;
 
@@ -117,40 +118,31 @@ async function runAuth<T>(fn: () => Promise<T>, usedDynamicRegistration: boolean
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (usedDynamicRegistration && /\b(403|forbidden|registration|invalid oauth error response)\b/i.test(msg)) {
+            const unsupported = unsupportedRemoteServer(serverUrl);
+            // Nothing here can be configured into working, so the answer IS the
+            // message: no HTTP status, no JSON parse error from four layers
+            // down, and no stack — those turn an answer back into a crash.
+            if (unsupported) throw new McpUnsupportedServerError(unsupported);
             throw new Error(`${msg}\n\n${registrationAdvice(serverUrl)}`);
         }
         throw err;
     }
 }
 
-/** Providers whose registration endpoint is an allow-list, not a sign-up form. */
-const ALLOWLISTED_PROVIDERS: Array<{ host: RegExp; note: string }> = [
-    {
-        host: /(^|\.)figma\.com$/i,
-        note:
-            "Figma's remote MCP server only accepts OAuth clients in the Figma MCP Catalog — its registration " +
-            "endpoint matches on client name and refuses everything else, and personal access tokens are not " +
-            "accepted either. Creating your own OAuth app will not help: the `mcp:connect` scope is not offered " +
-            "to self-serve apps. Use Figma's local Dev Mode server instead — open a design file in the Figma " +
-            "desktop app, switch to Dev Mode, enable the desktop MCP server, and add " +
-            "`http://127.0.0.1:3845/mcp` as an http server with no auth.",
-    },
-];
-
-/** Exported for tests and for any UI that wants to explain a refused login. */
+/**
+ * What to tell someone whose registration was refused.
+ *
+ * Two situations look identical at the HTTP layer and the difference decides
+ * whether they have a move at all: a provider that wants an OAuth app
+ * registered first, and one that allow-lists which products may connect. Only
+ * the first is worth a trip to a developer console.
+ */
 export function registrationAdvice(serverUrl: string): string {
-    let host = "";
-    try {
-        host = new URL(serverUrl).hostname;
-    } catch {
-        // A malformed URL can't match a provider; fall through to generic advice.
-    }
-    const known = ALLOWLISTED_PROVIDERS.find((p) => p.host.test(host));
-    if (known) return known.note;
     return (
+        unsupportedRemoteServer(serverUrl) ??
         `This server blocks automatic OAuth client registration. Register an OAuth app with the provider, ` +
-        `then add "clientId" (and "clientSecret" for confidential clients) to the server entry in ` +
-        `~/${CONFIG_DIR_NAME}/settings.json.`
+            `then add "clientId" (and "clientSecret" for confidential clients) to the server entry in ` +
+            `~/${CONFIG_DIR_NAME}/settings.json.`
     );
 }
 

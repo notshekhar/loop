@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.6] - 2026-09-08
+
+### Fixed
+
+- **A remote MCP server that will never issue loop credentials is refused when you add it, not after you try to sign in.** Figma's remote server (`https://mcp.figma.com/mcp`) only accepts clients in the Figma MCP Catalog: its registration endpoint matches on client name and answers 403 to every other, which no local configuration reaches. loop nevertheless reported the server as added, wrote it to `settings.json`, and told you to run a sign-in that could not succeed — leaving a row that looks like configuration and behaves like a fault. Adding one now fails with the reason, writes nothing, and names what does work: Figma's local Dev Mode server at `http://127.0.0.1:3845/mcp`, which needs no auth at all (a Dev or Full seat; View and Collab seats are capped at six tool calls a month). Signing in to an entry added by an older loop gets the same answer before a browser opens. The `mcp:connect` scope is not available to self-serve OAuth apps and personal access tokens are not accepted either, so `clientId` — loop's usual advice for a server that blocks automatic registration — is not offered here, because for this one it cannot help.
+- **That explanation is now the whole of the error.** It arrived wrapped in the SDK's own report of the failure — an HTTP status around a JSON parse error, because the 403 body is the word `Forbidden` and not JSON — followed by a stack trace. The answer was in there, in the middle, reading like a crash in loop rather than a fact about Figma. Refusals of this kind print as one message, no status, no parse error, no stack, in the CLI and in `/mcp` alike.
+
 ## [0.20.5] - 2026-09-08
 
 ### Fixed

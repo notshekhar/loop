@@ -9,11 +9,14 @@ import {
     hasStoredTokens,
     isGlobalServer,
     isOAuthServer,
+    isHttpServer,
     isMcpEnabled,
     isServerEnabled,
+    McpUnsupportedServerError,
     isTrusted,
     loadMcpServers,
     setServerEnabled,
+    unsupportedRemoteServer,
     type CommandContext,
     type McpServerConfig,
     type ServerSnapshot,
@@ -62,6 +65,17 @@ export function createMcpHandlers(state: AppState, deps: AppDeps): McpHandlers {
 
         const cfg = transport.value === "stdio" ? await promptStdioConfig() : await promptHttpConfig(transport.value);
         if (!cfg) return;
+
+        // Refused before it is written: an entry that can never authenticate
+        // looks like configuration and behaves like a fault.
+        if (isHttpServer(cfg)) {
+            const unsupported = unsupportedRemoteServer(cfg.url);
+            if (unsupported) {
+                history.addError(unsupported);
+                tui.requestRender();
+                return;
+            }
+        }
 
         history.addSystem(`adding ${name}…`);
         tui.requestRender();
@@ -234,7 +248,14 @@ export function createMcpHandlers(state: AppState, deps: AppDeps): McpHandlers {
             await getMcpManager().authorize(name, (url) => openBrowser(url), config);
             history.addSystem(`${name} authorized and connected.`);
         } catch (err) {
-            history.addError(`authorization failed for ${name}: ${err instanceof Error ? err.message : String(err)}`);
+            // A server that cannot issue loop credentials has already said
+            // everything worth reading; prefixing it with "authorization
+            // failed" only buries the part that names the way forward.
+            if (err instanceof McpUnsupportedServerError) history.addError(err.message);
+            else
+                history.addError(
+                    `authorization failed for ${name}: ${err instanceof Error ? err.message : String(err)}`,
+                );
         }
         tui.requestRender();
     }

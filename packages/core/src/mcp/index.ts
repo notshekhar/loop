@@ -21,7 +21,8 @@ export {
     type StdioServerConfig,
     type HttpServerConfig,
 } from "./config";
-export { authorizeServer } from "./authorize";
+export { authorizeServer, registrationAdvice } from "./authorize";
+export { McpUnsupportedServerError, unsupportedRemoteServer } from "./providers";
 export { namespacedToolName, serverPrefix } from "./client";
 export { hasStoredTokens, clearMcpAuth, isOAuthServer } from "./oauth";
 export { McpManager, getMcpManager, type ServerState, type ServerSnapshot, type ServerStatus } from "./manager";

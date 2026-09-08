@@ -12,10 +12,12 @@ import {
     getProjectServers,
     isHttpServer,
     loadMcpServers,
+    McpUnsupportedServerError,
     projectServersPath,
     redactServerConfig,
     removeProjectServer,
     removeServer,
+    unsupportedRemoteServer,
     setProjectServerEnabled,
     setServerEnabled,
     type McpServerConfig,
@@ -43,8 +45,22 @@ function allServers(cwd: string): Array<{ name: string; cfg: McpServerConfig; sc
     return out;
 }
 
+/**
+ * Stop before writing an entry that can never authenticate.
+ *
+ * "Added" followed by a sign-in that is refused every time is worse than a
+ * refusal: it leaves a row in settings.json that looks like configuration and
+ * behaves like a fault, and sends the user off to debug their own setup.
+ */
+function refuseUnsupported(cfg: McpServerConfig): void {
+    if (!isHttpServer(cfg)) return;
+    const reason = unsupportedRemoteServer(cfg.url);
+    if (reason) throw new McpUnsupportedServerError(reason);
+}
+
 function cmdAdd(args: string[]): void {
     const { name, cfg, scope } = buildAddConfig(args);
+    refuseUnsupported(cfg);
     const cwd = process.cwd();
     const merged = loadMcpServers(cwd);
     if (merged[name]) {
@@ -120,6 +136,9 @@ async function cmdLogin(args: string[]): Promise<void> {
     const cfg = loadMcpServers(process.cwd())[name];
     if (!cfg) throw new McpUsageError(`no MCP server named "${name}"`);
     if (!isHttpServer(cfg)) throw new McpUsageError(`"${name}" is a stdio server — OAuth only applies to http/sse`);
+    // A server already in settings.json (added by an older loop, or by hand)
+    // still gets the answer before a browser opens on a doomed consent screen.
+    refuseUnsupported(cfg);
     console.log(`Authorizing "${name}"…`);
     await authorizeServer(name, cfg, (url) => {
         console.log(`\nOpening your browser to:\n  ${url}\n`);
@@ -141,6 +160,7 @@ function cmdAddJson(args: string[]): void {
         throw new McpUsageError(`invalid JSON: ${(err as Error).message}`);
     }
     if (!cfg || typeof cfg !== "object") throw new McpUsageError("JSON must be a server config object");
+    refuseUnsupported(cfg);
     const looksHttp = "url" in cfg;
     const looksStdio = "command" in cfg;
     if (!looksHttp && !looksStdio) throw new McpUsageError('config needs either "url" (http/sse) or "command" (stdio)');
@@ -229,7 +249,8 @@ export async function cmdMcp(argv: string[]): Promise<void> {
                 process.exitCode = 1;
         }
     } catch (err) {
-        if (err instanceof McpUsageError) {
+        // Both are answers rather than crashes: print the message, no stack.
+        if (err instanceof McpUsageError || err instanceof McpUnsupportedServerError) {
             console.error(`error: ${err.message}`);
             process.exitCode = 1;
             return;

@@ -27,7 +27,9 @@ import {
     isOAuthServer,
     isServerEnabled,
     loadMcpServers,
+    McpUnsupportedServerError,
     projectServersPath,
+    unsupportedRemoteServer,
     type McpServerConfig,
     type ServerStatus,
 } from "../mcp";
@@ -185,6 +187,10 @@ export function parseServerConfig(input: unknown): McpServerConfig {
         if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
             throw new Error(`an http/sse server needs an http:// or https:// url, not ${parsed.protocol}//`);
         }
+        // A server that will never issue loop credentials is refused here
+        // rather than written down and left to fail at every login.
+        const unsupported = unsupportedRemoteServer(url);
+        if (unsupported) throw new McpUnsupportedServerError(unsupported);
         const headers = stringMap(raw.headers, "headers");
         const scopes = Array.isArray(raw.scopes) ? raw.scopes.map(String) : undefined;
         return {
