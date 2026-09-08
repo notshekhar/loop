@@ -20,6 +20,7 @@ import {
 import { bulletColor, RAIL_WIDTH, railForState, withRail, type RailSpec } from "./rail";
 import { fgHex, type ThemeBg, type ThemeColor } from "./theme";
 import { highlightToolSummary, readGutterPrefixes, readLineRangeText, taskPromptSnippet } from "./tool-summary";
+import { fitAroundTail, fitRow } from "./fit";
 import {
     registerUiMode,
     uiStyle,
@@ -276,16 +277,6 @@ export function setNoirSystem(scheme: "dark" | "light", canvas?: string): boolea
     return true;
 }
 
-/** One-line rows must never exceed the terminal width — an overflowing line
- * trips the TUI's crash guard and kills the whole UI (a long bash command in
- * a tool header did exactly that). Truncate with an ellipsis, grok-style. */
-function fitRow(line: string, width: number): string {
-    // `truncateToWidth` appends an ellipsis of its own ("..." by default), so
-    // it has to be told not to — otherwise every clipped row ends "...…", one
-    // ellipsis from each of us.
-    return visibleWidth(line) > width ? truncateToWidth(line, Math.max(0, width - 1), "") + "…" : line;
-}
-
 /**
  * A theme slot's hex, for the uses that need a real colour to blend rather
  * than an SGR escape (the rail's wave, the bullet's pulse).
@@ -440,10 +431,9 @@ export function renderTool(state: ToolBlockState, ctx: RenderCtx): string[] | nu
     // the default box shows it (dim here, since noir's details are dim). Modes
     // only get `summary`, which is the path alone, so without this an offset
     // read is indistinguishable from a whole-file one.
-    if (state.toolName === "read") {
-        const range = readLineRangeText(state.args);
-        if (range) detail += th.fg("dim", range);
-    }
+    // The range rides the TAIL, not the detail: it says which lines were read,
+    // so a path long enough to need clipping must not take it down with it.
+    const tail = state.toolName === "read" ? th.fg("dim", readLineRangeText(state.args)) : "";
     if (isTask) {
         // `task <agent> · <live status | done · stats> · <prompt snippet>` —
         // the same identity line the default box shows, as a grok row.
@@ -482,9 +472,12 @@ export function renderTool(state: ToolBlockState, ctx: RenderCtx): string[] | nu
               ? th.fg("dim", " · interrupted")
               : ""
         : "";
-    const header = fitRow(diamond + " " + th.fg(titleColor, th.bold(name)) + detail + status, width);
+    // The name and diamond are fixed, the status is the tail that must survive,
+    // and the detail in between is what gets clipped when the row is too long.
+    const head = diamond + " " + th.fg(titleColor, th.bold(name));
+    const buildHeader = (extraTail = ""): string => fitAroundTail(head, detail, tail + status + extraTail, width);
 
-    const lines = [header];
+    const lines = [buildHeader()];
     // `└ 580 lines` — the gutter mark separates what came back from the call
     // itself, so one glance reads the row and the next reads the result. A
     // failure colours it: a red diamond with no text anywhere is precisely the
@@ -518,7 +511,10 @@ export function renderTool(state: ToolBlockState, ctx: RenderCtx): string[] | nu
 
     const expandHint = (): void => {
         if (hintOnPeek) return;
-        lines[0] = fitRow(lines[0] + th.fg("dim", ` (${uiStyle().hints.selectedExpandHint} to expand)`), width);
+        // Rebuilt rather than appended to: appending to a line that has already
+        // been fitted cuts it a second time, so the hint arrived only to push
+        // the status it was sitting beside off the end.
+        lines[0] = buildHeader(th.fg("dim", ` (${uiStyle().hints.selectedExpandHint} to expand)`));
     };
 
     // Subagent body: the live activity tail while running; the full run log
@@ -668,8 +664,13 @@ export function renderToolGroup(state: ToolGroupState, ctx: RenderCtx): string[]
     const failed = anyFailed ? th.fg("toolError", ` · ${state.failed} failed`) : "";
     const hint = state.selected ? th.fg("dim", ` (${uiStyle().hints.selectedExpandHint} to open)`) : "";
     const label = th.fg(state.selected ? "text" : "muted", state.label);
-    const lines = [fitRow(th.fg("muted", "◈") + " " + label + failed + hint, width)];
+    const lines = [fitAroundTail(th.fg("muted", "◈") + " ", label, failed + hint, width)];
     const toolCol = mixed ? Math.min(12, Math.max(...state.members.map((m) => m.toolName.length))) : 0;
+    // What the tool column actually costs the row: the name plus its separator.
+    // `avail` used to subtract only the name, so a mixed run built rows two
+    // columns too wide and the fit chopped two characters off the RECEIPT —
+    // the one part of the row that must never be the thing that gives way.
+    const toolWidth = toolCol ? toolCol + 2 : 0;
     const receiptCol = Math.max(0, ...state.members.map((m) => visibleWidth(m.receipt)));
 
     /**
@@ -688,7 +689,7 @@ export function renderToolGroup(state: ToolGroupState, ctx: RenderCtx): string[]
      */
     const GAP = 2;
     const longest = Math.max(...state.members.map((m) => visibleWidth(m.summary)));
-    const avail = width - 2 - toolCol - GAP - receiptCol;
+    const avail = width - 2 - toolWidth - GAP - receiptCol;
     const summaryCol = Math.max(8, Math.min(longest, avail));
 
     /** `text`, padded to `w` columns — by VISIBLE width, since an extension's
@@ -707,14 +708,14 @@ export function renderToolGroup(state: ToolGroupState, ctx: RenderCtx): string[]
         // the odd one out — the failure, the empty result, the huge file —
         // which is exactly what a fold is supposed to leave you able to do.
         const receipt = " ".repeat(Math.max(0, receiptCol - visibleWidth(m.receipt))) + m.receipt;
-        const row =
-            th.fg("dim", last ? "└ " : "├ ") +
-            (tool ? th.fg("dim", tool) : "") +
-            painted +
-            " ".repeat(Math.max(0, summaryCol - visibleWidth(summary))) +
-            " ".repeat(GAP) +
-            th.fg(m.isError ? "toolError" : "dim", receipt);
-        lines.push(fitRow(row, width));
+        lines.push(
+            fitAroundTail(
+                th.fg("dim", last ? "└ " : "├ ") + (tool ? th.fg("dim", tool) : ""),
+                painted + " ".repeat(Math.max(0, summaryCol - visibleWidth(summary))),
+                " ".repeat(GAP) + th.fg(m.isError ? "toolError" : "dim", receipt),
+                width,
+            ),
+        );
     });
 
     return ["", ...withRail(lines, spec, bg)];

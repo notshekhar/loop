@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.5] - 2026-09-08
+
+### Fixed
+
+- **A tool row cuts its content, never its verdict.** A row ends in the thing you most need from it — a running call's `· running`, a folded member's `2121 bytes`, a read's `:120-179` — and fitting a row to the terminal cut its END, so the verdict was the first thing lost and an ellipsis sat exactly where it had been. A call still going read as one that had stopped mid-word. Now the fixed parts are reserved and the summary between them gives way, which is the part there is always more of. Two things went wrong here at once: the status was pushed off single rows once commands were allowed their real length in 0.20.4, and a folded run of MIXED tools had always built its rows two columns too wide, because the space reserved for the tool column counted the tool's name but not the separator after it — the two characters the fit then removed came off the receipt, so `ok · 1 line` arrived as `ok · 1 l…`. The expand hint no longer shortens the row it is added to, either: it was appended to a line that had already been fitted, so it cut a second time.
+- **A long tool title in the default mode wrapped instead of clipping.** Its title is an ordinary text child, and text wraps — so once 0.20.4 let a summary run to its real length, one call became a two-line title. It is one line again, cut to the width, and it is re-cut when the terminal is resized: the box was rebuilt only when the call's state changed, so the first width it was drawn at was the only one it was ever fitted to.
+
 ## [0.20.4] - 2026-09-08
 
 ### Added

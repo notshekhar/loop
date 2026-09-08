@@ -17,6 +17,7 @@ import {
 import { formatToolReceipt, toolPeek, type ToolPeek } from "./tool-receipt";
 import { uiRenderers, uiStyle, type ToolGroupMember } from "./ui-mode";
 import { markSelectedLines } from "./messages";
+import { fitAroundTail } from "./fit";
 import { foldsEagerly, isPlanSurface } from "./verb-group";
 /** Live-streaming preview cap in EXPANDED mode. Highlighting runs on every
  * flush while input streams — unbounded, a large file made a single frame
@@ -61,6 +62,8 @@ export class ToolExecutionComponent extends Container {
     private taskStats?: TaskStatsLike;
     /** Highlighted by the block-selection navigation (ctrl+up/down). */
     private selected = false;
+    /** Width the box was last built for — a change re-cuts the title. */
+    private boxWidth = -1;
     /** First call of a consecutive tool group (see ToolBlockState.groupLead). */
     private groupLead = true;
     /** The turn was aborted while this call was still running. */
@@ -285,16 +288,20 @@ export class ToolExecutionComponent extends Container {
             );
             if (lines) return lines;
         }
-        if (this.boxDirty) {
-            this.rebuildBox();
+        // Width is part of what the box is built FROM, not just how it is
+        // drawn: the title has to be cut to fit, and a Text child wraps rather
+        // than clipping — which turned one long call into a two-line title.
+        if (this.boxDirty || this.boxWidth !== width) {
+            this.rebuildBox(width);
             this.boxDirty = false;
+            this.boxWidth = width;
         }
         return super.render(width);
     }
 
     /** (Re)build the default box's children from current state. Called lazily
      * from render — never eagerly on state changes (see boxDirty). */
-    private rebuildBox(): void {
+    private rebuildBox(width: number): void {
         // Subagents (task tool) keep the purple custom-message background as
         // their identity — pending and done alike; errors still go red.
         const isTask = this.toolName === "task";
@@ -308,7 +315,9 @@ export class ToolExecutionComponent extends Container {
                     : (text: string) => theme.bg("toolSuccessBg", text),
         );
         this.box.clear();
-        this.box.addChild(new Text(this.titleLine(), 0, 0));
+        // Box pads by one column on each side (see Box.render), so that is the
+        // room the title actually has.
+        this.box.addChild(new Text(this.titleLine(Math.max(1, width - 2)), 0, 0));
 
         // sql: render the query as a highlighted SQL block instead of leaving it
         // as a raw JSON arg blob.
@@ -371,8 +380,9 @@ export class ToolExecutionComponent extends Container {
         return "toolTitle";
     }
 
-    /** `toolname summary` — bold name, muted single-line arg summary. */
-    private titleLine(): string {
+    /** `toolname summary` — bold name, muted single-line arg summary, cut to
+     * `width` so it stays ONE line however long the summary is. */
+    private titleLine(width: number): string {
         // Subagent header: `task <agent> · <state> · <prompt snippet>` where
         // state is the live tool while running, then done/failed.
         if (this.toolName === "task") {
@@ -387,7 +397,7 @@ export class ToolExecutionComponent extends Container {
             const title =
                 (bullet ? theme.fg(this.titleColor(), `${bullet} `) : "") +
                 theme.fg(this.titleColor(), theme.bold(`task ${agent}`));
-            return `${title} ${theme.fg("muted", snippet ? `${state} · ${snippet}` : state)}`;
+            return fitAroundTail(`${title} `, theme.fg("muted", snippet ? `${state} · ${snippet}` : state), "", width);
         }
         const bullet = uiStyle().tool.bullet;
         const title =
@@ -395,6 +405,8 @@ export class ToolExecutionComponent extends Container {
             theme.fg(this.titleColor(), theme.bold(this.toolName));
         const summary = this.argsSummary();
         if (!summary) return title;
+        // The range is a tail: it says WHICH lines were read, so it must not be
+        // the part that disappears when the path is long.
         // `read` appends its offset/limit as a warning-colored `:start-end`
         // suffix; the range sits outside the muted wrap so it
         // keeps its own color.
@@ -402,7 +414,7 @@ export class ToolExecutionComponent extends Container {
         // bash's summary is a shell command; colour it as one. Every other
         // tool's is a path or a pattern, which reads fine as a muted run.
         const shown = highlightToolSummary(this.toolName, summary) ?? theme.fg("muted", summary);
-        return `${title} ${shown}${range}`;
+        return fitAroundTail(`${title} `, shown, range, width);
     }
 
     /** `12 steps · 41s · $0.0430` fragments — only what the run recorded. */
