@@ -74,6 +74,8 @@ export {
 } from "./keys";
 // LaTeX rendering
 export { type RenderLatexOptions, renderLatex } from "./latex";
+// Mermaid diagram rendering
+export { type MermaidStyle, type RenderMermaidOptions, renderMermaid } from "./mermaid";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer";
 // Terminal interface and implementations

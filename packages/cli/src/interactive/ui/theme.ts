@@ -563,6 +563,15 @@ export function getMarkdownTheme(): MarkdownTheme {
         underline: (text) => theme.underline(text),
         strikethrough: (text) => chalk.strikethrough(text),
         highlightCode: (code, lang) => highlightCode(code, lang),
+        diagram: {
+            // Structure recedes, prose reads at normal weight: a diagram whose
+            // boxes shout louder than their labels is harder to follow, not easier.
+            border: (text) => theme.fg("mdCodeBlockBorder", text),
+            edge: (text) => theme.fg("mdCodeBlockBorder", text),
+            label: (text) => theme.fg("mdCodeBlock", text),
+            accent: (text) => theme.fg("mdHeading", text),
+            muted: (text) => theme.fg("muted", text),
+        },
     };
 }
 

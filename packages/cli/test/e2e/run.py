@@ -26,6 +26,9 @@ import sys
 import os
 import tempfile
 import subprocess
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -968,7 +971,88 @@ loop.cmd.register({ name = "full", description = "full screen test",
         )
 
 
+def test_recipes():
+    """Recipes are discovered live; their input prompts can be cancelled cleanly."""
+    with Session(settings=NOIR) as s:
+        directory = os.path.join(s.home, ".loop", "recipes")
+        os.makedirs(directory, exist_ok=True)
+        path = os.path.join(directory, "endpoint.md")
+        with open(path, "w") as fh:
+            fh.write("# Endpoint workflow\n\nCreate {{resource}} and run the endpoint tests.\n")
+        s.pump(7)
+        s.send("/recipe list\r", settle=1.5)
+        check(any("/recipe endpoint" in r for r in s.screen_rows()), "recipe file is listed", s.screen_rows())
+        s.send("/recipe show endpoint\r", settle=1.5)
+        check(any("Endpoint workflow" in r for r in s.screen_rows()), "recipe Markdown is visible", s.screen_rows())
+        s.send("/recipe endpoint\r", settle=1.5)
+        check(any("resource (blank/Esc cancels)" in r for r in s.screen_rows()), "missing input opens a prompt", s.screen_rows())
+        s.send("\x1b", settle=1.0)
+        check(any("Recipe cancelled" in r for r in s.screen_rows()), "Esc cancels without running", s.screen_rows())
+        s.send("/recipe\r", settle=1.5)
+        check(any("choose a workflow" in r for r in s.screen_rows()), "recipe picker opens after cancellation", s.screen_rows())
+        s.send("\x1b", settle=1.0)
+        s.send("/recipe rm endpoint\r", settle=1.0)
+        s.send("\r", settle=1.0)
+        check(os.path.exists(path), "delete defaults to keeping the recipe")
+
+
+def test_handoff():
+    """A local model fixture drives extraction, review and the destination pickers."""
+    class Model(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            payload = json.dumps({
+                "id": "msg_fixture", "type": "message", "role": "assistant", "model": "fixture",
+                "content": [{"type": "text", "text": "## Objective\nFix endpoint validation.\n\n## Next steps\nRun the regression tests."}],
+                "stop_reason": "end_turn", "stop_sequence": None,
+                "usage": {"input_tokens": 20, "output_tokens": 15},
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Model)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        settings = json.dumps({"uiMode": "noir", "defaultModel": "custom:fixture/fixture"})
+        with Session(settings=settings, env_extra={"LOOP_SKIP_VERSION_CHECK": "1"}) as s:
+            with open(os.path.join(s.home, ".loop", "auth.json"), "w") as fh:
+                json.dump({"active": "custom:fixture", "customProviders": {"fixture": {
+                    "name": "fixture", "sdk": "anthropic", "baseURL": f"http://127.0.0.1:{server.server_port}/v1",
+                    "apiKey": "fixture", "auth": {"kind": "apikey", "apiKey": "fixture"},
+                    "models": [{"id": "fixture", "contextWindow": 100000, "maxOutput": 4096}],
+                }}}, fh)
+            transcript = os.path.join(s.home, "source.jsonl")
+            with open(transcript, "w") as fh:
+                fh.write(json.dumps({"type": "message", "role": "user", "content": "Fix endpoint validation; tests remain to run.", "ts": 1}) + "\n")
+            s.pump(7)
+            s.send(f"/import {transcript}\r", settle=1.5)
+            s.send("/handoff validation\r", settle=3.0)
+            check(any("Review handoff" in r for r in s.screen_rows()), "generated brief reaches the review menu", s.screen_rows())
+            s.send("\r", settle=1.5)
+            check(any("Handoff model" in r for r in s.screen_rows()), "destination model picker opens", s.screen_rows())
+            s.send("\r", settle=1.0)
+            check(any("Handoff agent" in r for r in s.screen_rows()), "destination agent picker opens", s.screen_rows())
+            s.send("\r", settle=1.5)
+            rows = s.screen_rows()
+            check(any("Handoff opened:" in r for r in rows), "fresh session opens", rows)
+            check(any("Original session:" in r for r in rows), "source session reference is visible", rows)
+            check(any("Ready for your next prompt" in r for r in rows), "opening waits for the user's next prompt", rows)
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=2)
+
+
 SCENARIOS = {
+    "handoff": test_handoff,
+    "recipes": test_recipes,
     "boot": test_boot,
     "growth": test_no_duplicates_while_growing,
     "completion": test_completion_list_costs_nothing,

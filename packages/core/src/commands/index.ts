@@ -93,6 +93,10 @@ export interface CommandContext {
     /** /trace — write the session's timing-and-cost trace as HTML and open
      * it in the browser (or at `path` when given). */
     openTrace(path?: string): Promise<void> | void;
+    /** /recipe — extract, edit and run reusable workflows with named inputs. */
+    manageRecipes(args: string): Promise<void>;
+    /** /handoff [focus] — reviewed brief into a fresh session, model and agent. */
+    manageHandoff(args: string): Promise<void>;
 }
 
 /** /init — runs as a normal agent turn via the "run-prompt" emit. */
@@ -532,6 +536,16 @@ export async function registerBuiltins(reg: CommandRegistry, opts: { cwd?: strin
             handler: async (ctx, args) => {
                 await ctx.openTrace(args.trim() || undefined);
             },
+        },
+        {
+            name: "recipe",
+            description: "Reusable workflows: save <name> [focus], list, show/edit/rm <name>, or <name> [inputs]",
+            handler: (ctx, args) => ctx.manageRecipes(args.trim()),
+        },
+        {
+            name: "handoff",
+            description: "Continue in a fresh session with an editable brief and model/agent choice (optional focus)",
+            handler: (ctx, args) => ctx.manageHandoff(args.trim()),
         },
         { name: "quit", description: "Quit loop-agent", handler: (ctx) => ctx.exit() },
         { name: "exit", description: "Alias for /quit", handler: (ctx) => ctx.exit() },

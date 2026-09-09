@@ -31,7 +31,9 @@ export type LedgerSource =
     // Auto-generated commit messages. Sessionless — the desktop app's commit
     // dialog asks for one directly, so these rows carry a cwd but no
     // sessionPub, unlike every source above.
-    | "commit-message";
+    | "commit-message"
+    | "recipe"
+    | "handoff";
 
 export interface LedgerContext {
     source: LedgerSource;

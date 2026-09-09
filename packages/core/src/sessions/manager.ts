@@ -111,6 +111,37 @@ export class SessionManager {
         return session;
     }
 
+    /** A fresh context with a reviewed brief, linked to its source. Persist
+     * the whole destination atomically; never copy or mutate source entries. */
+    createHandoff(source: Session, opts: NewSessionOptions & { brief: string }): Session {
+        if (!opts.brief.trim()) throw new Error("A handoff brief cannot be empty.");
+        const info: SessionInfoData = {
+            id: ulid(),
+            createdAt: Date.now(),
+            cwd: opts.cwd,
+            provider: opts.provider,
+            model: opts.model,
+            parentSession: source.path,
+        };
+        const name = `Handoff: ${source.getName() || source.id.slice(0, 12)}`.slice(0, 100);
+        const messageId = generateEntryId((id) => id === info.id);
+        const nameId = generateEntryId((id) => id === info.id || id === messageId);
+        const entries: Entry[] = [
+            { type: "session-info", ts: info.createdAt, ...info, parentId: null },
+            {
+                type: "message",
+                role: "user",
+                content: opts.brief,
+                ts: info.createdAt,
+                id: messageId,
+                parentId: info.id,
+            },
+            { type: "session-name", name, ts: info.createdAt, id: nameId, parentId: messageId },
+        ];
+        getSessionStore().insertSessionWithEntries(info, entries);
+        return new Session(info, transcriptPath(info.cwd, info.id), entries);
+    }
+
     /**
      * Delete a session outright. Returns false when there was no such id.
      *

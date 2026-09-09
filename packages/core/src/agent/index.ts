@@ -115,6 +115,7 @@ export {
     type AgentInfo,
 } from "./agents";
 export { DEFAULT_BASE_PROMPT } from "./system-prompt";
+export { generateHandoff, handoffGitStatus, handoffMessage } from "./handoff";
 export { subagentArgSummary, formatSubagentActivity, type SubagentOutput } from "./subagent";
 export { extractImagesFromInput, filterAttachmentsByModalities, type ExtractedImages } from "./images";
 export { asTurnEmitter, TURN_EVENT_NAMES, type TurnEmitter, type TurnEvents } from "./events";

@@ -1,5 +1,6 @@
 import { Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens } from "marked";
 import { renderLatex } from "../latex";
+import { type MermaidStyle, renderMermaid } from "../mermaid";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image";
 import type { Component } from "../tui";
 import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils";
@@ -256,6 +257,8 @@ export interface MarkdownTheme {
     highlightCode?: (code: string, lang?: string) => string[];
     /** Prefix applied to each rendered code block line (default: "  ") */
     codeBlockIndent?: string;
+    /** Colours for rendered diagrams; anything omitted is left unstyled. */
+    diagram?: Partial<MermaidStyle>;
 }
 
 export interface MarkdownOptions {
@@ -267,6 +270,8 @@ export interface MarkdownOptions {
     transform?: (markdown: string, availableWidth: number) => string;
     /** Render supported LaTeX math expressions as Unicode text (default: true). */
     renderLatex?: boolean;
+    /** Draw ```mermaid blocks as diagrams (default: true). */
+    renderMermaid?: boolean;
 }
 
 interface InlineStyleContext {
@@ -300,6 +305,8 @@ export class Markdown implements Component {
      * in the render budget.
      */
     private stable?: { width: number; src: string; lines: string[] };
+    /** Laid-out diagrams, keyed by width and source — see renderDiagram. */
+    private diagrams = new Map<string, { lines: string[] | undefined }>();
 
     constructor(
         text: string,
@@ -347,6 +354,7 @@ export class Markdown implements Component {
         this.cachedWidth = undefined;
         this.cachedLines = undefined;
         this.stable = undefined;
+        this.diagrams.clear();
     }
 
     render(width: number): string[] {
@@ -480,6 +488,41 @@ export class Markdown implements Component {
      * NOTE: Background color is NOT applied here - it's applied at the padding stage
      * to ensure it extends to the full line width.
      */
+    /**
+     * A ```mermaid block, drawn — including while it is still arriving, so a
+     * diagram grows in like every other block instead of sitting as source and
+     * popping at the end.
+     *
+     * Only whole lines are laid out. A half-written `A[Requ` parses as a bare
+     * node, so the box would flicker through its own label a character at a
+     * time; waiting for the newline costs one line of latency and removes that
+     * entirely. Layout is memoised on the source, so the deltas that arrive
+     * mid-line cost nothing.
+     */
+    private renderDiagram(token: Tokens.Code, width: number): string[] | undefined {
+        if (this.options.renderMermaid === false) return undefined;
+        if ((token.lang ?? "").trim().split(/\s+/)[0] !== "mermaid") return undefined;
+
+        const fence = /^ {0,3}(`{3,}|~{3,})/.exec(token.raw)?.[1];
+        const closed = !fence || new RegExp(`\n {0,3}${fence[0]}{${fence.length},}[ \t]*\n?$`).test(token.raw);
+        let source = token.text;
+        if (!closed) {
+            const settled = source.lastIndexOf("\n");
+            if (settled <= 0) return undefined;
+            source = source.slice(0, settled);
+        }
+
+        const available = width - visibleWidth(this.theme.codeBlockIndent ?? "  ");
+        const key = `${available}\u0000${source}`;
+        const memo = this.diagrams.get(key);
+        if (memo !== undefined) return memo.lines;
+        const lines = renderMermaid(source, { width: available, style: this.theme.diagram });
+        // A growing block would otherwise keep every frame it passed through.
+        if (this.diagrams.size >= 8) this.diagrams.clear();
+        this.diagrams.set(key, { lines });
+        return lines;
+    }
+
     private applyDefaultStyle(text: string): string {
         if (!this.defaultTextStyle) {
             return text;
@@ -625,6 +668,12 @@ export class Markdown implements Component {
 
             case "code": {
                 const indent = this.theme.codeBlockIndent ?? "  ";
+                const diagram = this.renderDiagram(token as Tokens.Code, width);
+                if (diagram) {
+                    for (const diagramLine of diagram) lines.push(`${indent}${diagramLine}`);
+                    if (nextTokenType && nextTokenType !== "space") lines.push("");
+                    break;
+                }
                 lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
                 if (this.theme.highlightCode) {
                     const highlightedLines = this.theme.highlightCode(token.text, token.lang);

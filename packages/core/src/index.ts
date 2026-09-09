@@ -20,6 +20,7 @@ export {
 export * from "./catalog";
 export * from "./sessions";
 export * from "./trace";
+export * from "./recipes";
 export * from "./tools";
 export * from "./artifacts";
 export * from "./agent";

@@ -22,6 +22,8 @@ export interface DocEntry {
 
 /** One-line descriptions for the `loop://docs` index, keyed by filename. */
 const SUMMARIES: Record<string, string> = {
+    "handoff.md": "Continue the current task in a fresh session with /handoff: reviewed brief, source link, model and agent selection.",
+    "recipes.md": "Save a session as a reusable /recipe workflow, edit its Markdown, and run it with named or positional inputs.",
     "config.md": `Configure ${PRODUCT_NAME} by editing its JSON/markdown config yourself: add models, custom providers, datasources (database connections for the sql tool), hooks, MCP servers, and custom agents.`,
     "permissions.md": `How ${PRODUCT_NAME} decides whether a tool call runs: allow/ask/deny rule syntax and evaluation order, bash guardrails, per-project grants, the sandbox, and plan mode.`,
     "extensions.md": `Write a ${PRODUCT_NAME} extension (Bun/TS): add or override slash commands, tools, providers + models, agents, skills, settings, the system prompt, and the turn loop.`,

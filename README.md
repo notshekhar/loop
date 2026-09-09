@@ -127,6 +127,24 @@ Existing flat sessions migrate automatically on first open.
 - The **plan agent delivers plans as a deliverable**: when its plan is final it calls the `plan` tool, which ends the turn and renders the full plan as markdown. You then choose **implement it** (pick an agent — the plan is handed over as a one-shot) or **talk about it** (keep refining with the plan agent).
 - The `task` tool spawns a **subagent**: a fork of the current agent (same prompt, same tools minus `task`, fresh context). Activity streams live in the task box; only the final report enters the main context. Toggle via `/settings → subagents`.
 
+### Recipes
+
+Turn a completed session into a reusable workflow with `/recipe save <name>`. Loop asks what should vary, extracts the steps and verification with your current model, and shows an editable draft before saving.
+
+```text
+/recipe save add-endpoint
+/recipe add-endpoint resource=users route=/api/users
+/recipe
+```
+
+Recipes are editable Markdown files under `~/.loop/recipes/`, with inputs such as `{{resource}}`. Missing inputs are prompted for. Running a recipe uses the current session, workspace, model and agent permissions. `/recipe` opens the picker; `list`, `show`, `edit` and `rm` manage saved workflows. See [the recipe guide](packages/core/src/docs/recipes.md).
+
+### Handoff
+
+Use `/handoff` (or `/handoff <focus>`) to continue the current task in a fresh session. Loop drafts an editable brief with the objective, decisions, changed files, verification and remaining work. Pick a destination model and agent, then open the session ready for your next prompt or choose **open and continue** to start immediately.
+
+The brief is saved with a link to the original session. Your workspace stays in place, and the original conversation remains available. See [the handoff guide](packages/core/src/docs/handoff.md).
+
 ### Goals
 
 A **goal** is a background task tied to a directory. `/goal <text>` parses natural language with your current model — schedule words and agent mentions included — then confirms before acting:
@@ -188,6 +206,10 @@ Mapped per provider: Anthropic budget tokens, OpenAI/xAI/OpenRouter reasoning ef
 ### Vision
 
 Paste image (Cmd+V / Ctrl+V), `/attach <path>`, or `Ctrl+I` for the file picker.
+
+### Diagrams
+
+` ```mermaid ` blocks are drawn in the terminal — flowcharts (`flowchart`/`graph`, all four directions) and sequence diagrams, as box drawing rather than source. They render while the reply streams, a line at a time, and fall back to the fenced source for a diagram type that isn't supported or won't fit the width. LaTeX in `$…$` and `$$…$$` is rendered as Unicode math the same way.
 
 ### Skills, prompts, workspace context
 

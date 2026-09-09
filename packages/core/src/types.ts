@@ -203,7 +203,7 @@ export interface SessionInfoData {
     cwd: string;
     provider: ProviderId;
     model: string;
-    /** Path of the session file this one was forked from. */
+    /** Canonical transcript address of the source of a fork or handoff. */
     parentSession?: string;
 }
 
