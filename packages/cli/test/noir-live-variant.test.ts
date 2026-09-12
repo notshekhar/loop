@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import type { TUI } from "@notshekhar/loop-tui";
+import { truncateToWidth, visibleWidth } from "@notshekhar/loop-tui";
 
 process.env.COLORTERM = "truecolor";
 
@@ -7,6 +8,7 @@ import { registerNoirMode } from "../src/interactive/ui/noir-mode";
 import { setActiveUiMode, setLiveVariant, uiStyle } from "../src/interactive/ui/ui-mode";
 import { initTheme, theme } from "../src/interactive/ui/theme";
 import { ChatHistory } from "../src/interactive/components/chat-history";
+import { highlightToolSummary } from "../src/interactive/ui/tool-summary";
 
 beforeAll(() => {
     registerNoirMode();
@@ -79,6 +81,33 @@ describe("noir's live variant", () => {
 });
 
 describe("live verb groups", () => {
+    test("folded bash rows clip the highlighted command without changing its colors", () => {
+        liveOn();
+        for (const args of [
+            { command: "echo x; if true; then echo yes; fi" },
+            { command: "sleep 1", run_in_background: true },
+        ]) {
+            const h = new ChatHistory(tui, "/repo");
+            h.addToolCall("bash", "a", args);
+            h.addToolResult("a", "ok");
+            const summary = args.command + (args.run_in_background ? " (background)" : "");
+            const painted = highlightToolSummary("bash", summary)!;
+            for (const selected of [false, true]) {
+                if (selected) h.selectLast();
+                for (let width = 28; width <= 60; width++) {
+                    const row = h.render(width).find((line) => strip(line).includes("└ "))!;
+                    const plain = strip(row);
+                    const shown = plain.slice(plain.indexOf("└ ") + 2).split("  ")[0];
+                    const expected = shown.endsWith("…")
+                        ? truncateToWidth(painted, visibleWidth(shown) - 1, "") + "…"
+                        : painted;
+                    expect(row).toContain(expected);
+                    expect(visibleWidth(row)).toBeLessThanOrEqual(width);
+                }
+            }
+        }
+    });
+
     test("a run of finished tool rows folds into a header over its members", () => {
         liveOn();
         const out = text(withReads(3));
@@ -229,10 +258,7 @@ describe("live verb groups", () => {
             h.addToolCall("read", `c${i}`, { path: `/repo/${p}` });
             h.addToolResult(`c${i}`, "x");
         }
-        const out = h
-            .render(38)
-            .map(strip)
-            .join("\n");
+        const out = h.render(38).map(strip).join("\n");
         // clipped at all, but the two files are still told apart
         expect(out).toContain("…");
         expect(out).toContain("alpha.ts");
@@ -246,10 +272,7 @@ describe("live verb groups", () => {
         h.addToolResult("a", "x");
         h.addToolCall("bash", "b", { command: "bun run typecheck --project packages/cli" });
         h.addToolResult("b", "x");
-        const out = h
-            .render(38)
-            .map(strip)
-            .join("\n");
+        const out = h.render(38).map(strip).join("\n");
         expect(out).toContain("bun test");
         expect(out).toContain("bun run typecheck");
     });

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.8] - 2026-09-12
+
+### Fixed
+
+- **Bash commands keep their syntax colors when Noir Live folds and shortens them.** Clipping added an ANSI reset before highlighting, which made the highlighter treat the whole command as already styled and leave it gray. Commands are now highlighted before clipping, so keywords and background labels also keep their colors at the edge of a narrow row.
+- **Shell highlighting follows complete words.** Quoted or expanded environment values no longer prevent the following command from being colored. Escaped spaces and separators stay literal, redirection targets are not mistaken for commands, and newlines end comments and start commands unless escaped.
+
 ## [0.20.7] - 2026-09-10
 
 ### Added

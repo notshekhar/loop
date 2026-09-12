@@ -23,7 +23,7 @@ import { theme, type Theme } from "./theme";
 type Slot = Parameters<Theme["fg"]>[0];
 
 /** Words that put the parser back at the head of a command. */
-const COMMAND_BREAK = new Set(["|", "||", "&&", ";", "&", "(", ")", "{", "}", "|&", ";;"]);
+const COMMAND_BREAK = new Set(["|", "||", "&&", ";", "&", "(", ")", "{", "}", "|&", ";;", ";&", ";;&"]);
 
 /**
  * Shell keywords — grammar rather than programs, so they take the keyword slot
@@ -60,7 +60,8 @@ const BINDS_VARIABLE = new Set(["for", "select"]);
 const TAKES_SUBJECT = new Set(["case"]);
 
 /** Operators worth their own colour, longest first so `&&` beats `&`. */
-const OPERATORS = ["&&", "||", ">>", "<<", "2>&1", "|&", ";;", "|", ";", "&", ">", "<", "(", ")"];
+const OPERATORS = ["&&", "||", "|&", ";;&", ";;", ";&", "|", ";", "&", "(", ")"];
+const REDIRECTION = /^(?:\d+)?(?:<<<|<<-|>>|<<|>&|<&|<>|>\||>|<)|^&>>?/;
 
 interface Cursor {
     readonly text: string;
@@ -111,14 +112,25 @@ function readVariable(cur: Cursor): string {
     return cur.text.slice(start, cur.index);
 }
 
-/** Read one bare word: everything up to whitespace or a character with meaning. */
-function readWord(cur: Cursor): string {
-    const start = cur.index;
-    while (cur.index < cur.text.length && !/[\s'"`$|;&<>()]/.test(cur.text[cur.index])) cur.index++;
-    // A word that touched nothing is still a word — never return "" or the
-    // caller loops forever on a character none of the readers claimed.
-    if (cur.index === start) cur.index++;
-    return cur.text.slice(start, cur.index);
+/** Quotes and expansions are parts of a word, not separate arguments. */
+function readWord(cur: Cursor): { text: string; slot?: Slot }[] {
+    const parts: { text: string; slot?: Slot }[] = [];
+    while (cur.index < cur.text.length && !/[\s|;&<>()]/.test(cur.text[cur.index])) {
+        const ch = cur.text[cur.index];
+        if (ch === "'" || ch === '"' || ch === "`") {
+            parts.push({ text: readQuoted(cur, ch), slot: "syntaxString" });
+        } else if (ch === "$") {
+            parts.push({ text: readVariable(cur), slot: "syntaxVariable" });
+        } else {
+            const start = cur.index;
+            do {
+                // An escaped separator, space or quote is literal word content.
+                cur.index += cur.text[cur.index] === "\\" ? Math.min(2, cur.text.length - cur.index) : 1;
+            } while (cur.index < cur.text.length && !/[\s'"`$|;&<>()]/.test(cur.text[cur.index]));
+            parts.push({ text: cur.text.slice(start, cur.index) });
+        }
+    }
+    return parts;
 }
 
 /**
@@ -138,6 +150,7 @@ export function highlightShellCommand(command: string, base: Slot = "muted"): st
     let bindingVariable = false;
     // ...and the `in` after that name is the keyword, not an argument.
     let expectingIn = false;
+    let redirectTarget = false;
     const paint = (slot: Slot, text: string): void => {
         out += theme.fg(slot, text);
     };
@@ -148,25 +161,36 @@ export function highlightShellCommand(command: string, base: Slot = "muted"): st
         if (/\s/.test(ch)) {
             const start = cur.index;
             while (cur.index < cur.text.length && /\s/.test(cur.text[cur.index])) cur.index++;
-            out += cur.text.slice(start, cur.index);
+            const whitespace = cur.text.slice(start, cur.index);
+            out += whitespace;
+            if (whitespace.includes("\n")) {
+                atCommand = true;
+                bindingVariable = false;
+                expectingIn = false;
+                redirectTarget = false;
+            }
             continue;
         }
 
         // A `#` that opens a word is a comment to end of line.
-        if (ch === "#" && (cur.index === 0 || /\s/.test(cur.text[cur.index - 1]))) {
-            paint("syntaxComment", cur.text.slice(cur.index));
-            break;
-        }
-
-        if (ch === "'" || ch === '"' || ch === "`") {
-            paint("syntaxString", readQuoted(cur, ch));
-            atCommand = false;
+        if (ch === "#") {
+            const end = cur.text.indexOf("\n", cur.index);
+            paint("syntaxComment", cur.text.slice(cur.index, end < 0 ? cur.text.length : end));
+            cur.index = end < 0 ? cur.text.length : end;
             continue;
         }
 
-        if (ch === "$") {
-            paint("syntaxVariable", readVariable(cur));
-            atCommand = false;
+        if (startsWith(cur, "\\\n")) {
+            out += "\\\n";
+            cur.index += 2;
+            continue;
+        }
+
+        const redirect = cur.text.slice(cur.index).match(REDIRECTION)?.[0];
+        if (redirect) {
+            cur.index += redirect.length;
+            paint("syntaxOperator", redirect);
+            redirectTarget = true;
             continue;
         }
 
@@ -179,43 +203,47 @@ export function highlightShellCommand(command: string, base: Slot = "muted"): st
                 atCommand = true;
                 bindingVariable = false;
                 expectingIn = false;
+                redirectTarget = false;
             }
             continue;
         }
 
-        const word = readWord(cur);
-        if (bindingVariable) {
+        const parts = readWord(cur);
+        const word = parts.map((part) => part.text).join("");
+        let slot: Slot = base;
+        if (redirectTarget) {
+            redirectTarget = false;
+        } else if (bindingVariable) {
             // `for f` — the loop's own name, which is a variable and not a
             // program however much it sits where one would.
-            paint("syntaxVariable", word);
+            slot = "syntaxVariable";
             bindingVariable = false;
             expectingIn = true;
             atCommand = false;
         } else if (expectingIn && word === "in") {
-            paint("syntaxKeyword", word);
+            slot = "syntaxKeyword";
             expectingIn = false;
             atCommand = false; // what follows a loop's `in` is values
         } else if (atCommand && KEYWORDS.has(word)) {
-            paint("syntaxKeyword", word);
+            slot = "syntaxKeyword";
             bindingVariable = BINDS_VARIABLE.has(word);
             atCommand = !bindingVariable && !TAKES_SUBJECT.has(word);
         } else if (atCommand) {
             // The program being run. An assignment prefix (`FOO=bar cmd`) is
             // not the program, so the next word still gets the slot.
-            if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) paint("syntaxVariable", word);
+            if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) slot = "syntaxVariable";
             else {
-                paint("syntaxFunction", word);
+                slot = "syntaxFunction";
                 atCommand = false;
             }
         } else if (word.startsWith("-")) {
             // Flags recede rather than shout: in a long command they are the
             // part you skim past to find the paths and the pipeline.
-            paint("dim", word);
+            slot = "dim";
         } else if (/^-?\d+(\.\d+)?$/.test(word)) {
-            paint("syntaxNumber", word);
-        } else {
-            paint(base, word);
+            slot = "syntaxNumber";
         }
+        for (const part of parts) paint(part.slot ?? slot, part.text);
     }
     return out;
 }

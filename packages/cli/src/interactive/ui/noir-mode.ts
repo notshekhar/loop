@@ -700,10 +700,14 @@ export function renderToolGroup(state: ToolGroupState, ctx: RenderCtx): string[]
         const last = i === state.members.length - 1;
         const color = m.isError ? "toolError" : "muted";
         const tool = toolCol ? padTo(m.toolName, toolCol) + "  " : "";
-        // Clipped BEFORE colouring: the column is measured in visible columns
-        // and clipping coloured text has to walk escapes to find them.
-        const summary = clipSummary(m.summary, summaryCol, m.toolName);
-        const painted = highlightToolSummary(m.toolName, summary, color) ?? th.fg(color, summary);
+        // Highlight the original command before clipping: truncateToWidth adds
+        // an ANSI reset even to plain text, which makes highlightToolSummary
+        // treat a clipped command as already styled and skip all its colors.
+        // Parsing the original also keeps cut keywords and background labels
+        // in the same colors as the expanded row.
+        const highlighted = highlightToolSummary(m.toolName, m.summary, color);
+        const summary = clipSummary(highlighted ?? m.summary, summaryCol, m.toolName);
+        const painted = highlighted === null ? th.fg(color, summary) : summary;
         // Receipts share one right-aligned column: the eye reads down it for
         // the odd one out — the failure, the empty result, the huge file —
         // which is exactly what a fold is supposed to leave you able to do.

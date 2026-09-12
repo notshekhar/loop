@@ -93,6 +93,60 @@ describe("highlightShellCommand", () => {
         expect(painted(out, "syntaxFunction", "npm")).toBe(true);
     });
 
+    test("quoted and expanded assignment values keep the following command highlighted", () => {
+        initTheme("dark");
+        for (const cmd of [`FOO="a b" npm test`, "FOO=$HOME/bin npm test", "FOO=$(pwd) npm test"]) {
+            const out = highlightShellCommand(cmd);
+            expect(strip(out)).toBe(cmd);
+            expect(painted(out, "syntaxFunction", "npm")).toBe(true);
+        }
+    });
+
+    test("all parts of a compound word share its command position", () => {
+        initTheme("dark");
+        for (const cmd of ['"/usr"/bin/git status', "$HOME/bin/git status"]) {
+            const out = highlightShellCommand(cmd);
+            expect(strip(out)).toBe(cmd);
+            expect(painted(out, "syntaxFunction", "/bin/git")).toBe(true);
+            expect(painted(out, "syntaxFunction", "status")).toBe(false);
+        }
+    });
+
+    test("escaped separators and spaces stay inside their word", () => {
+        initTheme("dark");
+        const cmd = String.raw`echo foo\ bar \; done \| grep \# literal`;
+        const out = highlightShellCommand(cmd);
+        expect(strip(out)).toBe(cmd);
+        expect(painted(out, "syntaxOperator", ";")).toBe(false);
+        expect(painted(out, "syntaxOperator", "|")).toBe(false);
+        expect(painted(out, "syntaxKeyword", "done")).toBe(false);
+        expect(painted(out, "syntaxFunction", "grep")).toBe(false);
+        expect(painted(out, "syntaxComment", "#")).toBe(false);
+    });
+
+    test("redirections skip their target without consuming the command position", () => {
+        initTheme("dark");
+        for (const cmd of [">out git status", '2>"error log" git status', "3>&1 git status", "<<<$INPUT git status"]) {
+            const out = highlightShellCommand(cmd);
+            expect(strip(out)).toBe(cmd);
+            expect(painted(out, "syntaxFunction", "git")).toBe(true);
+            expect(painted(out, "syntaxFunction", "out")).toBe(false);
+        }
+        const out = highlightShellCommand("echo ok 2>&1 | grep ok");
+        expect(painted(out, "syntaxOperator", "2>&")).toBe(true);
+        expect(painted(out, "syntaxFunction", "grep")).toBe(true);
+        expect(painted(out, "syntaxFunction", "1")).toBe(false);
+    });
+
+    test("newlines separate commands and end comments, except when escaped", () => {
+        initTheme("dark");
+        const out = highlightShellCommand("echo ok # comment\ngit status");
+        expect(painted(out, "syntaxFunction", "git")).toBe(true);
+        expect(painted(out, "syntaxComment", "# comment\ngit")).toBe(false);
+        const continued = highlightShellCommand("echo \\\n done");
+        expect(painted(continued, "syntaxKeyword", "done")).toBe(false);
+    });
+
     test("colouring never changes the text, only its escapes", () => {
         initTheme("dark");
         for (const cmd of [
@@ -144,6 +198,21 @@ describe("highlightToolSummary", () => {
 describe("the row uses the width it actually has", () => {
     const LONG =
         "find /some/deeply/nested/path -name '*.ts' -not -path node_modules -exec grep -l 'pattern' {} \; | head -50";
+
+    test("bash rows retain command colors after quoted assignments and redirections", () => {
+        for (const mode of ["loop", "noir"]) {
+            setActiveUiMode(mode);
+            initTheme("dark");
+            const command = 'FOO="a b" 2>errors git status | grep modified';
+            const c = new ToolExecutionComponent("bash", { command }, tui, "/repo");
+            c.updateResult({ content: [{ type: "text", text: "ok" }], isError: false }, false);
+            const title = c.render(200).find((line) => strip(line).includes(command))!;
+            expect(title).toBeDefined();
+            expect(painted(title, "syntaxFunction", "git")).toBe(true);
+            expect(painted(title, "syntaxFunction", "grep")).toBe(true);
+            expect(painted(title, "syntaxFunction", "errors")).toBe(false);
+        }
+    });
 
     test("formatToolArgs no longer cuts at 80 — that is the renderer's call", () => {
         expect(LONG.length).toBeGreaterThan(80);
