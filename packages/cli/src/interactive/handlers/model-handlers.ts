@@ -13,6 +13,7 @@ import {
     removeCustomModel,
     setActiveProvider,
     setProjectModel,
+    playCue,
     settingsStore,
     THINKING_LEVEL_DESCRIPTIONS,
     THINKING_LEVELS,
@@ -40,6 +41,8 @@ export function createModelHandlers(state: AppState, deps: AppDeps): ModelHandle
         setProjectModel(state.cwd, id);
         statusLine.setModel(id);
         history.addSystem(`model → ${id}`);
+        // The interaction cue: a setting you flipped, confirmed by ear.
+        playCue("click");
         tui.requestRender();
     };
 

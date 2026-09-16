@@ -376,6 +376,10 @@ jobs:
               with:
                   path: loop
 
+            - uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: 1.4.2
+
             - name: Check out tap repo
               uses: actions/checkout@v4
               with:
@@ -394,7 +398,7 @@ jobs:
             - name: Render Formula/loop.rb
               run: |
                   mkdir -p tap/Formula
-                  python3 loop/.github/scripts/render-formula.py \
+                  bun loop/.github/scripts/render-formula.ts \
                     "${{ needs.prepare.outputs.ver }}" \
                     SHA256SUMS \
                     tap/Formula/loop.rb

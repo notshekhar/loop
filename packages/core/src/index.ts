@@ -34,3 +34,4 @@ export * from "./datasources";
 export * from "./extensions";
 export * from "./telegram";
 export * from "./gateway";
+export * from "./notifications/sound";

@@ -34,6 +34,14 @@ Other notable keys (all managed via `/settings` too):
 - `"webSearch": true` — enables the `websearch` tool, DuckDuckGo search with
   no API key (scrapes the HTML endpoint; unofficial, may rate-limit). Default
   off. Works in print mode too; subagents inherit it.
+- `"sound": "on"` — interface chimes. `off` is silent (bell included), `on`
+  plays a cue when a turn finishes or fails, when the agent is blocked waiting
+  on you, at startup and on a cancel, and `max` adds the incidental ones (the
+  slash menu opening, the input clearing). Defaults to `on` on macOS, the only
+  platform with a player (`afplay`); elsewhere every cue is the terminal bell
+  and it defaults off. `/sound [on|off|max]` flips it live and `LOOP_SOUND`
+  overrides it for one run (`LOOP_SOUND=0` to silence a script). Attention
+  cues always ring the bell as well, so tmux/cmux mark the pane.
 - `"memory": false` — disables agent memory. Default on: the agent saves
   durable per-project facts (preferences, decisions, gotchas) as markdown
   files under `~/{{dir}}/agent/memory/<project>/`, keyed by repo root, and

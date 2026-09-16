@@ -5,6 +5,7 @@ import type { TodoPanel } from "./components/todo-panel";
 import type { AppState } from "./state";
 import type { SubagentStream } from "./subagent-stream";
 import { formatError } from "./format-error";
+import { noteTurnError } from "./sound-reporter";
 import { parsePartialEditInput, parsePartialToolInput } from "./ui/streaming-input";
 import { isPlanSurface } from "./ui/verb-group";
 
@@ -185,6 +186,9 @@ export function wireTurnEmitter(emitter: TurnEmitter, deps: TurnEmitterDeps): vo
     });
     emitter.on("error", (err: unknown) => {
         history.addError(formatError(err));
+        // The turn may still reach `Stop` after a stream error, so the outcome
+        // is remembered rather than chimed here — see sound-reporter.ts.
+        noteTurnError();
         tui.requestRender();
     });
     // Recap generation is detached from the turn — this may fire after busy is

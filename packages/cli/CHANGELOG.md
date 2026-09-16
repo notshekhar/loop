@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.20.9] - 2026-09-16
+
+### Added
+
+- **Interface chimes.** Seven short cues, embedded in the binary, on the things worth hearing about when you have looked away: a turn that finished, a turn that failed, the agent blocked on you, startup, and a cancel. `/sound [on|off|max]` flips it live (bare `/sound` toggles; `max` is only ever explicit and adds the incidental ones — the slash menu opening, the input clearing), `/settings` has a row for it, and `LOOP_SOUND` overrides both for one run. macOS plays real audio through `afplay` and is the only platform where sound is on by default; everywhere else the fallback is the terminal bell, so a cue is never a silent no-op you cannot explain. Attention notifications always ring the bell as well as chiming, because the bell is what tmux and cmux watch for to mark a pane. The turn's outcome resolves to exactly one cue: a stream that dies mid-flight emits an error and then fires `Stop` anyway, so an error seen during the turn is remembered rather than chimed twice. Sounds are derived from cuelume's MIT-licensed recipes by Daniel Belyi — see `THIRD_PARTY_NOTICES.md`.
+
+### Fixed
+
+- **A pty whose child exited on its own leaked a poll timer and a file descriptor.** `kill()` returned early when the process had already gone, and nothing else released them, so every docked terminal whose shell exited by itself held both for the life of the process. Releasing is now separate from exiting and unconditional.
+- **Terminal output no longer corrupts multi-byte characters at a read boundary.** Each read was decoded on its own, so any character straddling a 64 KB read became a replacement character permanently — a lone `\ufffd` in an otherwise perfect line of box drawing. One decoder now spans the stream.
+
 ## [0.20.8] - 2026-09-12
 
 ### Fixed

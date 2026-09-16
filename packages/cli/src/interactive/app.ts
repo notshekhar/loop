@@ -51,6 +51,7 @@ import {
     listShells,
     onShellChange,
     getSetting,
+    playCue,
     PRODUCT_NAME,
     type ThinkingLevel,
     type ProviderId,
@@ -85,6 +86,7 @@ import { createTurnRunner } from "./turn-runner";
 import { createStatusLineRefresher } from "./status-line-refresh";
 import { createWorkingIndicator } from "./working-indicator";
 import { createAgentStatusBus } from "./agent-status";
+import { attachSoundReporter } from "./sound-reporter";
 import { attachCmuxReporter, setCmuxReporter } from "./cmux-reporter";
 import { attachTerminalTitle, defaultTabName } from "./session-title";
 import { attachHerdrReporter } from "./herdr-reporter";
@@ -419,6 +421,8 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         return rows;
     });
 
+    // loop is up and the first frame is about to go out.
+    playCue("bloom");
     showWhatsNew(history, opts.version, Boolean(opts.sessionId));
     // Routes its result to the welcome banner (top), not chat history; safe to
     // kick off before the banner exists — the notice is remembered and applied.
@@ -470,6 +474,10 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         cwd: () => state.cwd,
         disabled: getSetting("notch") === false,
     });
+
+    // Interface chimes on the two things worth hearing: a turn that ended, and
+    // the agent blocked on you. Silent unless `sound` is on (macOS default).
+    const sound = attachSoundReporter(agentStatus, { disabled: getSetting("sound") === "off" });
 
     // cmux integration (inert outside a cmux pane). Unlike herdr's this one
     // does not read the status bus: cmux speaks lifecycle EVENTS, and loop
@@ -837,6 +845,9 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
                 herdr.release(),
                 notch.release(),
                 cmuxReporter.release(),
+                // Synchronous; listed here so every reporter is released in
+                // one place rather than two.
+                Promise.resolve(sound.release()),
             ]),
             new Promise((r) => setTimeout(r, 3_000)),
         ]).finally(() => {

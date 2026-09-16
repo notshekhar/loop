@@ -87,7 +87,7 @@
     },
     "packages/cli": {
       "name": "@notshekhar/loop",
-      "version": "0.20.0",
+      "version": "0.20.8",
       "bin": {
         "loop": "./dist/cli.js",
         "lp": "./dist/cli.js",
@@ -100,10 +100,13 @@
         "croner": "^10.0.1",
         "highlight.js": "^11.11.1",
       },
+      "devDependencies": {
+        "@xterm/headless": "^6.0.0",
+      },
     },
     "packages/core": {
       "name": "@notshekhar/loop-core",
-      "version": "0.20.0",
+      "version": "0.20.8",
       "dependencies": {
         "@ai-sdk/amazon-bedrock": "^5.0.72",
         "@ai-sdk/anthropic": "^4.0.48",
@@ -148,7 +151,7 @@
     },
     "packages/tui": {
       "name": "@notshekhar/loop-tui",
-      "version": "0.20.0",
+      "version": "0.20.8",
       "dependencies": {
         "get-east-asian-width": "^1.6.0",
         "marked": "^18.0.5",
@@ -160,7 +163,7 @@
     },
     "packages/web": {
       "name": "@notshekhar/loop-web",
-      "version": "0.20.0",
+      "version": "0.20.8",
     },
   },
   "trustedDependencies": [

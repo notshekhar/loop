@@ -20,6 +20,7 @@ import {
     isEsc,
     isHome,
     isKeyboardInput,
+    isClearLine,
     isLeft,
     isPageDown,
     isPageUp,
@@ -48,6 +49,8 @@ import {
     isPlanModeActive,
     listAgents,
     PLAN_AGENT_NAME,
+    playCue,
+    playMaxCue,
     setPlanMode,
     settingsStore,
 } from "@notshekhar/loop-core";
@@ -530,6 +533,7 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
         }
         if (isCtrlC(data)) {
             if (state.busy) {
+                playCue("press");
                 state.abort.abort();
                 state.abort = new AbortController();
                 state.busy = false;
@@ -559,12 +563,23 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
         // there Esc must reach the focused component (skip/cancel), not kill
         // the whole turn.
         if (isEsc(data) && state.busy && deps.getSelectorDepth() === 0) {
+            playCue("press");
             state.abort.abort();
             state.abort = new AbortController();
             state.busy = false;
             hideWorking();
             tui.requestRender();
             return { consume: true };
+        }
+
+        // The `max` tier: incidental keyboard feedback, off unless asked for.
+        // Both fire on the KEY, before the editor acts on it, because that is
+        // the only seam the CLI owns — the popup and the line buffer live in
+        // the TUI editor, and this stays out of that fork on purpose.
+        if (editorFocused && deps.getSelectorDepth() === 0) {
+            // A leading `/` on an empty prompt is the slash menu opening.
+            if (data === "/" && editor.getText() === "") playMaxCue("toggle");
+            else if (isClearLine(data) && editor.getText() !== "") playMaxCue("release");
         }
         return undefined;
     };

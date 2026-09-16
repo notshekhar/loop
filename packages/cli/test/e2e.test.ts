@@ -10,7 +10,7 @@ import { describe, expect, test } from "bun:test";
  * changes — they are the only tests that can see the bugs it actually has,
  * because those bugs are all correct frames drawn in the wrong place.
  *
- * `python3 packages/cli/test/e2e/run.py [scenario ...]` runs them directly, and
+ * `bun packages/cli/test/e2e/run.ts [scenario ...]` runs them directly, and
  * prints the screen when something fails.
  */
 const enabled = process.env.LOOP_E2E === "1";
@@ -19,7 +19,7 @@ describe.skipIf(!enabled)("TUI end-to-end screens", () => {
     test(
         "every scenario passes",
         async () => {
-            const proc = Bun.spawn(["python3", `${import.meta.dir}/e2e/run.py`], {
+            const proc = Bun.spawn(["bun", `${import.meta.dir}/e2e/run.ts`], {
                 stdout: "pipe",
                 stderr: "pipe",
                 cwd: `${import.meta.dir}/../../..`,
@@ -34,9 +34,6 @@ describe.skipIf(!enabled)("TUI end-to-end screens", () => {
                 // screen rows that differed.
                 console.log(out);
                 console.log(err);
-            }
-            if (err.includes("ModuleNotFoundError") && err.includes("pyte")) {
-                throw new Error("the screen tests need pyte: python3 -m pip install --user pyte");
             }
             expect(code).toBe(0);
         },

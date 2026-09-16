@@ -1,4 +1,8 @@
 {
     "extends": "../../tsconfig.base.json",
-    "include": ["src/**/*", "../core/src/**/*", "../tui/src/**/*"]
+    // `test/e2e` and not `test`: the screen suite is TypeScript now, and an
+    // unchecked TS file is worse than the Python it replaced — it looks
+    // checked. The rest of `test` is left out only because it carries
+    // pre-existing errors; widening this is a separate cleanup.
+    "include": ["src/**/*", "test/e2e/**/*", "../core/src/**/*", "../tui/src/**/*"]
 }

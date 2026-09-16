@@ -194,6 +194,7 @@ export function spawnPty(options: PtyOptions): Pty {
     const dataFns: ((chunk: string) => void)[] = [];
     const exitFns: ((code: number) => void)[] = [];
     let exited = false;
+    let released = false;
 
     const child = Bun.spawn([options.cmd, ...(options.args ?? [])], {
         cwd: options.cwd,
@@ -202,6 +203,10 @@ export function spawnPty(options: PtyOptions): Pty {
         onExit(_proc, code) {
             if (exited) return;
             exited = true;
+            // The fds are NOT released here: the child's last writes can still
+            // be sitting in the pty buffer unread, and closing the master now
+            // would drop the final frames. Polling continues until the owner
+            // calls kill().
             for (const fn of exitFns) fn(code ?? 0);
         },
     });
@@ -227,6 +232,18 @@ export function spawnPty(options: PtyOptions): Pty {
      */
     const pollFd = new Int32Array(2); // struct pollfd { int fd; short events; short revents; }
     const readBuf = Buffer.alloc(READ_BUFFER_BYTES);
+    /**
+     * One decoder for the whole stream, not one per read.
+     *
+     * A read returns whatever bytes are in the pty buffer, which is a byte
+     * count and not a character boundary — so a multi-byte character straddles
+     * two reads whenever one ends mid-sequence. Decoding each read on its own
+     * turns that character into U+FFFD and loses it permanently; `stream: true`
+     * holds the partial sequence back and finishes it with the next read. The
+     * symptom is a lone replacement character in the middle of an otherwise
+     * perfect line — box drawing and emoji are what usually show it.
+     */
+    const decoder = new TextDecoder("utf-8");
     const pump = setInterval(() => {
         // Drain what is ready, but bounded: a chatty child must not keep the
         // loop here indefinitely and stall rendering.
@@ -236,10 +253,23 @@ export function spawnPty(options: PtyOptions): Pty {
             if (l.poll(ptr(pollFd), 1n, 0) <= 0) break;
             const n = Number(l.read(masterFd, ptr(readBuf), BigInt(READ_BUFFER_BYTES)));
             if (n <= 0) break; // EOF, or EAGAIN on a spurious wakeup
-            const text = readBuf.subarray(0, n).toString("utf8");
+            const text = decoder.decode(readBuf.subarray(0, n), { stream: true });
+            if (!text) continue; // the read ended mid-character; it lands with the next one
             for (const fn of dataFns) fn(text);
         }
     }, READ_INTERVAL_MS);
+
+    /**
+     * Stop polling BEFORE closing the fd: reads are synchronous and only happen
+     * inside the timer, so once it is cleared nothing can touch the descriptor
+     * and closing it is safe. Idempotent — both exit paths lead here.
+     */
+    const release = () => {
+        if (released) return;
+        released = true;
+        clearInterval(pump);
+        l.close(masterFd);
+    };
 
     return {
         write(data: string) {
@@ -260,18 +290,21 @@ export function spawnPty(options: PtyOptions): Pty {
             callIoctl(l, masterFd, TIOCSWINSZ, winsize(r, c));
         },
         kill() {
-            if (exited) return;
-            exited = true;
-            try {
-                child.kill();
-            } catch {
-                // already gone
+            if (!exited) {
+                exited = true;
+                try {
+                    child.kill();
+                } catch {
+                    // already gone
+                }
             }
-            // Stop polling BEFORE closing the fd: reads are synchronous and
-            // only happen inside this timer, so once it is cleared nothing can
-            // touch the descriptor and closing it is safe.
-            clearInterval(pump);
-            l.close(masterFd);
+            // Releasing is separate from exiting, and unconditional, because a
+            // child that ended on its own has already set `exited` — an early
+            // return here left the poll timer running on a closed pty forever,
+            // holding both the interval and the master fd for the life of the
+            // process. Nothing else releases them, so every shell that exited
+            // by itself leaked one of each.
+            release();
         },
         get exited() {
             return exited;

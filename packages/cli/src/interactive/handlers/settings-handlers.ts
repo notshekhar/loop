@@ -16,11 +16,14 @@ import {
     getMcpManager,
     getExtensionHost,
     getProjectBashAllow,
+    playCue,
     PRODUCT_NAME,
     refreshConfigStores,
     registerBuiltins,
     settingsStore,
+    soundLevel,
     type CommandContext,
+    type SoundLevel,
 } from "@notshekhar/loop-core";
 import type { AppDeps } from "../deps";
 import type { AppState } from "../state";
@@ -154,6 +157,12 @@ export function createSettingsHandlers(state: AppState, deps: AppDeps): Settings
                         label: `pinned input: ${boolSetting("pinnedInput") ? "on" : "off"}`,
                         description:
                             "hold the prompt on the last rows; the transcript scrolls in its own window above it. off: the prompt follows the last message",
+                    },
+                    {
+                        value: "sound",
+                        label: `sound: ${soundLevel()}`,
+                        description:
+                            "chimes on a finished turn and when the agent needs you. max adds the incidental ones (menus, clearing the input)",
                     },
                     {
                         value: "maxSteps",
@@ -409,6 +418,36 @@ export function createSettingsHandlers(state: AppState, deps: AppDeps): Settings
                         setLiveVariant(vPick.value === "live");
                     }
                     applyUiMode(mPick.value);
+                    continue;
+                }
+                if (pick.value === "sound") {
+                    const cur = soundLevel();
+                    const here = (v: string) => (v === cur ? "(current)" : "");
+                    const macos = process.platform === "darwin";
+                    // Off macOS there is no player, so every cue is the
+                    // terminal bell — say so rather than promising chimes.
+                    const how = macos ? "" : " (terminal bell — chimes need macOS)";
+                    const sPick = await selectOnce(
+                        [
+                            { value: "off", label: "off", description: here("off") || "silent, bell included" },
+                            {
+                                value: "on",
+                                label: "on",
+                                description: here("on") || `a turn that ended, the agent waiting on you, startup, a cancel${how}`,
+                            },
+                            {
+                                value: "max",
+                                label: "max",
+                                description: here("max") || `plus the incidental ones: the slash menu, clearing the input${how}`,
+                            },
+                        ],
+                        "Interface chimes",
+                    );
+                    if (!sPick) continue;
+                    const next = sPick.value as SoundLevel;
+                    settingsStore.set("sound", next);
+                    // Confirm by ear, which is the only way to judge it.
+                    if (next !== "off") playCue("click");
                     continue;
                 }
                 // How much of a finished tool call the transcript shows. `d`

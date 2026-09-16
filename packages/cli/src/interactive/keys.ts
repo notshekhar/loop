@@ -28,6 +28,9 @@ export const isCtrlE = (d: string) =>
 export const isCtrlV = (d: string) => d === "\x16" || matchesKey(d, "ctrl+v");
 export const isCtrlG = (d: string) => d === "\x07" || matchesKey(d, "ctrl+g");
 export const isCtrlP = (d: string) => d === "\x10" || matchesKey(d, "ctrl+p");
+/** Delete-to-line-start — loop's "clear what I typed" gesture. */
+export const isClearLine = (d: string) =>
+    d === "\x15" || matchesKey(d, "ctrl+u") || matchesKey(d, "super+backspace");
 // NOTE: \x09 is TAB which legacy terminals share with Ctrl+I (i & 0x1f === 9),
 // and matchesKey's legacy ctrl+letter branch treats them as the same byte.
 // Exclude raw "\t" so only the Kitty-protocol Ctrl+I (a distinct CSI-u

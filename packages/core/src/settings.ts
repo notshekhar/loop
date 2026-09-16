@@ -52,6 +52,21 @@ export interface AppSettings {
      * into the terminal until exit. Applies live from /settings.
      */
     pinnedInput?: boolean;
+    /**
+     * Interface chimes, and the terminal bell that rides along with them.
+     *
+     * - `off` — silent, bell included.
+     * - `on` — the state changes you asked to be told about: a turn that
+     *   finished or failed, the agent waiting on you, startup, a cancel.
+     * - `max` — also the incidental ones (the slash menu opening, the input
+     *   clearing), for people who like a keyboard that talks back.
+     *
+     * Defaults to `on` on macOS, which is the only platform with a player
+     * (`afplay`); elsewhere the fallback is the terminal bell and sound stays
+     * off until you ask for it. `/sound [on|off|max]` flips it live, and
+     * `LOOP_SOUND` overrides it for one run without touching this file.
+     */
+    sound?: "off" | "on" | "max";
     thinkingLevel?: ThinkingLevel;
     maxSteps?: number;
     /**

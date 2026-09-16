@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { loadProjectSkills } from "../agent/skills";
 import { DATA_ANALYST_AGENT_NAME, listAgents } from "../agent/agents";
 import { getSetting, setSetting } from "../settings";
+import { playCue, soundLevel, type SoundLevel } from "../notifications/sound";
 
 export interface CommandContext {
     emit(event: string, data?: unknown): void;
@@ -338,6 +339,27 @@ export async function registerBuiltins(reg: CommandRegistry, opts: { cwd?: strin
             description: "Alias for /attach (paste image from clipboard)",
             handler: async (ctx) => {
                 await ctx.attachImage();
+            },
+        },
+        {
+            name: "sound",
+            description: "Interface chimes: /sound · /sound on|off|max",
+            handler: (ctx, args) => {
+                const arg = args.trim().toLowerCase();
+                const current = soundLevel();
+                // Bare /sound toggles; `max` is only ever asked for explicitly,
+                // so a toggle can never surprise someone with the chatty tier.
+                const next: SoundLevel | undefined =
+                    arg === "" ? (current === "off" ? "on" : "off") : arg === "on" || arg === "off" || arg === "max" ? arg : undefined;
+                if (!next) return ctx.emit("error", "usage: /sound [on|off|max]");
+
+                setSetting("sound", next);
+                // Confirm by ear as well as on screen — the whole point of the
+                // setting is whether you can hear it, and at `off` the silence
+                // is the confirmation.
+                if (next !== "off") playCue("click");
+                const where = process.platform === "darwin" ? "" : " (terminal bell — chimes need macOS)";
+                ctx.emit("help", `sound ${next}${where}`);
             },
         },
         {

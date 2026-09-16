@@ -6,4 +6,3 @@ dist/
 
 # Rendered by scripts/build-docs.ts from site/docs/*.md at deploy time.
 site/docs/*.html
-__pycache__/
