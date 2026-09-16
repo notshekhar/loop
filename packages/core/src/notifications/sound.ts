@@ -196,6 +196,18 @@ export function playAttention(cue: Cue = "success"): void {
     playChime(cue, false);
 }
 
+/**
+ * Write a cue out and return its path, or null if it could not be written.
+ *
+ * Exported because the writing is worth testing everywhere, while PLAYING only
+ * happens on macOS: driving this through `playCue` means the whole
+ * write-once/reuse/permissions path is untested on the Linux box that runs CI,
+ * which is exactly where a bad file mode would matter.
+ */
+export function materializeCue(cue: Cue): string | null {
+    return ensureCuePath(cue);
+}
+
 /** Test seam: forget what has been written so a fresh TMPDIR is honoured. */
 export function resetSoundCacheForTests(): void {
     materialized.clear();

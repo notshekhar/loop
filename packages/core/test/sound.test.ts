@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EMBEDDED_CUES } from "../src/notifications/sounds-blob";
@@ -100,27 +100,46 @@ describe("materialization", () => {
         rmSync(dir, { recursive: true, force: true });
     });
 
+    // Driven through materializeCue rather than playCue: playing is macOS-only,
+    // so going through playCue would make every assertion below vacuous on the
+    // Linux box that runs CI — which is where a wrong file mode matters most.
     test("a cue is written once and reused, and never world-readable", async () => {
-        const { playCue, resetSoundCacheForTests } = await import("../src/notifications/sound");
+        const { materializeCue, resetSoundCacheForTests } = await import("../src/notifications/sound");
         resetSoundCacheForTests();
-        process.env["LOOP_SOUND"] = "on";
 
-        playCue("success");
-        const path = join(dir, "loop-success.m4a");
-        const first = statSync(path);
+        const path = materializeCue("success");
+        expect(path).toBe(join(dir, "loop-success.m4a"));
+        const first = statSync(path!);
         expect(first.isFile()).toBe(true);
         // 0o600: /tmp is shared, and these are ours.
         expect(first.mode & 0o077).toBe(0);
 
         resetSoundCacheForTests();
-        playCue("success");
+        expect(materializeCue("success")).toBe(path);
         // Reused, not rewritten — same inode, same mtime.
-        expect(statSync(path).ino).toBe(first.ino);
-        expect(statSync(path).mtimeMs).toBe(first.mtimeMs);
-        delete process.env["LOOP_SOUND"];
+        expect(statSync(path!).ino).toBe(first.ino);
+        expect(statSync(path!).mtimeMs).toBe(first.mtimeMs);
     });
 
-    test("nothing is written at all when sound is off", async () => {
+    test("what lands on disk is the cue itself", async () => {
+        const { materializeCue, resetSoundCacheForTests } = await import("../src/notifications/sound");
+        resetSoundCacheForTests();
+        const path = materializeCue("click");
+        const { EMBEDDED_CUES: cues } = await import("../src/notifications/sounds-blob");
+        const expected = Buffer.from(Bun.gunzipSync(Buffer.from(cues.click.gz, "base64")));
+        expect(readFileSync(path!).equals(expected)).toBe(true);
+    });
+
+    test("a cue file left behind by a different version is replaced", async () => {
+        const { materializeCue, resetSoundCacheForTests } = await import("../src/notifications/sound");
+        resetSoundCacheForTests();
+        const path = join(dir, "loop-toggle.m4a");
+        writeFileSync(path, "not a sound");
+        expect(materializeCue("toggle")).toBe(path);
+        expect(readFileSync(path).length).toBeGreaterThan(1_000);
+    });
+
+    test("playing is silent and writes nothing when sound is off", async () => {
         const { playCue, resetSoundCacheForTests } = await import("../src/notifications/sound");
         resetSoundCacheForTests();
         process.env["LOOP_SOUND"] = "0";

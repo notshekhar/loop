@@ -87,9 +87,21 @@ describe("lua vm — fences", () => {
         lua.global.close();
     }, 10_000);
 
+    /**
+     * Asks for more than the whole ceiling in ONE allocation, so the request
+     * cannot be satisfied on the first iteration.
+     *
+     * Both fences here are real and either one stops a runaway script, but this
+     * test is about the memory one, and the original form raced them: filling a
+     * 32 MB ceiling 8 KB at a time took ~4,000 iterations, which fits inside the
+     * 250 ms call budget on a developer's Mac and did not on the slower Linux
+     * CI runner — where it failed with "thread timeout exceeded" for two
+     * months. A single oversized request settles it in about a millisecond, so
+     * the clock is never in the running, on any machine.
+     */
     test("runaway allocation hits the memory ceiling, and the VM survives", async () => {
         const lua = await createLuaVm();
-        lua.doStringSync(`function hog() local t = {} while true do t[#t+1] = string.rep("x", 8192) end end`);
+        lua.doStringSync(`function hog() local t = {} while true do t[#t+1] = string.rep("x", 64 * 1024 * 1024) end end`);
         expect(() => (lua.global.get("hog") as () => void)()).toThrow(/not enough memory/i);
         expect(lua.doStringSync(`return "alive"`)).toBe("alive");
         lua.global.close();
