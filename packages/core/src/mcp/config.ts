@@ -8,8 +8,27 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getSetting, setSetting } from "../settings";
 
+/**
+ * Which of a server's tools this project is willing to use.
+ *
+ * Connecting to a server has always been all-or-nothing: every tool it exposes
+ * joined every turn's tool set. That is a context problem (one verbose server
+ * can outweigh loop's entire builtin toolset) and a safety one — a server whose
+ * read tools you want may also ship a `delete_everything` you do not.
+ *
+ * Filtering here rather than at call time is deliberate: a denied tool is never
+ * advertised, so the model never plans around it and never spends tokens
+ * reading its schema.
+ */
+export interface ToolAccessPolicy {
+    /** If set, ONLY these tools are used. Names are the server's own, unprefixed. */
+    allowedTools?: string[];
+    /** Never used. Takes precedence over `allowedTools`. */
+    deniedTools?: string[];
+}
+
 /** A local server launched as a subprocess; tools speak over stdio. */
-export interface StdioServerConfig {
+export interface StdioServerConfig extends ToolAccessPolicy {
     type?: "stdio";
     command: string;
     args?: string[];
@@ -23,7 +42,7 @@ export interface StdioServerConfig {
  * shape, so a connect that fails because the server speaks the other one is
  * retried on it automatically — `type` is a starting guess, not a verdict.
  */
-export interface HttpServerConfig {
+export interface HttpServerConfig extends ToolAccessPolicy {
     type: "http" | "sse";
     url: string;
     headers?: Record<string, string>;
@@ -60,6 +79,44 @@ export function isMcpEnabled(): boolean {
 
 export function isServerEnabled(cfg: McpServerConfig): boolean {
     return cfg.enabled !== false;
+}
+
+/**
+ * Whether one of a server's tools may be used, by its own (unprefixed) name.
+ *
+ * Deny wins over allow, so `allowedTools` can be broad while `deniedTools`
+ * carves out the one destructive thing — the combination people actually
+ * write. An empty `allowedTools` array means "nothing", not "everything":
+ * writing an empty list and getting every tool is the kind of surprise that
+ * only ever goes one way.
+ */
+export function isToolAllowed(cfg: ToolAccessPolicy, tool: string): boolean {
+    if (cfg.deniedTools?.includes(tool)) return false;
+    if (cfg.allowedTools === undefined) return true;
+    return cfg.allowedTools.includes(tool);
+}
+
+/** Default number of MCP tools above which the turn switches to search mode. */
+export const DEFAULT_TOOL_SEARCH_THRESHOLD = 50;
+
+/**
+ * Whether this turn should hide the individual MCP tools behind `mcp_tools`.
+ *
+ * The setting is deliberately three-valued: a number to move the line, `false`
+ * to keep every tool advertised however many there are, `true` to always
+ * search. Anything else falls back to the default rather than guessing.
+ */
+export function shouldUseToolSearch(toolCount: number): boolean {
+    const setting = getSetting("mcpToolSearch");
+    if (setting === false) return false;
+    if (setting === true) return true;
+    const threshold = typeof setting === "number" && setting >= 0 ? setting : DEFAULT_TOOL_SEARCH_THRESHOLD;
+    return toolCount > threshold;
+}
+
+/** True when a policy would filter anything at all — used to explain a tool count. */
+export function hasToolPolicy(cfg: ToolAccessPolicy): boolean {
+    return cfg.allowedTools !== undefined || (cfg.deniedTools?.length ?? 0) > 0;
 }
 
 /**

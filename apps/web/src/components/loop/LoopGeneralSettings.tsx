@@ -1,7 +1,7 @@
 /**
  * The General settings panel, driven entirely by loop.
  *
- * Upstream's General panel configured a t3code server: worktree defaults,
+ * Upstream's General panel configured its server: worktree defaults,
  * background-activity profiles, provider update checks, source-control writing
  * style. None of those are loop's settings, and a UI that shows switches for
  * settings the backend does not have is worse than showing none.

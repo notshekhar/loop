@@ -88,8 +88,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
 }
 
 /**
- * Upstream's mark was an SVG spelling "T3" beside the word "Code". loop's is
- * set in type rather than drawn, so the name comes from `branding.ts` and the
+ * The wordmark is set in type, so the name comes from `branding.ts` and the
  * desktop shell can override it without anyone editing a path.
  */
 function LoopWordmark() {

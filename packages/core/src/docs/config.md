@@ -428,6 +428,55 @@ Two transports:
   client registration, set `clientId` / `clientSecret` / `scopes`.
 - MCP has a master switch: `"mcp": false` disables all servers.
 
+### Limiting what a server contributes
+
+`allowedTools` / `deniedTools` filter a server's tools by its OWN tool names
+(not loop's `mcp__<server>__…` keys). A denied tool is never advertised to the
+model at all, so it costs no context and cannot be planned around. `deniedTools`
+wins over `allowedTools`, and `"allowedTools": []` means none.
+
+```json
+{
+    "mcpServers": {
+        "github": {
+            "type": "http",
+            "url": "https://api.githubcopilot.com/mcp/",
+            "allowedTools": ["list_issues", "get_issue", "create_issue"],
+            "deniedTools": ["delete_repository"]
+        }
+    }
+}
+```
+
+For large setups there is also `mcpToolSearch` (global setting): above the
+threshold — 50 tools by default — the individual MCP tools stop being
+advertised and the model reaches them through one `mcp_tools` tool that
+searches, describes and calls them. Set a number to move the line, `false` to
+always advertise everything, `true` to always search.
+
+### Resources, prompts and elicitation
+
+Servers that publish more than tools are used automatically:
+
+- **Resources** — the agent reads them with the `mcp_resource` tool, and you can
+  point at one in the composer with `@mcp:<server>:<uri>` (type `@mcp:` to
+  complete).
+- **Prompts** — each becomes a `/mcp:<server>:<prompt>` slash command, with
+  arguments completed by the server itself (`name=value` or positional).
+- **Elicitation** — a server may ask you a question mid-tool-call; loop shows it
+  with the server's name on it. Outside interactive mode these are declined
+  rather than left hanging.
+- A server's own `instructions` from its handshake are included in the system
+  prompt, attributed to that server.
+
+### Staying connected
+
+Connected servers are probed on a timer (`tools/list`, every 60s) so a server
+that is up but no longer answering is caught rather than silently advertised;
+`LOOP_MCP_HEALTH_INTERVAL_MS=0` turns that off. A server that drops is
+reconnected automatically with backoff, and `/mcp` offers `inspect` and
+`check health` per server.
+
 ---
 
 ## Create a custom agent

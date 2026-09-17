@@ -1,0 +1,129 @@
+.root {
+  --trajectory-toolbar-height: 32px;
+  --trajectory-font: 12px/1.4 var(--font-sans);
+  --trajectory-font-small: 11px/1.4 var(--font-sans);
+  --trajectory-background: color-mix(in srgb, var(--muted) 45%, var(--background));
+  --trajectory-border-soft: color-mix(in srgb, var(--border) 50%, transparent);
+  --trajectory-brand: #4176e6;
+  --trajectory-red: #f87171;
+  --trajectory-tool: #b78103;
+  --trajectory-context: #22a06b;
+  --trajectory-ease: ease-in-out;
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  color: var(--foreground);
+  background: var(--background);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 122px minmax(0, 1fr);
+  align-items: center;
+  height: 30px;
+  border-bottom: 0.5px solid var(--trajectory-border-soft);
+  font: var(--trajectory-font);
+}
+
+.row[data-turn-start="true"] {
+  border-top: 2px solid var(--border);
+}
+.row[data-selected="true"] {
+  background: var(--accent);
+}
+.row[data-timeline-focus="outside"] {
+  opacity: 0.24;
+}
+.row:hover {
+  background: var(--accent);
+}
+
+.event {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  min-width: 0;
+  padding: 0 8px;
+  color: var(--muted-foreground);
+}
+.turn {
+  margin-right: auto;
+  font: 10px var(--font-mono);
+}
+.kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+}
+.kind[data-kind="user"] {
+  color: var(--primary);
+}
+.kind[data-kind="message"],
+.kind[data-kind="compacted"] {
+  color: color-mix(in srgb, var(--trajectory-brand) 60%, var(--trajectory-red));
+}
+.kind[data-kind="tool"],
+.kind[data-kind="subtool"] {
+  color: var(--trajectory-tool);
+}
+.kind[data-kind="context"] {
+  color: var(--trajectory-context);
+}
+.kind[data-error="true"] {
+  color: var(--destructive);
+}
+.summary {
+  min-width: 0;
+  overflow: hidden;
+}
+.summary button {
+  display: block;
+  width: 100%;
+  height: 29px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.summary button:focus-visible {
+  outline: 1px solid var(--primary);
+  outline-offset: -1px;
+}
+.result {
+  margin-left: 8px;
+  color: var(--muted-foreground);
+}
+.failed {
+  color: var(--destructive);
+}
+.status {
+  margin-left: 8px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+
+@media (max-width: 520px) {
+  .row {
+    grid-template-columns: 88px minmax(0, 1fr);
+  }
+  .event {
+    gap: 3px;
+    padding: 0 5px;
+  }
+  .kind {
+    font-size: 9px;
+  }
+}

@@ -21,7 +21,9 @@ export class BrowserDpopError extends Data.TaggedError("BrowserDpopError")<{
   readonly cause?: unknown;
 }> {}
 
-const DPOP_DATABASE_NAME = "t3code:cloud-auth";
+import { CLOUD_AUTH_DATABASE_NAME } from "../storageMigration";
+
+const DPOP_DATABASE_NAME = CLOUD_AUTH_DATABASE_NAME;
 const DPOP_DATABASE_VERSION = 1;
 const DPOP_KEY_STORE_NAME = "keys";
 const DPOP_KEY_ID = "relay-dpop-proof-key";

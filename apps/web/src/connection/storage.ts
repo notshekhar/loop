@@ -33,7 +33,9 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
-const DATABASE_NAME = "t3code:connection-runtime";
+import { CONNECTION_DATABASE_NAME } from "../storageMigration";
+
+const DATABASE_NAME = CONNECTION_DATABASE_NAME;
 const DATABASE_VERSION = 4;
 const CATALOG_STORE_NAME = "catalog";
 const SHELL_STORE_NAME = "shell";

@@ -494,6 +494,15 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
         this.currentLayout = undefined;
     }
 
+    protected override handleTerminalResize(): void {
+        // A shrink can discard or shift terminal rows even if another resize
+        // restores the old dimensions before the next frame. The cached screen
+        // is no longer a safe diff baseline. Keep layout and scroll state so
+        // input arriving before the repaint still targets the current view.
+        this.previousScreen = [];
+        this.requestRender();
+    }
+
     scrollBy(lines: number): void {
         this.getPrimaryScrollView().scrollBy(lines);
         this.requestRender();

@@ -12,13 +12,13 @@ import {
 describe("connectAuth", () => {
   it("round-trips state and challenge through the authorize URL fragment", () => {
     const url = buildConnectAuthorizeRequestUrl({
-      hostedAppUrl: "https://app.t3.codes",
+      hostedAppUrl: "https://app.loop.example.com",
       state: "q7mK9xV2pL4nR8sT6wYzAQ",
       challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
     });
     const parsed = new URL(url);
 
-    expect(parsed.origin).toBe("https://app.t3.codes");
+    expect(parsed.origin).toBe("https://app.loop.example.com");
     expect(parsed.pathname).toBe("/connect");
     expect(parsed.search).toBe("");
     expect(readConnectAuthorizeRequest(parsed)).toEqual({
@@ -28,31 +28,31 @@ describe("connectAuth", () => {
   });
 
   it("rejects authorize requests missing state or challenge", () => {
-    expect(readConnectAuthorizeRequest(new URL("https://app.t3.codes/connect"))).toBeNull();
+    expect(readConnectAuthorizeRequest(new URL("https://app.loop.example.com/connect"))).toBeNull();
     expect(
-      readConnectAuthorizeRequest(new URL("https://app.t3.codes/connect#state=abc")),
+      readConnectAuthorizeRequest(new URL("https://app.loop.example.com/connect#state=abc")),
     ).toBeNull();
     expect(
-      readConnectAuthorizeRequest(new URL("https://app.t3.codes/connect#challenge=abc")),
+      readConnectAuthorizeRequest(new URL("https://app.loop.example.com/connect#challenge=abc")),
     ).toBeNull();
   });
 
   it("builds a PKCE authorize URL against the Clerk endpoint", () => {
     const url = new URL(
       buildConnectClerkAuthorizeUrl({
-        authorizationEndpoint: "https://clerk.t3.codes/oauth/authorize",
+        authorizationEndpoint: "https://clerk.loop.example.com/oauth/authorize",
         clientId: "oauthapp_123",
-        redirectUri: connectCallbackUrl("https://app.t3.codes"),
+        redirectUri: connectCallbackUrl("https://app.loop.example.com"),
         scopes: ["openid", "profile", "email"],
         state: "state-1",
         challenge: "challenge-1",
       }),
     );
 
-    expect(url.origin).toBe("https://clerk.t3.codes");
+    expect(url.origin).toBe("https://clerk.loop.example.com");
     expect(url.pathname).toBe("/oauth/authorize");
     expect(url.searchParams.get("client_id")).toBe("oauthapp_123");
-    expect(url.searchParams.get("redirect_uri")).toBe("https://app.t3.codes/connect/callback");
+    expect(url.searchParams.get("redirect_uri")).toBe("https://app.loop.example.com/connect/callback");
     expect(url.searchParams.get("response_type")).toBe("code");
     expect(url.searchParams.get("scope")).toBe("openid profile email");
     expect(url.searchParams.get("state")).toBe("state-1");

@@ -286,8 +286,8 @@
       "@loop/shared/sourceControl": [
         "./src/loop/shared/sourceControl.ts"
       ],
-      "@loop/shared/t3ProjectFile": [
-        "./src/loop/shared/t3ProjectFile.ts"
+      "@loop/shared/loopProjectFile": [
+        "./src/loop/shared/loopProjectFile.ts"
       ],
       "@loop/shared/terminalLabels": [
         "./src/loop/shared/terminalLabels.ts"

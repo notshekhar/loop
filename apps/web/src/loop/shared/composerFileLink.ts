@@ -1,7 +1,7 @@
 /**
  * A dropped or pasted file, as the markdown link the composer inserts.
  *
- * This is what survives of the forked t3code `composerTrigger` module. Its
+ * This is what survives of the upstream `composerTrigger` module. Its
  * trigger detection, slash-command parsing and range replacement were all
  * superseded by `src/composer-logic.ts`, which carries loop's own trigger kinds
  * and slash commands ("agents", "mcp", "usage" rather than "plan"/"default") —

@@ -38,7 +38,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "../ui/sidebar";
-import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
+import { LoopConnectSidebarAvatar, LoopConnectSidebarSignIn } from "../clerk/LoopConnectSidebarSignIn";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
@@ -70,7 +70,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
  * The sections loop can actually fill.
  *
  * The others configure things loop does not have — pairing and relays
- * (Connections), t3code's own experiments (Beta), its worktree/PR workflow
+ * (Connections), upstream experiments (Beta), its worktree/PR workflow
  * (Source Control) — or read from a config loop reports empty (Keybindings).
  * Listing a section that renders nothing is worse than not listing it, so the
  * nav is an allowlist. The routes still exist; they are simply not advertised
@@ -333,7 +333,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="p-[var(--sidebar-content-inset)]">
-        <T3ConnectSidebarSignIn />
+        <LoopConnectSidebarSignIn />
         <div className="flex items-center gap-1">
           <SidebarMenu className="min-w-0 flex-1">
             <SidebarMenuItem>
@@ -343,7 +343,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
-          <T3ConnectSidebarAvatar />
+          <LoopConnectSidebarAvatar />
         </div>
       </SidebarFooter>
     </>

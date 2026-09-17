@@ -188,7 +188,7 @@ export class GhosttyRuntime {
     }
     const result = await WebAssembly.instantiate(await response.arrayBuffer(), {
       env: {
-        t3_write_pty: (_terminal: number, userdata: number, pointer: number, length: number) => {
+        loop_write_pty: (_terminal: number, userdata: number, pointer: number, length: number) => {
           const writer = this.ptyWriters.get(userdata);
           if (!writer || length === 0) return;
           writer(textDecoder.decode(new Uint8Array(this.memory.buffer, pointer, length)));

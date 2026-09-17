@@ -15,7 +15,7 @@ import { getCatalog } from "../catalog";
 import { anthropicCachedSystem } from "./model-messages";
 import { buildAgentCallConfig, createStepBilling, createYieldGate } from "./model-call";
 import { getSetting } from "../settings";
-import { createTools } from "../tools";
+import { createTools, createMcpResourceTool, MCP_RESOURCE_TOOL_NAME } from "../tools";
 import { getMcpManager } from "../mcp";
 import { getExtensionHost } from "../extensions";
 import { attachLedgerEntry, type Session } from "../sessions";
@@ -430,14 +430,33 @@ async function runSubagent(
         // them for a named agent that doesn't list them — the same widen/narrow
         // rule files get. They already carry per-call timeouts (set when the
         // manager built them) and run the same hooks below.
+        const mcpManager = getMcpManager();
         const mcpTools = getMcpManager().getTools();
+        // The resource reader is a candidate on the same terms as the MCP
+        // tools themselves: inherited by a fork, kept by a named agent only if
+        // it lists the name. Built only when a server publishes resources.
+        const mcpResourceTool =
+            mcpManager.listResources().length > 0 || mcpManager.listResourceTemplates().length > 0
+                ? {
+                      [MCP_RESOURCE_TOOL_NAME]: createMcpResourceTool({
+                          listResources: () => mcpManager.listResources(),
+                          listResourceTemplates: () => mcpManager.listResourceTemplates(),
+                          readResource: (server, uri) => mcpManager.readResource(server, uri),
+                      }),
+                  }
+                : {};
         // Extension tools (and removals) are candidates too, exactly like MCP —
         // the resolver's parentTools cap then keeps them for a fork and drops
         // them for a named agent that doesn't list them. Empty when no
         // extensions are loaded, so the candidate pool is unchanged.
         const extTools = getExtensionHost().getTools();
         const fileToolNames = Object.keys(createTools({ cwd: ctx.cwd, abortSignal: ctx.abortSignal }));
-        const candidateNames = [...fileToolNames, ...Object.keys(mcpTools), ...extTools.add.keys()].filter(
+        const candidateNames = [
+            ...fileToolNames,
+            ...Object.keys(mcpTools),
+            ...Object.keys(mcpResourceTool),
+            ...extTools.add.keys(),
+        ].filter(
             (n) => !extTools.remove.has(n),
         );
         const effective = resolveSubagentTools(candidateNames, getAgentTools(name), ctx.parentTools);
@@ -449,6 +468,7 @@ async function runSubagent(
             // session and must unlock parent edits (and vice versa).
             ...createTools({ cwd: ctx.cwd, abortSignal: ctx.abortSignal, readOnlyFs, sessionId: ctx.sessionId }),
             ...mcpTools,
+            ...mcpResourceTool,
             ...Object.fromEntries(extTools.add),
         };
         for (const n of extTools.remove) delete full[n];

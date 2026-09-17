@@ -26,6 +26,7 @@ import {
     isMcpEnabled,
     isOAuthServer,
     isServerEnabled,
+    hasToolPolicy,
     loadMcpServers,
     McpUnsupportedServerError,
     projectServersPath,
@@ -62,6 +63,12 @@ export interface McpServerDescriptor {
     readonly authorized?: boolean;
     /** Names of the tools it contributes, when connected. */
     readonly tools?: readonly string[];
+    /** Resources it publishes (individual + templates), when connected. */
+    readonly resourceCount?: number;
+    /** Prompts it publishes — each one a `/mcp:<server>:<prompt>` command. */
+    readonly promptCount?: number;
+    /** True when allowedTools/deniedTools are filtering what this server contributes. */
+    readonly toolPolicy?: boolean;
 }
 
 export interface McpListResult {
@@ -129,6 +136,15 @@ export function listMcpServers(cwd: string): McpListResult {
             oauth,
             ...(oauth ? { authorized: hasStoredTokens(name) } : {}),
             ...(tools.length > 0 ? { tools } : {}),
+            // A server can be entirely resources and prompts and still read as
+            // empty when only tools are counted.
+            ...(snapshot?.catalog
+                ? {
+                      resourceCount: snapshot.catalog.resources.length + snapshot.catalog.resourceTemplates.length,
+                      promptCount: snapshot.catalog.prompts.length,
+                  }
+                : {}),
+            ...(hasToolPolicy(config) ? { toolPolicy: true } : {}),
         };
     });
 

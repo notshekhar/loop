@@ -79,7 +79,7 @@ export function buildProjectSidebarRows(input: {
 /**
  * How many settled threads a shelf reveals per press.
  *
- * The same paging shape t3code's nightly sidebar uses
+ * The same paging shape the upstream nightly sidebar uses
  * (`SETTLED_TAIL_PAGE_COUNT`): the deep tail stays behind one explicit step
  * rather than dumping three hundred rows into the list.
  *

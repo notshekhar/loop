@@ -8,13 +8,6 @@ const CONNECT_AUTHORIZE_PATH = "/connect";
 const CONNECT_CALLBACK_PATH = "/connect/callback";
 
 /**
- * The CLI prints URLs against this origin and the web bundle uses it to
- * decide whether it is the hosted deployment — the two must agree, so the
- * default lives here.
- */
-export const DEFAULT_HOSTED_APP_URL = "https://app.t3.codes";
-
-/**
  * Requested at authorize time by the hosted page and honored by the CLI's
  * token exchange; keep both sides on this single definition.
  */

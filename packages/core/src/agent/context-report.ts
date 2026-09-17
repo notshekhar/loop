@@ -8,7 +8,7 @@
  */
 import { getCatalog } from "../catalog";
 import { getSetting } from "../settings";
-import { getMcpManager, isMcpEnabled } from "../mcp";
+import { getMcpManager, isMcpEnabled, shouldUseToolSearch } from "../mcp";
 import { getExtensionHost } from "../extensions";
 import { parseModelId } from "../providers";
 import {
@@ -20,6 +20,10 @@ import {
     isAskUserAvailable,
     SKILL_TOOL_NAME,
     TODO_TOOL_NAME,
+    createMcpResourceTool,
+    MCP_RESOURCE_TOOL_NAME,
+    createMcpToolsTool,
+    MCP_TOOLS_TOOL_NAME,
 } from "../tools";
 import type { Session } from "../sessions";
 import { getAgentPrompt, getAgentTools, listAgents } from "./agents";
@@ -140,7 +144,32 @@ export async function buildContextReport(opts: {
 
     // Trust is applied when servers connect, not when their tools are counted —
     // see the same gate in turn.ts.
-    const mcpTools = isMcpEnabled() && !allowedTools?.length ? getMcpManager().getTools() : {};
+    // Built exactly as turn.ts builds it, resource reader included, so the
+    // category's name list, tool count and token measure all describe the same
+    // set — a breakdown that under-reports by one tool is one nobody trusts.
+    const mcpManager = getMcpManager();
+    const mcpAttached = isMcpEnabled() && !allowedTools?.length;
+    const mcpResourceAttached =
+        mcpAttached && (mcpManager.listResources().length > 0 || mcpManager.listResourceTemplates().length > 0);
+    // Search mode advertises ONE tool in place of all of them, and the whole
+    // point is the context it saves — a breakdown that kept counting the hidden
+    // tools would report the opposite of what happened.
+    const rawMcpTools = mcpAttached ? mcpManager.getTools() : {};
+    const searchMode = mcpAttached && shouldUseToolSearch(Object.keys(rawMcpTools).length);
+    const mcpTools = {
+        ...(searchMode
+            ? { [MCP_TOOLS_TOOL_NAME]: createMcpToolsTool({ tools: () => mcpManager.getTools() }) }
+            : rawMcpTools),
+        ...(mcpResourceAttached
+            ? {
+                  [MCP_RESOURCE_TOOL_NAME]: createMcpResourceTool({
+                      listResources: () => mcpManager.listResources(),
+                      listResourceTemplates: () => mcpManager.listResourceTemplates(),
+                      readResource: (server, uri) => mcpManager.readResource(server, uri),
+                  }),
+              }
+            : {}),
+    };
     const mcpToolCount = Object.keys(mcpTools).length;
 
     const subagentsEnabled =

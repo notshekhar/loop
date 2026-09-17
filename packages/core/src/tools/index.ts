@@ -55,6 +55,14 @@ export type ToolSet = ReturnType<typeof createTools>;
 
 /** Stable tool name list — agents reference these for per-agent tool selection. */
 export const TOOL_NAMES = ["read", "write", "edit", "bash", "ls", "grep", "find", "sql", "shells"] as const;
+export { createMcpResourceTool, MCP_RESOURCE_TOOL_NAME, type McpResourceToolContext } from "./mcp-resource";
+export {
+    buildMcpToolSearchNote,
+    createMcpToolsTool,
+    scoreTool,
+    MCP_TOOLS_TOOL_NAME,
+    type McpToolsToolContext,
+} from "./mcp-tools";
 export { clearReadRegistry } from "./utils/read-registry";
 // Background shells (bash run_in_background): the registry is the surfaces'
 // window onto them — the CLI's panel, /shells, and the turn's exit notices.

@@ -4,6 +4,7 @@
  * startup work. Behavior lives in the wired modules, not here.
  */
 import {
+    type AutocompleteItem,
     CombinedAutocompleteProvider,
     Container,
     Editor,
@@ -36,6 +37,13 @@ import {
     closeAllPools,
     closeDb,
     getMcpManager,
+    isMcpEnabled,
+    mcpPromptCommandName,
+    parseMcpPromptCommand,
+    promptArgumentCompletions,
+    promptArgumentHint,
+    isMcpMentionQuery,
+    mcpMentionItems,
     getExtensionHost,
     agentExists,
     isBuiltinAgent,
@@ -46,6 +54,7 @@ import {
     latestTodos,
     setAskUserBridge,
     setBashApprovalBridge,
+    setMcpElicitationBridge,
     setShellPanelPresent,
     killAllBashChildren,
     listShells,
@@ -78,6 +87,7 @@ import {
     toggleSelectOnce,
 } from "./selectors";
 import { createAskUserBridge } from "./ask-user";
+import { createMcpElicitationBridge } from "./mcp-elicit";
 import { createBashApprovalBridge } from "./bash-approve";
 import { createCommandContext } from "./command-handlers";
 import { createInputHandler } from "./input-handler";
@@ -274,12 +284,35 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     // download) and rebuild the provider when ready. `null` until then — slash
     // commands and explicit path completion still work in the meantime.
     let fdPath: string | null = null;
+    // `@mcp:…` completes the resources connected MCP servers publish. Read
+    // through the manager on every keystroke rather than snapshotted: servers
+    // connect after the editor exists, and a server can announce a changed
+    // resource list at any point in the session.
+    const mcpMentions = async (query: string): Promise<AutocompleteItem[]> => {
+        if (!isMcpEnabled() || !isMcpMentionQuery(query)) return [];
+        return mcpMentionItems(query, getMcpManager().listResources());
+    };
     const refreshCommands = () => {
-        const slashItems: TuiSlashCommand[] = commands.list().map((c) => ({
-            name: c.name,
-            description: c.description,
-        }));
-        editor.setAutocompleteProvider(new CombinedAutocompleteProvider(slashItems, state.cwd, fdPath));
+        const slashItems: TuiSlashCommand[] = commands.list().map((c) => {
+            // An MCP prompt's arguments are completed BY THE SERVER
+            // (completion/complete), so the menu offers real values — branch
+            // names, file paths, whatever that prompt's argument means — rather
+            // than making the user know them. Everything else has no argument
+            // completions, exactly as before.
+            const prompt = parseMcpPromptCommand(c.name);
+            const entry = prompt && getMcpManager().listPrompts().find((p) => mcpPromptCommandName(p) === c.name);
+            if (!entry) return { name: c.name, description: c.description };
+            return {
+                name: c.name,
+                description: c.description,
+                argumentHint: promptArgumentHint(entry),
+                getArgumentCompletions: (argumentPrefix: string) =>
+                    promptArgumentCompletions(entry, argumentPrefix, (server, ref, argument) =>
+                        getMcpManager().completeArgument(server, ref, argument),
+                    ),
+            };
+        });
+        editor.setAutocompleteProvider(new CombinedAutocompleteProvider(slashItems, state.cwd, fdPath, mcpMentions));
     };
     refreshCommands();
     void ensureTool("fd", true).then((path) => {
@@ -725,6 +758,19 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     // bashApprove setting has no effect in print mode / RPC. The setting
     // itself is checked in the bash tool; the bridge is just the UI.
     setBashApprovalBridge(createBashApprovalBridge(selectorHost));
+
+    // MCP elicitation — a server asking the user something mid-tool-call.
+    // Interactive only; elsewhere core declines rather than stalling the call.
+    setMcpElicitationBridge(
+        createMcpElicitationBridge({
+            selectOnce,
+            promptOnce,
+            say: (text) => {
+                history.addSystem(text);
+                tui.requestRender();
+            },
+        }),
+    );
 
     async function ensureSession(): Promise<Session> {
         if (state.session) return state.session;

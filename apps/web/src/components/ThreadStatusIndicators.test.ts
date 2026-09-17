@@ -21,7 +21,7 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
     pr: {
       number: 42,
       title: "PR branch",
-      url: "https://github.com/pingdotgg/t3code/pull/42",
+      url: "https://github.com/notshekhar/loop/pull/42",
       baseRef: "main",
       headRef: "feature/current",
       state: "open",

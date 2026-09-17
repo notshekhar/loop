@@ -704,7 +704,7 @@ async function refExists(cwd: string, ref: string): Promise<boolean> {
  * What "the branch changes" are measured against.
  *
  * The upstream is the honest answer when there is one. Without it this walks
- * the same ladder t3code's server does — an explicitly configured merge base,
+ * an explicitly configured merge base,
  * then the remote's default branch, then the conventional names — preferring
  * the remote copy of each, because a stale local `main` makes the diff claim
  * changes that were merged weeks ago.

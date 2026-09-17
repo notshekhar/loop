@@ -3,7 +3,7 @@
  * HTTP auth handshake that loop does not have: silent desktop bootstrap,
  * pairing tokens taken from the URL, bearer exchange, proxy base resolution,
  * and retry-after-restart. All of it existed to decide whether the browser was
- * allowed to talk to a t3code server over the network.
+ * allowed to talk to the upstream server over the network.
  *
  * loop settles that before the app starts. `loop serve` checks its token on the
  * WebSocket upgrade, and the desktop shell talks to a `loop rpc` process it

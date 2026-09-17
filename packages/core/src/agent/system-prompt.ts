@@ -48,6 +48,26 @@ export function buildTodoNote(): string {
 }
 
 /**
+ * Each connected MCP server's own usage notes.
+ *
+ * The `initialize` result carries an `instructions` field for exactly this —
+ * it is how a server explains its tools' conventions ("paths are repo-relative",
+ * "call auth first") — and loop dropped it on the floor for every server it has
+ * ever connected to. The model then had nothing but tool descriptions to go on,
+ * which is how you get an agent that calls a server's tools in the wrong order
+ * and blames the tools.
+ *
+ * Kept per server and attributed, because two servers' instructions are not
+ * interchangeable, and an unattributed blob reads as loop's own rules.
+ */
+export function buildMcpInstructionsNote(servers: Array<{ name: string; instructions?: string }>): string {
+    const withNotes = servers.filter((s) => s.instructions?.trim());
+    if (withNotes.length === 0) return "";
+    const blocks = withNotes.map((s) => `From MCP server "${s.name}" (applies to its mcp__${s.name}__* tools):\n${s.instructions!.trim()}`);
+    return `\n\nMCP server instructions — guidance published by the connected servers themselves, not by loop:\n\n${blocks.join("\n\n")}`;
+}
+
+/**
  * Plan-mode guidance, appended when the turn carries the exit_plan_mode tool
  * — i.e. the session's read-only gate is ON and this agent is the one that
  * can ask for it to be lifted. Without this the model only learns it is in

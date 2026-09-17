@@ -33,10 +33,16 @@ import {
     takeShellNotices,
     SKILL_TOOL_NAME,
     TODO_TOOL_NAME,
+    createMcpResourceTool,
+    MCP_RESOURCE_TOOL_NAME,
+    buildMcpToolSearchNote,
+    createMcpToolsTool,
+    MCP_TOOLS_TOOL_NAME,
 } from "../tools";
 import {
     buildBackgroundShellsNote,
     buildPlanModeNote,
+    buildMcpInstructionsNote,
     buildSubagentNote,
     buildSystemPrompt,
     buildTodoNote,
@@ -74,7 +80,7 @@ import {
     resumeDelayMs,
 } from "./retry";
 import { debugLog } from "../debug";
-import { getMcpManager, isMcpEnabled } from "../mcp";
+import { getMcpManager, isMcpEnabled, shouldUseToolSearch } from "../mcp";
 import { getExtensionHost } from "../extensions";
 import type { TurnContext } from "../extensions/api";
 import {
@@ -302,7 +308,27 @@ async function assembleTurnTools(
     // when trusted), so anything it holds tools for has passed that test.
     const mcpEnabled = isMcpEnabled();
     if (mcpEnabled && !allowedTools?.length) {
-        Object.assign(toolsForTurn, getMcpManager().getTools());
+        const mcp = getMcpManager();
+        const mcpTools = mcp.getTools();
+        const mcpToolCount = Object.keys(mcpTools).length;
+        if (shouldUseToolSearch(mcpToolCount)) {
+            // The tools are NOT advertised; mcp_tools reaches them by name.
+            // Read through a callback rather than captured, so a server that
+            // connects or drops mid-turn is reflected on the next call.
+            toolsForTurn[MCP_TOOLS_TOOL_NAME] = createMcpToolsTool({ tools: () => getMcpManager().getTools() }) as never;
+        } else {
+            Object.assign(toolsForTurn, mcpTools);
+        }
+        // The resource reader rides along only when a connected server
+        // actually publishes resources: a tools-only setup (which is most of
+        // them) should not pay a tool slot to be told there is nothing to read.
+        if (mcp.listResources().length > 0 || mcp.listResourceTemplates().length > 0) {
+            toolsForTurn[MCP_RESOURCE_TOOL_NAME] = createMcpResourceTool({
+                listResources: () => mcp.listResources(),
+                listResourceTemplates: () => mcp.listResourceTemplates(),
+                readResource: (server, uri) => mcp.readResource(server, uri),
+            }) as never;
+        }
     }
 
     // Extension tools — same gating as MCP: unrestricted agents only (a
@@ -545,6 +571,26 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
     // rejected edit. Only when it can actually exit — everyone else is told by
     // the plan tool's own description.
     const planModeNote = EXIT_PLAN_MODE_TOOL_NAME in toolsForTurn ? buildPlanModeNote() : "";
+    // Keyed off the assembled toolset, not the settings that produced it: a
+    // restricted agent that was denied MCP tools — or an extension that removed
+    // them in onAssembleTools — must not be told how to use tools it hasn't got.
+    // Both notes are keyed off the ASSEMBLED toolset rather than the settings
+    // that produced it, so an extension that dropped either surface in
+    // onAssembleTools also silences the guidance for it.
+    const mcpSearchMode = MCP_TOOLS_TOOL_NAME in toolsForTurn;
+    const hasMcpTools = mcpSearchMode || Object.keys(toolsForTurn).some((name) => name.startsWith("mcp__"));
+    const mcpInstructionsNote = hasMcpTools ? buildMcpInstructionsNote(getMcpManager().listServers()) : "";
+    // A model shown one unfamiliar tool where it expected a server's tools
+    // usually concludes the capability is missing rather than searching for it.
+    const mcpToolSearchNote = mcpSearchMode
+        ? buildMcpToolSearchNote(
+              Object.keys(getMcpManager().getTools()).length,
+              getMcpManager()
+                  .listServers()
+                  .filter((server) => server.status === "ready")
+                  .map((server) => server.name),
+          )
+        : "";
     // Checked post-assembly (not re-derived from settings) so an extension
     // removing the skill tool in onAssembleTools also flips the wording back.
     const skillsBlock =
@@ -561,6 +607,8 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
         todoNote +
         backgroundShellsNote +
         planModeNote +
+        mcpToolSearchNote +
+        mcpInstructionsNote +
         (skillsBlock ?? "");
     // Extension turn middleware may transform the system prompt, scoped by
     // ctx.agent (update any specific agent's prompt). No-op when none.

@@ -102,6 +102,28 @@ function withLua(s: Session, name: string, source: string): void {
     s.writeHome(`.loop/lua/${name}`, source);
 }
 
+/**
+ * A user-scope MCP server that publishes resources and prompts as well as
+ * tools. User scope, not project scope, so it connects without the trust
+ * prompt standing between the test and the thing being tested.
+ */
+function mcpSettings(): string {
+    const fixture = join(
+        import.meta.dir,
+        "..",
+        "..",
+        "..",
+        "core",
+        "test",
+        "fixtures",
+        "mock-mcp-features.mjs",
+    );
+    return JSON.stringify({
+        uiMode: "noir",
+        mcpServers: { feat: { type: "stdio", command: process.execPath, args: [fixture] } },
+    });
+}
+
 // ---------------------------------------------------------------- scenarios
 
 /** The first screen: masthead, and a prompt block that is actually drawn. */
@@ -1244,6 +1266,81 @@ async function testHandoff(): Promise<void> {
     }
 }
 
+/**
+ * The two surfaces an MCP server's resources and prompts reach the USER
+ * through: `@mcp:` in the composer and `/mcp:<server>:<prompt>` in the command
+ * list. Both are built from a live server's catalog, so neither can be tested
+ * without actually connecting one.
+ */
+async function testMcpSurfaces(): Promise<void> {
+    await withSession({ settings: mcpSettings(), cols: 100, rows: 30 }, async (s) => {
+        // Servers connect in the background; the banner is the signal.
+        await s.pump(10);
+
+        // A prompt the server published is a real slash command, with the
+        // server's own description on it.
+        await s.send("/mcp:feat:", 1.5);
+        check(
+            s.screenRows().some((r) => r.includes("mcp:feat:review")),
+            "a server prompt appears as a slash command",
+            s.screenRows(),
+        );
+        check(
+            s.screenRows().some((r) => r.includes("Review a diff")),
+            "the command carries the server's description",
+            s.screenRows(),
+        );
+        for (let i = 0; i < 10; i++) await s.send("\x7f", 0.05);
+        await s.pump(0.5);
+
+        // Resources complete in the composer. A bare `@` is still file-only —
+        // that is what the `mcp:` prefix is for.
+        await s.send("@mcp:", 1.5);
+        const rows = s.screenRows();
+        check(
+            rows.some((r) => r.includes("feat:notes://standup")),
+            "@mcp: completes a server resource",
+            rows,
+        );
+        check(
+            rows.some((r) => r.includes("Today's standup notes")),
+            "the resource's description is shown",
+            rows,
+        );
+        for (let i = 0; i < 5; i++) await s.send("\x7f", 0.05);
+        await s.pump(0.5);
+
+        // Opening either list must not have cost the frame anything.
+        check(!hasDuplicates(s, "mcp:feat"), "the completion list printed nothing twice");
+    });
+}
+
+/** The /mcp panel counts what a server actually contributes, not just tools. */
+async function testMcpPanel(): Promise<void> {
+    await withSession({ settings: mcpSettings(), cols: 100, rows: 30 }, async (s) => {
+        await s.pump(10);
+        await s.send("/mcp", 0.6);
+        await s.send("\r", 3.0);
+        const rows = s.screenRows();
+        check(
+            rows.some((r) => r.includes("feat")),
+            "the server is listed in the panel",
+            rows,
+        );
+        check(
+            rows.some((r) => r.includes("resources") && r.includes("prompts")),
+            "the row counts resources and prompts, not only tools",
+            rows,
+        );
+        await s.send("\x1b", 1.0);
+        check(
+            s.screenRows().some((r) => r.includes("agent default (shift+tab)")),
+            "esc closed the panel and gave the prompt back",
+            s.screenRows(),
+        );
+    });
+}
+
 const SCENARIOS: Record<string, () => Promise<void>> = {
     handoff: testHandoff,
     recipes: testRecipes,
@@ -1266,6 +1363,8 @@ const SCENARIOS: Record<string, () => Promise<void>> = {
     "lua-dock": testLuaDock,
     "lua-drag": testLuaDrag,
     "lua-terminal": testLuaTerminal,
+    "mcp-surfaces": testMcpSurfaces,
+    "mcp-panel": testMcpPanel,
     "lua-command": testLuaCommand,
     "lua-fullscreen": testLuaFullscreen,
 };

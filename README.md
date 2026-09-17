@@ -301,6 +301,16 @@ The Electron app, if you'd rather not live in the terminal. It carries its own
 loop inside the bundle, so it neither needs nor upgrades the CLI — install
 either, or both.
 
+Switch from **Chat** to **Trajectory** above the conversation to inspect the
+session as a searchable event timeline. The DeepSeek Harness overview uses
+Input, Model, and Tools lanes, with equal-width operations by default. Toggle
+**Duration** for recorded durations with idle gaps compressed. Drag to focus a
+range, scroll over the graph to zoom, right-drag to pan, and press Escape or
+right-click to clear the range. Search filters the rows and dims nonmatching
+blocks without moving the graph. Select a row or block to inspect its content;
+**Turns** and **Calls** fold the event list. The composer stays available in
+either view. Missing durations and per-request token timings are not inferred.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/notshekhar/loop/main/install-desktop.sh | bash
 ```

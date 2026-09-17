@@ -438,12 +438,12 @@ export class GhosttyTerminalSurface {
     options: GhosttyTerminalSurfaceOptions,
   ): Promise<GhosttyTerminalSurface> {
     const canvas = document.createElement("canvas");
-    canvas.className = "t3-ghostty-canvas";
+    canvas.className = "loop-ghostty-canvas";
     canvas.style.cssText = "display:block;width:100%;height:100%;";
     canvas.setAttribute("aria-hidden", "true");
 
     const input = document.createElement("textarea");
-    input.className = "t3-ghostty-input";
+    input.className = "loop-ghostty-input";
     input.setAttribute("aria-label", "Terminal input");
     input.autocapitalize = "off";
     input.autocomplete = "off";
@@ -452,14 +452,14 @@ export class GhosttyTerminalSurface {
       "position:absolute;left:4px;top:4px;width:1px;height:1px;opacity:0;padding:0;border:0;resize:none;pointer-events:none;";
 
     const scrollbar = document.createElement("div");
-    scrollbar.className = "t3-ghostty-scrollbar";
+    scrollbar.className = "loop-ghostty-scrollbar";
     scrollbar.setAttribute("role", "scrollbar");
     scrollbar.setAttribute("aria-label", "Terminal scrollback");
     scrollbar.setAttribute("aria-orientation", "vertical");
     scrollbar.tabIndex = 0;
     scrollbar.hidden = true;
     const scrollbarThumb = document.createElement("div");
-    scrollbarThumb.className = "t3-ghostty-scrollbar-thumb";
+    scrollbarThumb.className = "loop-ghostty-scrollbar-thumb";
     scrollbar.append(scrollbarThumb);
     mount.replaceChildren(canvas, input, scrollbar);
 

@@ -69,7 +69,7 @@ export type RightPanelSurface =
   /** The index: every artifact, this chat's first. A singleton, like Files. */
   | { id: "artifacts"; kind: "artifacts" };
 
-const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
+const RIGHT_PANEL_STORAGE_KEY = "loop:right-panel-state:v2";
 /**
  * Bumped to 8 so the stale-kind filter below actually runs.
  *

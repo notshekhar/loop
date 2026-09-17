@@ -181,7 +181,7 @@ describe("buildProviderInstanceUpdatePatch", () => {
       driver: ProviderDriverKind.make("codex"),
       enabled: true,
       config: {
-        binaryPath: "/opt/t3/codex",
+        binaryPath: "/opt/loop/codex",
       },
     } satisfies ProviderInstanceConfig;
 

@@ -38,7 +38,7 @@ export function useManagedRelayDevices() {
   const snapshot = readManagedRelaySnapshotState(result);
   useEffect(() => {
     if (snapshot.error) {
-      console.error("[t3-cloud] Relay device listing failed", {
+      console.error("[loop-cloud] Relay device listing failed", {
         message: snapshot.error,
         traceId: snapshot.errorTraceId,
       });

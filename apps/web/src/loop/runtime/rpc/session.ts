@@ -1,5 +1,5 @@
 /**
- * PORTED FOR loop. Upstream opened a WebSocket to a t3code server here; loop
+ * PORTED FOR loop. Upstream opened a WebSocket to its server here; loop
  * has no such server, so the client is wired **straight to in-process
  * handlers** with `RpcServer.makeNoSerialization` +
  * `RpcClient.makeNoSerialization`. No socket, no server process.

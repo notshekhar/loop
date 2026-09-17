@@ -17,6 +17,7 @@ import {
     loadWorkspaceContext,
     runHooks,
     withheldProjectServers,
+    syncMcpPromptCommands,
     setTrust,
     settingsStore,
     trustForSession,
@@ -227,7 +228,19 @@ export function startMcpServers(state: AppState, deps: AppDeps): void {
     }
 
     const manager = getMcpManager();
+    // Server-side prompts become `/mcp:<server>:<prompt>` commands. Re-synced
+    // on every catalog change, not just at startup: a server can announce
+    // prompts/list_changed at any point, and a command list that only reflects
+    // the launch-time servers is one people learn not to trust.
+    const syncPrompts = () => {
+        const changed = syncMcpPromptCommands(deps.commands, manager.listPrompts(), {
+            getPrompt: (server, prompt, args) => manager.getPrompt(server, prompt, args),
+        });
+        if (changed) deps.refreshCommands();
+    };
+    manager.onPromptsChanged = syncPrompts;
     void manager.init(state.cwd).then(() => {
+        syncPrompts();
         const servers = manager.listServers();
         if (servers.length === 0) return;
         const summary = servers

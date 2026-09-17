@@ -51,7 +51,7 @@ export const usePreviewUrlHistoryStore = create<PreviewUrlHistoryStoreState>()(
         }),
     }),
     {
-      name: "t3code:preview-url-history:v1",
+      name: "loop:preview-url-history:v1",
       version: 1,
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),

@@ -7,6 +7,7 @@ import type { SelectItem } from "@notshekhar/loop-tui";
 import {
     getMcpManager,
     hasStoredTokens,
+    hasToolPolicy,
     isGlobalServer,
     isOAuthServer,
     isHttpServer,
@@ -187,9 +188,52 @@ export function createMcpHandlers(state: AppState, deps: AppDeps): McpHandlers {
     }
 
     function detail(s: ServerSnapshot): string {
-        if (s.status === "ready") return `${s.toolCount} tools`;
-        if (s.status === "error" && s.error) return s.error;
-        return STATUS_LABEL[s.status];
+        if (s.status !== "ready") {
+            if (s.status === "error" && s.error) return s.error;
+            return STATUS_LABEL[s.status];
+        }
+        // Tools were the only thing a server could contribute, so a tool count
+        // was the whole story. It isn't any more: a server can be entirely
+        // resources and prompts and still read as empty if we only count tools.
+        const parts = [`${s.toolCount} tools`];
+        const resources = (s.catalog?.resources.length ?? 0) + (s.catalog?.resourceTemplates.length ?? 0);
+        if (resources > 0) parts.push(`${resources} resources`);
+        if (s.catalog?.prompts.length) parts.push(`${s.catalog.prompts.length} prompts`);
+        if (hasToolPolicy(s.config)) parts.push("tool policy applied");
+        return parts.join(" · ");
+    }
+
+    /** Everything one server declared, for the panel's inspect action. */
+    function inspectLines(s: ServerSnapshot): string[] {
+        const lines = [`${s.name} — ${STATUS_LABEL[s.status]}`];
+        if (s.error) lines.push(`  error: ${s.error}`);
+        const caps = s.capabilities;
+        if (caps) {
+            const declared = [
+                caps.tools ? "tools" : "",
+                caps.resources ? (caps.resourceSubscribe ? "resources (subscribe)" : "resources") : "",
+                caps.prompts ? "prompts" : "",
+                caps.completions ? "completions" : "",
+                caps.logging ? "logging" : "",
+            ].filter(Boolean);
+            lines.push(`  capabilities: ${declared.join(", ") || "none declared"}`);
+        }
+        if (hasToolPolicy(s.config)) {
+            const policy = s.config as { allowedTools?: string[]; deniedTools?: string[] };
+            if (policy.allowedTools) lines.push(`  allowed tools: ${policy.allowedTools.join(", ") || "(none)"}`);
+            if (policy.deniedTools?.length) lines.push(`  denied tools: ${policy.deniedTools.join(", ")}`);
+        }
+        for (const resource of s.catalog?.resources ?? []) {
+            lines.push(`  resource  ${resource.uri}${resource.description ? ` — ${resource.description}` : ""}`);
+        }
+        for (const template of s.catalog?.resourceTemplates ?? []) {
+            lines.push(`  template  ${template.uriTemplate}`);
+        }
+        for (const prompt of s.catalog?.prompts ?? []) {
+            lines.push(`  /mcp:${s.name}:${prompt.name}${prompt.description ? ` — ${prompt.description}` : ""}`);
+        }
+        if (s.instructions) lines.push(`  instructions: ${s.instructions.split("\n")[0]}`);
+        return lines;
     }
 
     /**
@@ -277,6 +321,18 @@ export function createMcpHandlers(state: AppState, deps: AppDeps): McpHandlers {
             });
         }
         items.push({ value: "reconnect", label: "reconnect", description: "retry the connection" });
+        if (s.status === "ready") {
+            items.push({
+                value: "inspect",
+                label: "inspect",
+                description: "capabilities, resources, prompts and instructions",
+            });
+            items.push({
+                value: "check",
+                label: "check health",
+                description: "probe now — catches a server that is up but no longer answering",
+            });
+        }
         if (global) {
             items.push(
                 s.status === "disabled"
@@ -296,6 +352,22 @@ export function createMcpHandlers(state: AppState, deps: AppDeps): McpHandlers {
         const manager = getMcpManager();
         if (pick.value === "authorize") return authorize(s.name, s.config);
         if (pick.value === "reconnect") return reconnect(s.name);
+        if (pick.value === "inspect") {
+            history.addSystem(inspectLines(s).join("\n"));
+            tui.requestRender();
+            return;
+        }
+        if (pick.value === "check") {
+            await manager.checkHealth();
+            const after = manager.getServer(s.name);
+            history.addSystem(
+                after?.status === "ready"
+                    ? `${s.name}: healthy — ${detail(after)}`
+                    : `${s.name}: ${after ? STATUS_LABEL[after.status] : "gone"}${after?.error ? ` (${after.error})` : ""}`,
+            );
+            tui.requestRender();
+            return;
+        }
         if (pick.value === "enable" || pick.value === "disable") {
             const enabled = pick.value === "enable";
             if (enabled && !mayConnect(isProjectScoped(s.name))) return;

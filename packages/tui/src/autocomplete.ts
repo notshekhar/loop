@@ -247,6 +247,17 @@ export interface AutocompleteSuggestions {
     prefix: string; // What we're matching against (e.g., "/" or "src/")
 }
 
+/**
+ * Extra `@` completions that aren't files — MCP resources, today.
+ *
+ * A callback rather than a list: the set changes while the session runs (a
+ * server connects, a server announces a changed resource list), and a snapshot
+ * taken when the provider was built would go stale the first time either
+ * happens. Returns items whose `value` includes the leading `@`, exactly like
+ * the file suggestions it is merged with.
+ */
+export type AtItemProvider = (query: string, signal: AbortSignal) => Promise<AutocompleteItem[]>;
+
 export interface AutocompleteProvider {
     /** Characters that should naturally trigger this provider at token boundaries. */
     triggerCharacters?: string[];
@@ -283,11 +294,18 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
     private commands: (SlashCommand | AutocompleteItem)[];
     private basePath: string;
     private fdPath: string | null;
+    private extraAtItems: AtItemProvider | null;
 
-    constructor(commands: (SlashCommand | AutocompleteItem)[] = [], basePath: string, fdPath: string | null = null) {
+    constructor(
+        commands: (SlashCommand | AutocompleteItem)[] = [],
+        basePath: string,
+        fdPath: string | null = null,
+        extraAtItems: AtItemProvider | null = null,
+    ) {
         this.commands = commands;
         this.basePath = basePath;
         this.fdPath = fdPath;
+        this.extraAtItems = extraAtItems;
     }
 
     async getSuggestions(
@@ -302,14 +320,19 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
         const atPrefix = this.extractAtPrefix(textBeforeCursor);
         if (atPrefix) {
             const { rawPrefix, isQuotedPrefix } = parsePathPrefix(atPrefix);
+            // Non-file things that answer to `@` (MCP resources) come first:
+            // they are a small, exact-matching set, while the file walk returns
+            // up to 20 fuzzy hits that would bury them.
+            const extra = (await this.extraAtItems?.(rawPrefix, options.signal)) ?? [];
             const suggestions = await this.getFuzzyFileSuggestions(rawPrefix, {
                 isQuotedPrefix,
                 signal: options.signal,
             });
-            if (suggestions.length === 0) return null;
+            const items = [...extra, ...suggestions];
+            if (items.length === 0) return null;
 
             return {
-                items: suggestions,
+                items,
                 prefix: atPrefix,
             };
         }

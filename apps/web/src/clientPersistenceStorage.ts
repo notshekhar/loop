@@ -2,7 +2,7 @@ import { ClientSettingsSchema, type ClientSettings } from "@loop/contracts";
 
 import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 
-export const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
+export const CLIENT_SETTINGS_STORAGE_KEY = "loop:client-settings:v1";
 
 function hasWindow(): boolean {
   return typeof window !== "undefined";

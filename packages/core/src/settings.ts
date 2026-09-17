@@ -172,6 +172,18 @@ export interface AppSettings {
     /** Connected MCP servers, keyed by display name. */
     mcpServers?: Record<string, McpServerConfig>;
     /**
+     * Tool search for large MCP setups. Every MCP tool's name, description and
+     * input schema rides EVERY request, so a couple of verbose servers can cost
+     * more context than loop's entire builtin toolset before the model has read
+     * a single file. Above the threshold, the individual tools stop being
+     * advertised and the model reaches them through one `mcp_tools` tool that
+     * searches and calls them instead.
+     *
+     * Number = the threshold in tools. `false` = never (always advertise
+     * everything). `true` = always. Default: 50.
+     */
+    mcpToolSearch?: boolean | number;
+    /**
      * Bash commands the agent is refused (a guardrail, not a sandbox). Entries
      * match by command name, optionally + subcommand ("git commit"). Omit the
      * key to use DEFAULT_BASH_DENY; set it (even to []) to take full control.

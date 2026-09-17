@@ -4,13 +4,33 @@
  */
 import { brandEnv } from "../brand";
 import { createHash } from "node:crypto";
-import { createMCPClient, UnauthorizedError } from "@ai-sdk/mcp";
-import { isHttpServer, type HttpServerConfig, type McpServerConfig } from "./config";
+import { createMCPClient, ElicitationRequestSchema, UnauthorizedError } from "@ai-sdk/mcp";
+import {
+    isHttpServer,
+    isToolAllowed,
+    type HttpServerConfig,
+    type McpServerConfig,
+    type ToolAccessPolicy,
+} from "./config";
 import { buildTransport } from "./transport";
 import { hasStoredTokens, oauthClientOptions, McpOAuthProvider } from "./oauth";
+import { interceptNotifications, type McpNotificationHandler } from "./notifications";
+import { handleElicitation } from "./elicitation";
 
 export type McpClient = Awaited<ReturnType<typeof createMCPClient>>;
 export type McpToolSet = Record<string, unknown>;
+
+/**
+ * Everything a live connection reports back to the manager. Passed as one
+ * object because a connection now has more than one thing to say and the
+ * positional-callback version was already at its limit.
+ */
+export interface ConnectHandlers {
+    /** The connection died — stdio child exited, socket dropped, transport errored. */
+    onDisconnect?: (err: unknown) => void;
+    /** The server sent a JSON-RPC notification (tool list changed, log line, progress). */
+    onNotification?: McpNotificationHandler;
+}
 
 export interface ConnectResult {
     client: McpClient;
@@ -152,6 +172,28 @@ function preserveStructuredContent(result: unknown): unknown {
  */
 const CLOSED_CONNECTION = /connection closed|closed client|transport closed|not connected/i;
 
+/**
+ * A protocol message the SDK declined to handle, rather than a broken
+ * connection.
+ *
+ * The SDK answers a server->client request it does not implement
+ * (`sampling/createMessage`, `roots/list`) with a JSON-RPC "method not found"
+ * AND reports it through `onUncaughtError` — and any message it cannot classify
+ * at all becomes "Unsupported message type". Neither says anything about the
+ * health of the connection, but both used to tear it down: the server stayed
+ * connected and working while loop marked it errored and withdrew its tools.
+ *
+ * Notifications are intercepted before the SDK can produce that error at all
+ * (see ./notifications), so this is the belt to that braces — it also covers a
+ * transport we could not hook, and the sampling/roots requests we genuinely do
+ * not serve yet.
+ */
+const BENIGN_PROTOCOL_ERROR = /unsupported message type|unsupported request method|no elicitation handler/i;
+
+export function isBenignProtocolError(err: unknown): boolean {
+    return BENIGN_PROTOCOL_ERROR.test(err instanceof Error ? err.message : String(err));
+}
+
 export function isDisconnectError(err: unknown): boolean {
     return CLOSED_CONNECTION.test(err instanceof Error ? err.message : String(err));
 }
@@ -199,6 +241,35 @@ function withTimeout(name: string, tool: ExecutableTool, onDisconnect?: (err: un
     };
 }
 
+/**
+ * List a live server's tools, namespaced and wrapped, ready to merge into the
+ * agent's tool set.
+ *
+ * Shared by the initial connect and by the `tools/list_changed` refresh: a
+ * server that adds, removes or renames a tool mid-session (which is the entire
+ * point of the capability it advertises) must end up with exactly the same
+ * naming, timeout and disconnect wrapping it got at connect time. Two code
+ * paths building that set separately is how the refreshed one quietly loses the
+ * timeout wrapper.
+ */
+export async function fetchTools(
+    server: string,
+    client: McpClient,
+    onDisconnect?: (err: unknown) => void,
+    policy?: ToolAccessPolicy,
+): Promise<McpToolSet> {
+    const raw = (await client.tools()) as McpToolSet;
+    // Filtered on the SERVER'S OWN names, before namespacing: a policy is
+    // written against the names the server documents, not against loop's
+    // `mcp__<server>__` keys (which are shortened when long, so matching them
+    // would silently stop working on exactly the verbose servers a policy is
+    // most likely to be written for).
+    const permitted = policy
+        ? Object.fromEntries(Object.entries(raw).filter(([name]) => isToolAllowed(policy, name)))
+        : raw;
+    return namespaceTools(server, permitted, onDisconnect);
+}
+
 function namespaceTools(server: string, tools: McpToolSet, onDisconnect?: (err: unknown) => void): McpToolSet {
     const namespaced: McpToolSet = {};
     const taken = new Set<string>();
@@ -221,14 +292,14 @@ function namespaceTools(server: string, tools: McpToolSet, onDisconnect?: (err: 
 export async function connectServer(
     name: string,
     cfg: McpServerConfig,
-    onDisconnect?: (err: unknown) => void,
+    handlers: ConnectHandlers = {},
 ): Promise<ConnectResult> {
     try {
-        return await connectOnce(name, cfg, onDisconnect);
+        return await connectOnce(name, cfg, handlers);
     } catch (err) {
         const fallback = otherTransport(cfg, err);
         if (!fallback) throw err;
-        return await connectOnce(name, fallback, onDisconnect);
+        return await connectOnce(name, fallback, handlers);
     }
 }
 
@@ -292,8 +363,9 @@ export function isUnauthorizedError(err: unknown): boolean {
 async function connectOnce(
     name: string,
     cfg: McpServerConfig,
-    onDisconnect?: (err: unknown) => void,
+    handlers: ConnectHandlers = {},
 ): Promise<ConnectResult> {
+    const { onDisconnect, onNotification } = handlers;
     // A stored session is reason enough to attach the provider: `auth: "oauth"`
     // is a flag people rarely set (a server usually reveals it wants OAuth by
     // answering 401), and without the provider a server the user has already
@@ -304,17 +376,37 @@ async function connectOnce(
             ? new McpOAuthProvider(name, oauthRefreshRedirectUri(), undefined, oauthClientOptions(cfg))
             : undefined;
     const transport = watchTransport(buildTransport(cfg, authProvider), onDisconnect);
+    // Before construction, so a server that announces itself the instant the
+    // handshake completes can't slip a notification past us (stdio only — an
+    // HTTP transport is built inside the SDK and is hooked below instead).
+    if (onNotification) interceptNotifications(transport, onNotification);
     const client = await createMCPClient({
         name: `loop-mcp-${name}`,
         transport,
+        // Declared so servers know they may ask. The SDK only forwards
+        // `elicitation/create` to a registered handler — without the handler
+        // below it answers "no elicitation handler registered on client", which
+        // is a tool call that can never complete on a server built around a
+        // mid-call confirmation.
+        capabilities: { elicitation: {} },
         // Async transport errors must not crash the process. They also mean this
         // connection is finished, which is the manager's business — its status
         // is what the /mcp panel and the next turn's tool set are built from.
-        onUncaughtError: (err) => onDisconnect?.(err),
+        onUncaughtError: (err) => {
+            if (isBenignProtocolError(err)) return;
+            onDisconnect?.(err);
+        },
     });
+    // The HTTP/SSE transports are constructed inside createMCPClient, so this
+    // is the first moment they can be reached. Idempotent with the hook above.
+    if (onNotification) interceptNotifications((client as { transport?: unknown }).transport, onNotification);
+    // Answered by whatever UI is attached, or declined outright when there is
+    // none — never left pending, which would stall the server's tool call until
+    // its timeout.
+    client.onElicitationRequest(ElicitationRequestSchema, (request) => handleElicitation(name, request.params));
     let rawTools: McpToolSet;
     try {
-        rawTools = (await client.tools()) as McpToolSet;
+        rawTools = (await fetchTools(name, client, onDisconnect, cfg)) as McpToolSet;
     } catch (err) {
         // The handshake succeeded, so there is a live subprocess (or socket)
         // behind this client even though the connect as a whole failed. Nobody
@@ -323,8 +415,7 @@ async function connectOnce(
         await client.close().catch(() => {});
         throw err;
     }
-    const tools = namespaceTools(name, rawTools, onDisconnect);
-    return { client, tools, toolCount: Object.keys(tools).length };
+    return { client, tools: rawTools, toolCount: Object.keys(rawTools).length };
 }
 
 /**
