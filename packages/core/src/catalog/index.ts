@@ -17,7 +17,30 @@ import {
     type BedrockModelSummary,
 } from "../providers";
 import { getExtensionHost } from "../extensions";
+import {
+    buildModelInfo,
+    chainIndexes,
+    fromDeclaration,
+    fromDiscovery,
+    parseGatewayModelId,
+    recordIndex,
+    VendorCatalogResolver,
+    type MetadataFloor,
+} from "./metadata";
 import type { ModelInfo, ProviderId } from "../types";
+
+// What a model is worth assuming when no layer knows better. Gateways proxy
+// frontier models, so a generous context is the safer guess; Bedrock's own
+// catalog runs smaller. $0 either way — an invented price is worse than a
+// visible zero, and ~/.loop/models.json can correct it.
+const GATEWAY_FLOOR: MetadataFloor = {
+    contextWindow: 200_000,
+    maxOutput: 16_000,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    reasoning: false,
+    modalities: ["text"],
+};
+const BEDROCK_FLOOR: MetadataFloor = { ...GATEWAY_FLOOR, contextWindow: 128_000, maxOutput: 8_192 };
 
 const cacheStore = new CachedStore(
     `${PRODUCT_NAME}-agent-catalog`,
@@ -57,47 +80,101 @@ interface RawDevModel {
     modalities?: { input?: string[]; output?: string[] };
 }
 
-async function fetchModelDefs(): Promise<Record<string, ModelInfo> | null> {
+type RawDevPayload = Record<string, { models?: Record<string, RawDevModel> }>;
+
+function toModelInfo(provider: string, rawId: string, m: RawDevModel): ModelInfo {
+    const id = `${provider}/${rawId}`;
+    return {
+        id,
+        provider: provider as ProviderId,
+        name: m.name ?? rawId,
+        contextWindow: m.limit?.context ?? 0,
+        maxOutput: m.limit?.output ?? 0,
+        cost: {
+            input: m.cost?.input ?? 0,
+            output: m.cost?.output ?? 0,
+            cacheRead: m.cost?.cache_read ?? 0,
+            cacheWrite: m.cost?.cache_write ?? 0,
+            // Distinct reasoning-token rate (Qwen-style); absent for
+            // the many models that bill reasoning as plain output.
+            ...(m.cost?.reasoning !== undefined ? { reasoning: m.cost.reasoning } : {}),
+        },
+        reasoning: m.reasoning ?? false,
+        modalities: m.modalities?.input ?? ["text"],
+        available: true,
+    };
+}
+
+interface ModelDefs {
+    models: Record<string, ModelInfo>;
+    /** The whole models.dev payload, kept so vendor slices can be cut from it
+     * AFTER custom-provider rediscovery has settled on its final id list —
+     * otherwise a gateway that just renamed `openai/x` to `azure/x` would wait
+     * a full refresh cycle before azure's prices were fetched. */
+    raw: RawDevPayload;
+}
+
+async function fetchModelDefs(): Promise<ModelDefs | null> {
     try {
         const res = await fetch(MODELS_SOURCE, { signal: AbortSignal.timeout(15_000) });
         if (!res.ok) return null;
-        const all = (await res.json()) as Record<string, { models?: Record<string, RawDevModel> }>;
+        const raw = (await res.json()) as RawDevPayload;
         const out: Record<string, ModelInfo> = {};
         for (const provider of MODEL_PROVIDERS) {
-            for (const [rawId, m] of Object.entries(all[provider]?.models ?? {})) {
+            for (const [rawId, m] of Object.entries(raw[provider]?.models ?? {})) {
                 if (provider === "vercel" && !isVercelChatModel(rawId, m.modalities?.output)) continue;
-                const id = `${provider}/${rawId}`;
-                out[id] = {
-                    id,
-                    provider,
-                    name: m.name ?? rawId,
-                    contextWindow: m.limit?.context ?? 0,
-                    maxOutput: m.limit?.output ?? 0,
-                    cost: {
-                        input: m.cost?.input ?? 0,
-                        output: m.cost?.output ?? 0,
-                        cacheRead: m.cost?.cache_read ?? 0,
-                        cacheWrite: m.cost?.cache_write ?? 0,
-                        // Distinct reasoning-token rate (Qwen-style); absent for
-                        // the many models that bill reasoning as plain output.
-                        ...(m.cost?.reasoning !== undefined ? { reasoning: m.cost.reasoning } : {}),
-                    },
-                    reasoning: m.reasoning ?? false,
-                    modalities: m.modalities?.input ?? ["text"],
-                    available: true,
-                };
+                out[`${provider}/${rawId}`] = toModelInfo(provider, rawId, m);
             }
         }
         // Sanity floor: a broken/partial payload must not wipe the catalog.
         if (Object.keys(out).length < 20) return null;
-        return out;
+        return { models: out, raw };
     } catch {
         return null;
     }
 }
 
+/**
+ * The models.dev provider slices worth caching for metadata inference: the
+ * vendor prefixes custom providers actually use, minus the ones already in the
+ * pickable catalog. Demand-driven on purpose — models.dev carries 223 providers
+ * and ~8000 models, and a gateway's vendor slice must NOT land in the catalog
+ * proper or the model picker fills with models the user cannot call.
+ */
+function vendorRefs(raw: RawDevPayload): Record<string, ModelInfo> {
+    const wanted = new Set<string>();
+    for (const cfg of listCustomProviders()) {
+        for (const m of cfg.models ?? []) {
+            const { vendor } = parseGatewayModelId(m.id);
+            if (!vendor) continue; // no routing label, nothing to slice
+            if (MODEL_PROVIDERS.includes(vendor as ProviderId)) continue; // already in the catalog
+            if (raw[vendor]?.models) wanted.add(vendor);
+        }
+    }
+    const out: Record<string, ModelInfo> = {};
+    for (const provider of wanted) {
+        for (const [rawId, m] of Object.entries(raw[provider]?.models ?? {})) {
+            out[`${provider}/${rawId}`] = toModelInfo(provider, rawId, m);
+        }
+    }
+    return out;
+}
+
 function storedModelDefs(): Record<string, ModelInfo> {
     return (cacheStore.get("models") as Record<string, ModelInfo> | undefined) ?? {};
+}
+
+/** models.dev slices for gateway vendor prefixes — inference only, never picked. */
+function storedVendorRefs(): Record<string, ModelInfo> {
+    return (cacheStore.get("refs") as Record<string, ModelInfo> | undefined) ?? {};
+}
+
+/** Gateway-reported limits, keyed by full model id (`custom:<name>/<model>`). */
+function storedCustomMeta(): Record<string, { name?: string; contextWindow?: number; maxOutput?: number }> {
+    return (
+        (cacheStore.get("customMeta") as
+            Record<string, { name?: string; contextWindow?: number; maxOutput?: number }> | undefined) ?? {}
+    );
 }
 
 let mergedCache: Record<string, ModelInfo> | null = null;
@@ -314,10 +391,18 @@ export function listCustomModelIds(): string[] {
  *  - Endpoint with no model list (null/empty: 404, timeout, manual-only
  *    gateway) → the existing `cfg.models` are left untouched. Manually-entered
  *    models are never wiped by a transient outage.
- *  - Endpoint that DOES list models → refresh to that list, but merge each
- *    entry over the stored one so a user's name/pricing overrides survive.
+ *  - Endpoint that DOES list models → refresh to that list, but carry each
+ *    stored entry's own fields over so a user's name/pricing overrides survive.
+ *
+ * What the gateway reports about a model (limits, display name) is deliberately
+ * NOT written back into auth.json. Merging it there makes it indistinguishable
+ * from something the user typed, and the merge above prefers stored over
+ * discovered — so the first refresh would freeze the gateway's own numbers and
+ * a later bump on its side could never land. It goes in the catalog cache
+ * instead, which every refresh is free to overwrite.
  */
 async function refreshCustomProviderModels(): Promise<void> {
+    const meta: Record<string, { name?: string; contextWindow?: number; maxOutput?: number }> = {};
     await Promise.all(
         listCustomProviders().map(async (cfg) => {
             try {
@@ -326,23 +411,29 @@ async function refreshCustomProviderModels(): Promise<void> {
                 const prev = new Map((cfg.models ?? []).map((m) => [m.id, m]));
                 const models = discovered.map((m) => {
                     const p = prev.get(m.id);
-                    const name = p?.name ?? m.name;
-                    const contextWindow = p?.contextWindow ?? m.contextWindow;
-                    const maxOutput = p?.maxOutput ?? m.maxOutput;
                     return {
                         id: m.id,
-                        ...(name ? { name } : {}),
-                        ...(contextWindow ? { contextWindow } : {}),
-                        ...(maxOutput ? { maxOutput } : {}),
+                        ...(p?.name ? { name: p.name } : {}),
+                        ...(p?.contextWindow ? { contextWindow: p.contextWindow } : {}),
+                        ...(p?.maxOutput ? { maxOutput: p.maxOutput } : {}),
                         ...(p?.cost ? { cost: p.cost } : {}),
                     };
                 });
+                for (const m of discovered) {
+                    if (!m.name && !m.contextWindow && !m.maxOutput) continue;
+                    meta[`custom:${cfg.name}/${m.id}`] = {
+                        ...(m.name ? { name: m.name } : {}),
+                        ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}),
+                        ...(m.maxOutput ? { maxOutput: m.maxOutput } : {}),
+                    };
+                }
                 saveCustomProvider({ ...cfg, models });
             } catch {
                 // any failure → leave cfg.models as-is
             }
         }),
     );
+    cacheStore.set("customMeta", meta);
 }
 
 let refreshInFlight: Promise<Record<string, string[]>> | null = null;
@@ -367,8 +458,11 @@ async function refreshAvailability(): Promise<Record<string, string[]>> {
         cacheStore.set("availability", availability);
         cacheStore.set("ts", Date.now());
         if (modelDefs) {
-            cacheStore.set("models", modelDefs);
+            cacheStore.set("models", modelDefs.models);
             cacheStore.set("modelsTs", Date.now());
+            // After `await customRefresh` above, so a gateway that renamed its
+            // ids this cycle gets the new vendor's slice in the same pass.
+            cacheStore.set("refs", vendorRefs(modelDefs.raw));
         }
         return availability;
     })();
@@ -441,14 +535,19 @@ export async function getCatalog(opts: { refresh?: boolean } = {}): Promise<Reco
     // or with the -YYYYMMDD date suffix stripped) and inherit real prices —
     // token usage comes back real from the gateway, so cost tracking stays
     // accurate. No match → $0.
-    const knownByShortId = new Map<string, ModelInfo>();
+    const byShortId = new Map<string, ModelInfo>();
     for (const m of Object.values(out)) {
         const short = m.id.slice(m.id.indexOf("/") + 1);
-        if (!knownByShortId.has(short)) knownByShortId.set(short, m);
+        if (!byShortId.has(short)) byShortId.set(short, m);
     }
-    const inferKnown = (id: string): ModelInfo | undefined =>
-        knownByShortId.get(id) ?? knownByShortId.get(id.replace(/-20\d{6}$/, ""));
+    // Qualified space first (`azure/gpt-5.6-sol`): the models.dev vendor slices
+    // fetched for the prefixes in use, then the catalog proper. Short space is
+    // every catalog model under its bare id.
+    const vendorCatalog = new VendorCatalogResolver(chainIndexes(recordIndex(storedVendorRefs()), recordIndex(out)), {
+        get: (key) => byShortId.get(key),
+    });
 
+    const customMeta = storedCustomMeta();
     for (const cfg of listCustomProviders()) {
         const provId = `custom:${cfg.name}`;
         const userModels = cfg.models ?? [];
@@ -467,23 +566,16 @@ export async function getCatalog(opts: { refresh?: boolean } = {}): Promise<Reco
         }
         for (const m of entries) {
             const fullId = `${provId}/${m.id}`;
-            const known = inferKnown(m.id);
-            out[fullId] = {
-                id: fullId,
-                provider: provId,
-                name: m.name ?? known?.name ?? m.id,
-                contextWindow: m.contextWindow ?? known?.contextWindow ?? 200_000,
-                maxOutput: m.maxOutput ?? known?.maxOutput ?? 16_000,
-                cost: {
-                    input: m.cost?.input ?? known?.cost.input ?? 0,
-                    output: m.cost?.output ?? known?.cost.output ?? 0,
-                    cacheRead: m.cost?.cacheRead ?? known?.cost.cacheRead ?? 0,
-                    cacheWrite: m.cost?.cacheWrite ?? known?.cost.cacheWrite ?? 0,
-                },
-                reasoning: known?.reasoning ?? false,
-                modalities: known?.modalities ?? ["text"],
-                available: true,
-            };
+            // Ordered by authority: what the user declared in auth.json, then
+            // what the gateway said about its own deployment (pronto serves
+            // Claude at 1M where models.dev says 200k — the gateway is right
+            // about itself), then the vendor catalog, then the floor.
+            out[fullId] = buildModelInfo(
+                fullId,
+                provId,
+                [fromDeclaration(m), fromDiscovery(customMeta[fullId]), vendorCatalog.resolve(m.id)],
+                { ...GATEWAY_FLOOR, name: m.id },
+            );
         }
     }
 
@@ -510,23 +602,12 @@ export async function getCatalog(opts: { refresh?: boolean } = {}): Promise<Reco
     // back to $0 + a generic context, correctable via ~/.loop/models.json.
     for (const s of await bedrockModelSummaries(opts.refresh ?? false)) {
         const id = `bedrock/${s.id}`;
-        const known = inferKnown(bedrockShortModelId(s.id));
-        out[id] = {
+        out[id] = buildModelInfo(
             id,
-            provider: "bedrock" as ProviderId,
-            name: s.name,
-            contextWindow: known?.contextWindow ?? 128_000,
-            maxOutput: known?.maxOutput ?? 8_192,
-            cost: {
-                input: known?.cost.input ?? 0,
-                output: known?.cost.output ?? 0,
-                cacheRead: known?.cost.cacheRead ?? 0,
-                cacheWrite: known?.cost.cacheWrite ?? 0,
-            },
-            reasoning: known?.reasoning ?? false,
-            modalities: known?.modalities ?? ["text"],
-            available: true,
-        };
+            "bedrock" as ProviderId,
+            [{ name: s.name }, vendorCatalog.resolve(bedrockShortModelId(s.id))],
+            BEDROCK_FLOOR,
+        );
     }
 
     const overrides = readUserOverrides();

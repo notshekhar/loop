@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.20.11] - 2026-09-22
+
+### Fixed
+
+- **A gateway model whose id carries a vendor prefix no longer prices itself at zero.** When a gateway moves a deployment — bifrost renaming `openai/gpt-5.6-sol` to `azure/gpt-5.6-sol` because the model now serves from Azure — loop had no way to recognise the new id, and fell back to a generic 200k context window and a cost of $0. Nothing announced it: the model appeared in `/model` looking exactly as it always had, and every turn on it was billed at nothing. The old match only ever worked by accident, resolving `openai/gpt-5.6-sol` off OpenRouter's `openrouter/openai/gpt-5.6-sol` mirror because OpenRouter happens to namespace its own ids the same way — right answer, wrong reason, and there is no such mirror for `azure/`. That prefix is now read as what it is: a vendor, looked up as a vendor, with the labels gateways invent (`bedrock`, `vertex_ai`, `azure-openai`) mapped to the names models.dev actually uses. It matters beyond recognition, because the same model is priced differently per vendor — Azure bills gpt-5.6-sol's cache at $0.50/$6.25 against OpenAI's $0.40/$5.00, so inheriting the wrong vendor's numbers is its own quiet error. The vendor's model list is fetched only for prefixes actually in use and kept apart from the catalog proper, so a gateway's vendor never fills the model picker with models you cannot call.
+- **A gateway's own answer about its own deployment is no longer thrown away.** Model discovery over the OpenAI dialect kept the id and discarded everything beside it, though the gateways that speak that dialect do report their limits. A gateway serving Claude at a 1M context was described with the 200k that the public catalog lists, and long sessions compacted early for no reason. Reported limits are now read, under the several spellings in use, and they outrank the catalog — an endpoint is the authority on what it is serving, whatever the vendor publishes.
+- **Discovered model metadata no longer freezes on first sight.** What discovery learned was written back into `auth.json` beside what you had written yourself, where the merge prefers the stored value — so the first answer a gateway gave became permanent and a later change on its side could never land. `auth.json` now holds your declarations only; what the gateway reports lives in the catalog cache, which every refresh is free to overwrite.
+
+### Changed
+
+- **Model limits and pricing resolve through one ordered set of layers** — what you declared, what the gateway reported, what the vendor catalog knows, then the defaults — merged field by field in a single place. Each source contributes only what it actually knows, and an explicit `$0` is treated as an answer rather than as silence, so a genuinely free model is not re-priced from somewhere else. The precedence had previously been spelled out per field at each call site, which is how the custom-provider and Bedrock paths came to fall back to different context windows without anyone deciding they should.
+
 ## [0.20.10] - 2026-09-17
 
 ### Added

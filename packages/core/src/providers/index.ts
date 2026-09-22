@@ -440,11 +440,32 @@ export async function fetchCustomProviderModels(
             }));
         }
         // openai + openai-compatible — credential already placed above.
+        // OpenAI's own /v1/models returns nothing but ids, but the gateways
+        // that use this dialect (bifrost, litellm, openrouter-likes) do report
+        // limits, under a handful of spellings. Whatever a gateway says about
+        // its own deployment beats anything we can infer from a model id, so
+        // take it when it's there.
         const res = await fetch(`${base}/models`, { headers, signal: AbortSignal.timeout(10_000) });
         if (!res.ok) return null;
-        const body = (await res.json()) as { data?: Array<{ id: string }> };
+        const body = (await res.json()) as {
+            data?: Array<{
+                id: string;
+                display_name?: string;
+                context_window?: number;
+                context_length?: number;
+                max_input_tokens?: number;
+                max_output_tokens?: number;
+                max_completion_tokens?: number;
+                max_tokens?: number;
+            }>;
+        };
         if (!body.data?.length) return null;
-        return body.data.map((m) => ({ id: m.id }));
+        return body.data.map((m) => ({
+            id: m.id,
+            name: m.display_name,
+            contextWindow: m.context_window ?? m.context_length ?? m.max_input_tokens,
+            maxOutput: m.max_output_tokens ?? m.max_completion_tokens ?? m.max_tokens,
+        }));
     } catch {
         return null;
     }
