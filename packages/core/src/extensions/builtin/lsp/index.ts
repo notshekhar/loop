@@ -113,7 +113,7 @@ export function summarizeLspCall(args: Record<string, unknown>, ctx: ToolSummary
         target = rel;
     }
 
-    const op = ctx.uiMode === "noir" ? ctx.theme.bold(operation) : operation;
+    const op = ctx.theme.bold(operation);
     return target ? `${op} ${ctx.theme.fg("muted", "·")} ${target}` : op;
 }
 

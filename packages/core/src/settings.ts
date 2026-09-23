@@ -14,30 +14,20 @@ export interface AppSettings {
     defaultModel?: string;
     /** Models Ctrl+P cycles through (full provider/model ids). Managed via /scoped-models. */
     scopedModels?: string[];
+    /** The transcript's palette: "night" (default), "day", "system", or any
+     * theme an extension or ~/.loop/agent/themes contributes. */
     theme?: string;
-    /** Active UI mode ("experience"). Builtins: "noir" (default) and "loop"; extensions can register more. */
-    uiMode?: string;
-    /** Theme per UI mode, keyed by mode id (e.g. { grok: "night" }). Loop's theme stays on the legacy `theme` key. */
-    uiThemes?: Record<string, string>;
     /**
-     * Start in the active mode's LIVE variant — the transcript holds the
-     * keyboard and runs of tool calls fold into one line. Only meaningful for
-     * modes that define one (noir does; loop does not). ctrl+e flips between
-     * the two at any time; this only chooses which you start in.
-     */
-    uiLive?: boolean;
-    /**
-     * How much of a finished tool call the transcript shows, for modes that
-     * fold their output away (noir does; loop shows a preview regardless).
+     * How much of a finished tool call the transcript shows.
      *
      * - `compact` — the call and nothing else, one row each.
      * - `normal` (default) — plus a receipt saying what came back, and a few
      *   lines of the output itself.
      * - `full` — plus every call's output expanded.
      *
-     * `d` cycles it inside transcript navigation. It is a density preference,
-     * not a mode: it can only ever take away what the active mode already
-     * offers, so a mode that shows no receipt is unaffected by `compact`.
+     * `d` cycles it while the transcript has the keyboard. It is a density
+     * preference and only ever takes away: there is one transcript, and this
+     * chooses how much of it you want to see.
      */
     toolDetail?: "compact" | "normal" | "full";
     /**

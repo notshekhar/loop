@@ -6,6 +6,7 @@ import {
 } from "./alt-screen-search";
 import { AltScreenFlashContainer } from "./components/alt-screen-flash";
 import { ScrollView } from "./components/scroll-view";
+import { logRenderError } from "./render-error-log";
 import { getKeybindings } from "./keybindings";
 import { isKeyRelease } from "./keys";
 import {
@@ -206,6 +207,20 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
      * Coordinates are as reported: 1-based.
      */
     private mouseInterceptor: ((event: SgrMouseEvent) => boolean) | undefined;
+    /**
+     * loop-local (keep across pi-mono syncs): told about a primary-button
+     * CLICK — pressed and released on the same cell with no drag in between,
+     * and not on a link (a link activates instead).
+     *
+     * The viewport recognises the gesture anyway — it has to, to tell a click
+     * from the drag that makes a text selection — and this is it saying so. An
+     * application can give a click a meaning of its own (loop selects the
+     * transcript entry under the pointer) without taking the mouse away from
+     * selection, which intercepting the press would do.
+     *
+     * Coordinates are 0-based cells, as the viewport counts them.
+     */
+    public onClick?: (x: number, y: number) => void;
     /** Wheel-up is dropped until this instant (see WHEEL_YIELDS_TO_KEYBOARD_MS). */
     private wheelHoldUntil = 0;
     private readonly flashes: AltScreenFlashContainer;
@@ -406,19 +421,35 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
         this.uploadedKittyImages.clear();
     }
 
+    /**
+     * loop-local: the transcript to leave in the terminal on the way out — or
+     * none, if it cannot be drawn.
+     *
+     * Leaving the alt screen has to restore the terminal whatever the
+     * components do. This render used to run bare, so a component that threw
+     * took the exit down with it: no transcript, and a terminal left in the
+     * alternate screen with autowrap off. A failure now costs only the print,
+     * logged once like any other failed frame.
+     */
+    private exitDocument(width: number): string[] {
+        try {
+            const documentLines = this.render(width).map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
+            return this.applyLineResets(documentLines.map((line) => line.replaceAll(CURSOR_MARKER, ""))).map((line) =>
+                isImageLine(line) || visibleWidth(line) <= width ? line : sliceByColumn(line, 0, width, true),
+            );
+        } catch (error) {
+            logRenderError("exit print", error, this.logDirectory);
+            return [];
+        }
+    }
+
     protected override afterTerminalStop(options: TuiStopOptions): void {
         if (!this.altScreenActive) return;
         this.altScreenActive = false;
         if (options.preserveScreen) {
             this.terminal.write(`${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`);
         } else {
-            const width = Math.max(1, this.terminal.columns);
-            const documentLines = this.render(width).map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
-            this.lastDocument = this.applyLineResets(
-                documentLines.map((line) => line.replaceAll(CURSOR_MARKER, "")),
-            ).map((line) =>
-                isImageLine(line) || visibleWidth(line) <= width ? line : sliceByColumn(line, 0, width, true),
-            );
+            this.lastDocument = this.exitDocument(Math.max(1, this.terminal.columns));
             let buffer = `${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}${DISABLE_AUTOWRAP}`;
             for (let row = 0; row < this.lastDocument.length; row++) {
                 if (row > 0) buffer += "\r\n";
@@ -1115,13 +1146,12 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
             this.stopSelectionAutoScroll();
             if (!this.selectionAnchor) return;
             this.updateSelectionFocus(point);
-            const clickedUrl =
+            const onSamePoint =
                 !this.selectionDragged &&
                 this.selectionAnchor.scrollView === point.scrollView &&
                 this.selectionAnchor.row === point.row &&
-                this.selectionAnchor.col === point.col
-                    ? this.pressedUrl
-                    : undefined;
+                this.selectionAnchor.col === point.col;
+            const clickedUrl = onSamePoint ? this.pressedUrl : undefined;
             this.pressedUrl = undefined;
             if (clickedUrl && this.openUrl) {
                 this.selectionAnchor = undefined;
@@ -1134,6 +1164,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
                 this.requestRender();
                 return;
             }
+            // A click, not a drag: the selection it made is empty, so this
+            // costs the selection nothing and lets the application act on it.
+            if (onSamePoint) this.onClick?.(event.x, event.y);
             if (this.copyOnSelect) void this.copySelectionToClipboard();
             this.requestRender();
             return;

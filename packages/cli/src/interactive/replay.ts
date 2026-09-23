@@ -20,6 +20,23 @@ interface ReplayPart {
 }
 
 /**
+ * The provider half of a model id, or "" when it has none.
+ *
+ * Replay only uses it to label the rebuilt messages, and it must never be a
+ * reason a conversation cannot be reopened: sessions from older versions carry
+ * bare ids (`grok-4`) or none at all, and a fresh install resuming with
+ * `--session` has no model selected yet. `parseModelId` rightly refuses those
+ * — as a request to CALL a model — but reading history is not that.
+ */
+function providerOf(modelId: string): string {
+    try {
+        return parseModelId(modelId).provider;
+    } catch {
+        return "";
+    }
+}
+
+/**
  * Render the session's current branch path (root → leaf) into the chat.
  * Shared by /resume, /fork, and /tree navigation so all three replay the
  * same way. Path-based: abandoned branches don't render.
@@ -44,7 +61,7 @@ export function renderSessionBranch(
         if (e.type === "compact") latestCompact = e;
     }
 
-    const { provider } = parseModelId(modelId);
+    const provider = providerOf(modelId);
     let messageIndex = 0;
     // Subagent entries persist when the run FINISHES — before the step's own
     // assistant message (which persists at step end). Live, the task boxes

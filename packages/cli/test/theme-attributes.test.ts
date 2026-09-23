@@ -1,7 +1,7 @@
 /**
  * The theme's text attributes, at a colour level a real terminal has.
  *
- * `ui-mode-snapshot.test.ts` pins `chalk.level = 0` so its byte-identity
+ * `transcript-snapshot.test.ts` pins `chalk.level = 0` so its byte-identity
  * baseline does not depend on whoever's shell exports `FORCE_COLOR`. That pin
  * has a cost: at level 0 chalk emits nothing, so `bold`/`italic`/`underline`
  * render as plain text there and the snapshots assert nothing about them.
@@ -24,7 +24,7 @@ import { initTheme, theme } from "../src/interactive/ui/theme";
 
 // Level 3 = truecolor, matching what `fg`/`bg` emit unconditionally. Set on
 // the instance because chalk reads FORCE_COLOR at import time and imports
-// hoist — see the note in ui-mode-snapshot.test.ts.
+// hoist — see the note in transcript-snapshot.test.ts.
 beforeAll(() => {
     initTheme("dark");
     chalk.level = 3;
@@ -32,7 +32,7 @@ beforeAll(() => {
 
 // Put it back where the snapshot baseline needs it. chalk is a singleton bun
 // shares across every test file in the process, so raising the level and
-// leaving it raised would break ui-mode-snapshot.test.ts from the outside.
+// leaving it raised would break transcript-snapshot.test.ts from the outside.
 afterAll(() => {
     chalk.level = 0;
 });

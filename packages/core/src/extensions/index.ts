@@ -41,7 +41,6 @@ export {
     type ToolSummaryContext,
     type ExtensionTheme,
     type ExtensionThemeJson,
-    type ExtensionUiMode,
     type TurnContext,
     type ToolCallContext,
     type StatusLineContext,

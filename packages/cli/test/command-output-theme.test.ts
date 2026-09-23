@@ -15,18 +15,16 @@ import chalk from "chalk";
 
 process.env.COLORTERM = "truecolor";
 
-import { registerNoirMode } from "../src/interactive/ui/noir-mode";
 import { initTheme, theme } from "../src/interactive/ui/theme";
 import { accent, heading } from "../src/interactive/ui/text";
 
 beforeAll(() => {
-    registerNoirMode();
-    initTheme("dark");
+    initTheme("night");
     chalk.level = 3;
 });
 
 afterAll(() => {
-    initTheme("dark");
+    initTheme("night");
     chalk.level = 0;
 });
 
@@ -43,15 +41,15 @@ describe("a heading in command output", () => {
     });
 
     test("moves when the theme moves", () => {
-        initTheme("dark");
+        initTheme("night");
         const dark = heading("cost");
-        initTheme("light");
+        initTheme("day");
         const light = heading("cost");
         expect(dark).not.toBe(light);
     });
 
-    test("follows a ui mode's own palette", () => {
-        initTheme("light");
+    test("follows the active theme's palette", () => {
+        initTheme("day");
         const day = heading("🥩 12.4M tokens in the last year");
         initTheme("night");
         const night = heading("🥩 12.4M tokens in the last year");
@@ -67,7 +65,7 @@ describe("a heading in command output", () => {
 
 describe("a figure in a stat row", () => {
     test("rides the accent, the way /cost's dollar figures already did", () => {
-        initTheme("dark");
+        initTheme("night");
         expect(accent("3 days")).toContain(theme.fg("accent", "3 days"));
     });
 });

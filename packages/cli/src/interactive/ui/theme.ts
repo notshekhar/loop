@@ -11,8 +11,9 @@ import * as path from "node:path";
 import type { MarkdownTheme, SelectListTheme } from "@notshekhar/loop-tui";
 import chalk from "chalk";
 import { luminance, mix } from "./palette";
-import { DARK_THEME, type ThemeColors, type ThemeJson } from "./themes";
-import { activeUiMode, setActiveUiMode, setLiveVariant, setToolDetail } from "./ui-mode";
+import { builtinThemes, NIGHT_THEME, type ThemeColors, type ThemeJson } from "./themes";
+import { parseToolDetail, setToolDetail } from "./tool-detail";
+import { getExtensionHost } from "@notshekhar/loop-core";
 
 export type ThemeColor = keyof ThemeColors & string;
 export type ThemeBg =
@@ -319,61 +320,80 @@ function customThemesDir(): string {
     return path.join(home, CONFIG_DIR_NAME, "agent", "themes");
 }
 
-/** Fill missing slots from the builtin dark theme — custom files written
- * before a slot existed, and mode themes (extensions) that skip optional
- * slots, would otherwise make theme.fg() throw at render time. Vars merge
- * too: the inherited color values are var REFERENCES into dark's vars. */
-function withDarkFallback(json: ThemeJson): ThemeJson {
+/** Fill missing slots from `night` — custom files written before a slot
+ * existed, and extension palettes that only restyle a few, would otherwise
+ * make theme.fg() throw at render time. Vars merge too: the inherited colour
+ * values are var REFERENCES into night's vars. */
+function withFallback(json: ThemeJson): ThemeJson {
     return {
         ...json,
-        vars: { ...DARK_THEME.vars, ...json.vars },
-        colors: { ...DARK_THEME.colors, ...json.colors },
+        vars: { ...NIGHT_THEME.vars, ...json.vars },
+        colors: { ...NIGHT_THEME.colors, ...json.colors },
     };
 }
 
-function loadThemeJson(name: string): ThemeJson {
-    // The active UI mode's own themes first (loop owns dark/light), then the
-    // user's custom theme files.
-    const builtin = activeUiMode().themes.find((t) => t.name === name);
-    if (builtin) return withDarkFallback(builtin);
-    const file = path.join(customThemesDir(), `${name}.json`);
-    return withDarkFallback(JSON.parse(fs.readFileSync(file, "utf8")) as ThemeJson);
+/**
+ * Every theme that can be picked by name, in picker order: the builtins, then
+ * whatever extensions contribute.
+ *
+ * Extension palettes are deliberately PARTIAL — `ThemeJson` demands all ~55
+ * slots, and one that only restyles a few would be unusable if it had to
+ * restate the rest — so `withFallback` fills the gaps at load.
+ */
+export function availableThemes(): ThemeJson[] {
+    const contributed = getExtensionHost()
+        .getThemes()
+        .map((t) => t as unknown as ThemeJson);
+    const byName = new Map<string, ThemeJson>();
+    for (const t of [...builtinThemes(), ...contributed]) byName.set(t.name, t);
+    return [...byName.values()];
 }
 
-export function initTheme(themeName = "dark"): void {
-    const fallback = activeUiMode().themes[0] ?? DARK_THEME;
+function loadThemeJson(name: string): ThemeJson {
+    // A shipped or contributed theme first, then the user's own files.
+    const known = availableThemes().find((t) => t.name === name);
+    if (known) return withFallback(known);
+    const file = path.join(customThemesDir(), `${name}.json`);
+    return withFallback(JSON.parse(fs.readFileSync(file, "utf8")) as ThemeJson);
+}
+
+export function initTheme(themeName = "night"): void {
     try {
         activeTheme = new Theme(loadThemeJson(themeName));
     } catch {
-        activeTheme = new Theme(withDarkFallback(fallback));
+        activeTheme = new Theme(withFallback(NIGHT_THEME));
     }
 }
 
 /**
- * Activate the configured UI mode and its theme (startup and /reload).
- * Noir is the default when no uiMode is set. Mode themes resolve from
- * `uiThemes[modeId]`; loop keeps honoring the legacy `theme` key. Unknown
- * modes (e.g. an uninstalled extension's) fall back to loop rather than
- * failing startup.
+ * The theme name in settings, honouring what older versions wrote there.
+ *
+ * Three keys have meant "which theme" over time: `uiThemes[mode]` while the
+ * chat had UI modes, `theme` before that, and `theme` again now. They are read
+ * newest-first and the two dead mode ids (`noir`, and `grok` before it was
+ * renamed) are still understood, so a settings.json nobody has touched since
+ * keeps the look it was left on.
+ *
+ * The two `loop`-mode palettes are gone, so a saved `dark`/`light` resolves to
+ * the canvas theme of the same polarity rather than to nothing.
  */
-export function initUiModeAndTheme(): void {
-    const raw = (settingsStore.get("uiMode") as string | undefined) ?? "noir";
-    // The dark-canvas mode shipped briefly as "grok" — honor old settings.
-    const modeId = raw === "grok" ? "noir" : raw;
-    if (!setActiveUiMode(modeId)) setActiveUiMode("loop");
-    const mode = activeUiMode();
+function configuredThemeName(): string {
     const perMode = settingsStore.get("uiThemes") as Record<string, string> | undefined;
-    const legacy = mode.id === "loop" ? (settingsStore.get("theme") as string | undefined) : undefined;
-    const perModeTheme = perMode?.[mode.id] ?? (mode.id === "noir" ? perMode?.grok : undefined);
-    initTheme(perModeTheme ?? legacy ?? mode.themes[0]?.name ?? "dark");
-    // Which VARIANT of that mode to start in. Only ever on for a mode that
-    // defines one, so a saved preference can't strand a mode in a state it
-    // has no look for.
-    setLiveVariant(Boolean(settingsStore.get("uiLive")) && Boolean(activeUiMode().live));
+    const saved = (settingsStore.get("theme") as string | undefined) ?? perMode?.noir ?? perMode?.grok;
+    if (saved === "dark") return "night";
+    if (saved === "light") return "day";
+    return saved ?? "night";
+}
+
+/**
+ * Activate the configured theme and transcript density (startup and /reload).
+ */
+export function initThemeFromSettings(): void {
+    initTheme(configuredThemeName());
     // How much of a finished call to show. Unknown values (a hand-edited
-    // settings file) fall back rather than resolving to a style nobody defined.
-    const detail = settingsStore.get("toolDetail");
-    setToolDetail(detail === "compact" || detail === "full" ? detail : "normal");
+    // settings file) fall back rather than resolving to a density nobody
+    // defined.
+    setToolDetail(parseToolDetail(settingsStore.get("toolDetail")));
 }
 
 // ---------------------------------------------------------------------------

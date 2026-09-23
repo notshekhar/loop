@@ -11,6 +11,7 @@ export {
 } from "./autocomplete";
 // Components
 export { Box } from "./components/box";
+export { logRenderError, resetRenderErrorLogForTest } from "./render-error-log";
 export { CancellableLoader } from "./components/cancellable-loader";
 export { Editor, type EditorOptions, type EditorTheme } from "./components/editor";
 export { HStack } from "./components/h-stack";

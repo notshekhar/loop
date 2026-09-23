@@ -144,7 +144,7 @@ export class WelcomeBanner implements Component {
         lines.push(
             ` ${theme.fg("dim", "type ")}${theme.fg("text", theme.bold("/help"))}${theme.fg("dim", " for slash commands")}`,
         );
-        lines.push(` ${theme.fg("dim", "ctrl+e transcript · shift+tab agents · ctrl+c twice to quit")}`);
+        lines.push(` ${theme.fg("dim", "ctrl+e navigates transcript · shift+tab agents · ctrl+c twice to quit")}`);
         lines.push("");
 
         // Truncate then pad each line to full width so the differential

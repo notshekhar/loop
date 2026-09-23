@@ -97,21 +97,19 @@ Other notable keys (all managed via `/settings` too):
   `<cwd>/{{dir}}/skills/` (project); the agent loads one via the `skill`
   tool or by reading its file. A skill with `disable-model-invocation` in
   its frontmatter is excluded from the `skill` tool.
-- `"uiMode"` — the chat's look. Builtins: `"noir"` (default — dark washed
-  canvas, flat `◆` tool rows, collapsing thought blocks) and `"loop"` (the
-  classic boxed look). Switch live with `/ui <mode>`; each mode keeps its
-  own theme (loop: `dark`/`light` on the `theme` key; other modes under
-  `uiThemes`, e.g. `{ "noir": "day" }`).
-  Noir ships a third theme, **`system`**: noir's ink with NO canvas of its
-  own, so your terminal's own background shows through — a true black, a
-  transparency, a background image. It asks the terminal what it is (the
-  OSC 11 background colour for the exact canvas, the colour-scheme report as a
-  fallback) once at startup, with nothing to configure. Its palette —
-  every slot of it, greys and hues and the syntax set — is rebuilt to hold the
-  same contrast noir's own themes hold against their washed canvas, so it reads
-  on your background the way noir does on its own. The lift is one-sided: a
-  terminal darker than noir's canvas is left exactly as it is. Pick it in
-  `/settings` → theme, or set `{ "uiThemes": { "noir": "system" } }`.
+- `"theme"` — the transcript's palette. `"night"` (default) and `"day"` are
+  GrokNight and GrokDay: they WASH the canvas, setting the terminal's own
+  background and foreground (OSC 11/10) so the whole screen is the theme's.
+  `"system"` is the same ink with NO canvas of its own, so your terminal's
+  background shows through — a true black, a transparency, a background image.
+  It asks the terminal what it is (the OSC 11 background colour for the exact
+  canvas, the colour-scheme report as a fallback) once at startup, with nothing
+  to configure, and every slot of its palette — greys, hues, the syntax set —
+  is rebuilt to hold the same contrast night and day hold against their own
+  canvas. The lift is one-sided: a terminal darker than night's canvas is left
+  exactly as it is. Switch live with `/theme` or `/settings` → theme; custom
+  palettes live in `~/{{dir}}/agent/themes/<name>.json` and extensions can
+  register their own.
 - `"pinnedInput": true` — hold the prompt on the last rows of the screen. The
   transcript scrolls in its own window above it and the wheel moves only that
   window; the prompt, status line and panels stay put. Off (the default), the

@@ -6,6 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { brandEnv, CONFIG_DIR_NAME } from "./brand";
+import { logRenderError } from "./render-error-log";
 import { isKeyRelease, matchesKey } from "./keys";
 import type { Terminal } from "./terminal";
 import {
@@ -432,6 +433,36 @@ export abstract class TuiBase extends Container implements TUI {
     }
 
     protected abstract doRender(): void;
+
+    /**
+     * loop-local (keep across pi-mono syncs): told about a frame that threw.
+     *
+     * Called once per DISTINCT failure (see render-error-log.ts). Nothing can
+     * be painted by the time this runs, so it is for surfacing and logging,
+     * not for drawing.
+     */
+    public onRenderError?: (error: unknown) => void;
+
+    /**
+     * loop-local: the one door every frame goes through.
+     *
+     * `doRender` used to be called bare from three schedulers, so a component
+     * that threw escaped to the process's uncaught-exception handler — which
+     * surfaced the error in the chat and asked for a repaint, which threw
+     * again. Nothing ever painted, the chat grew by an error line per frame,
+     * and the UI looked frozen: no typing, no scrolling, until a restart
+     * rebuilt the components that had been throwing. A frame that fails now
+     * fails ALONE. It is logged once, reported once, and never re-requests
+     * itself, so the next frame comes from the next real event and the UI
+     * recovers the moment whatever broke stops breaking.
+     */
+    private renderFrame(): void {
+        try {
+            this.doRender();
+        } catch (error) {
+            if (logRenderError("frame", error, this.logDirectory)) this.onRenderError?.(error);
+        }
+    }
 
     protected resetRenderState(): void {}
 
@@ -900,7 +931,7 @@ export abstract class TuiBase extends Container implements TUI {
         this.renderRequested = false;
         this.cancelRenderTimer();
         this.lastRenderAt = performance.now();
-        this.doRender();
+        this.renderFrame();
     }
 
     requestRender(force = false): void {
@@ -927,7 +958,7 @@ export abstract class TuiBase extends Container implements TUI {
             this.cancelRenderTimer();
             this.renderRequested = false;
             this.lastRenderAt = performance.now();
-            this.doRender();
+            this.renderFrame();
         });
     }
 
@@ -950,7 +981,7 @@ export abstract class TuiBase extends Container implements TUI {
             }
             this.renderRequested = false;
             this.lastRenderAt = performance.now();
-            this.doRender();
+            this.renderFrame();
             if (this.renderRequested) {
                 this.scheduleRender();
             }

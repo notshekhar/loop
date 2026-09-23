@@ -11,19 +11,14 @@ import type { TUI } from "@notshekhar/loop-tui";
 
 process.env.COLORTERM = "truecolor";
 
-import { registerNoirMode } from "../src/interactive/ui/noir-mode";
-import { setActiveUiMode, setLiveVariant } from "../src/interactive/ui/ui-mode";
 import { initTheme, theme } from "../src/interactive/ui/theme";
 import { highlightShellCommand } from "../src/interactive/ui/shell-highlight";
 import { formatToolArgs, highlightToolSummary } from "../src/interactive/ui/tool-summary";
 import { ToolExecutionComponent } from "../src/interactive/ui/tool-execution";
 import { ChatHistory } from "../src/interactive/components/chat-history";
 
-beforeAll(() => registerNoirMode());
 afterEach(() => {
-    setLiveVariant(false);
-    setActiveUiMode("loop");
-    initTheme("dark");
+    initTheme("night");
 });
 
 const tui = { requestRender() {}, terminal: { rows: 40, columns: 200 } } as unknown as TUI;
@@ -43,7 +38,7 @@ const painted = (out: string, slot: Parameters<typeof theme.fg>[0], text: string
 
 describe("highlightShellCommand", () => {
     test("colours the program at the head of every pipeline segment", () => {
-        initTheme("dark");
+        initTheme("night");
         const out = highlightShellCommand("git status | grep -v Merge && echo ok");
         expect(painted(out, "syntaxFunction", "git")).toBe(true);
         expect(painted(out, "syntaxFunction", "grep")).toBe(true);
@@ -56,7 +51,7 @@ describe("highlightShellCommand", () => {
     });
 
     test("quoting, variables and comments each keep their own slot", () => {
-        initTheme("dark");
+        initTheme("night");
         const out = highlightShellCommand(`grep -r "$HOME/src" --include='*.ts' . # find it`);
         expect(painted(out, "syntaxString", `"$HOME/src"`)).toBe(true);
         expect(painted(out, "syntaxComment", "# find it")).toBe(true);
@@ -64,7 +59,7 @@ describe("highlightShellCommand", () => {
     });
 
     test("a loop header reads as grammar, not as three commands", () => {
-        initTheme("dark");
+        initTheme("night");
         const out = highlightShellCommand("for f in *.ts; do echo $f; done");
         expect(painted(out, "syntaxKeyword", "for")).toBe(true);
         expect(painted(out, "syntaxKeyword", "in")).toBe(true);
@@ -78,7 +73,7 @@ describe("highlightShellCommand", () => {
     });
 
     test("a keyword used as an argument stays an argument", () => {
-        initTheme("dark");
+        initTheme("night");
         // The bug this guards: `done` is only the end of a loop at the head of
         // a command. Here it is what echo prints.
         const out = highlightShellCommand("echo done");
@@ -87,14 +82,14 @@ describe("highlightShellCommand", () => {
     });
 
     test("an environment prefix is a variable, and the program is the word after it", () => {
-        initTheme("dark");
+        initTheme("night");
         const out = highlightShellCommand("FOO=bar npm run build");
         expect(painted(out, "syntaxVariable", "FOO=bar")).toBe(true);
         expect(painted(out, "syntaxFunction", "npm")).toBe(true);
     });
 
     test("quoted and expanded assignment values keep the following command highlighted", () => {
-        initTheme("dark");
+        initTheme("night");
         for (const cmd of [`FOO="a b" npm test`, "FOO=$HOME/bin npm test", "FOO=$(pwd) npm test"]) {
             const out = highlightShellCommand(cmd);
             expect(strip(out)).toBe(cmd);
@@ -103,7 +98,7 @@ describe("highlightShellCommand", () => {
     });
 
     test("all parts of a compound word share its command position", () => {
-        initTheme("dark");
+        initTheme("night");
         for (const cmd of ['"/usr"/bin/git status', "$HOME/bin/git status"]) {
             const out = highlightShellCommand(cmd);
             expect(strip(out)).toBe(cmd);
@@ -113,7 +108,7 @@ describe("highlightShellCommand", () => {
     });
 
     test("escaped separators and spaces stay inside their word", () => {
-        initTheme("dark");
+        initTheme("night");
         const cmd = String.raw`echo foo\ bar \; done \| grep \# literal`;
         const out = highlightShellCommand(cmd);
         expect(strip(out)).toBe(cmd);
@@ -125,7 +120,7 @@ describe("highlightShellCommand", () => {
     });
 
     test("redirections skip their target without consuming the command position", () => {
-        initTheme("dark");
+        initTheme("night");
         for (const cmd of [">out git status", '2>"error log" git status', "3>&1 git status", "<<<$INPUT git status"]) {
             const out = highlightShellCommand(cmd);
             expect(strip(out)).toBe(cmd);
@@ -139,7 +134,7 @@ describe("highlightShellCommand", () => {
     });
 
     test("newlines separate commands and end comments, except when escaped", () => {
-        initTheme("dark");
+        initTheme("night");
         const out = highlightShellCommand("echo ok # comment\ngit status");
         expect(painted(out, "syntaxFunction", "git")).toBe(true);
         expect(painted(out, "syntaxComment", "# comment\ngit")).toBe(false);
@@ -148,7 +143,7 @@ describe("highlightShellCommand", () => {
     });
 
     test("colouring never changes the text, only its escapes", () => {
-        initTheme("dark");
+        initTheme("night");
         for (const cmd of [
             "git status",
             `awk '{print $1}' file | sort -u`,
@@ -163,7 +158,7 @@ describe("highlightShellCommand", () => {
     });
 
     test("terminates on every byte it is given", () => {
-        initTheme("dark");
+        initTheme("night");
         // A reader that claims nothing would spin here; each of these is a
         // character no branch consumes on its own.
         for (const cmd of ["\\", "((", "))", "$", "'", "``", "!!", "%^@"]) {
@@ -174,14 +169,14 @@ describe("highlightShellCommand", () => {
 
 describe("highlightToolSummary", () => {
     test("only bash — every other summary keeps the caller's muted run", () => {
-        initTheme("dark");
+        initTheme("night");
         expect(highlightToolSummary("read", "src/a.ts")).toBeNull();
         expect(highlightToolSummary("grep", "TODO in src")).toBeNull();
         expect(highlightToolSummary("bash", "git status")).not.toBeNull();
     });
 
     test("a backgrounded call keeps its label out of the command", () => {
-        initTheme("dark");
+        initTheme("night");
         const out = highlightToolSummary("bash", "npm run dev (background)")!;
         expect(strip(out)).toBe("npm run dev (background)");
         expect(painted(out, "syntaxFunction", "npm")).toBe(true);
@@ -189,7 +184,7 @@ describe("highlightToolSummary", () => {
     });
 
     test("a summary that already carries colour is left alone", () => {
-        initTheme("dark");
+        initTheme("night");
         // An extension may own bash's summary; re-painting could cut an escape.
         expect(highlightToolSummary("bash", `${sgr("muted")}already painted`)).toBeNull();
     });
@@ -201,8 +196,7 @@ describe("the row uses the width it actually has", () => {
 
     test("bash rows retain command colors after quoted assignments and redirections", () => {
         for (const mode of ["loop", "noir"]) {
-            setActiveUiMode(mode);
-            initTheme("dark");
+            initTheme("night");
             const command = 'FOO="a b" 2>errors git status | grep modified';
             const c = new ToolExecutionComponent("bash", { command }, tui, "/repo");
             c.updateResult({ content: [{ type: "text", text: "ok" }], isError: false }, false);
@@ -224,8 +218,7 @@ describe("the row uses the width it actually has", () => {
     });
 
     test("a wide terminal shows the whole command; a narrow one clips it", () => {
-        setActiveUiMode("noir");
-        initTheme("dark");
+        initTheme("night");
         const row = (width: number) => {
             const c = new ToolExecutionComponent("bash", { command: LONG }, tui, "/repo");
             c.updateResult({ content: [{ type: "text", text: "ok" }], isError: false }, false);
@@ -242,8 +235,7 @@ describe("the row uses the width it actually has", () => {
     });
 
     test("the default box gets the same width, not 80 columns of it", () => {
-        setActiveUiMode("loop");
-        initTheme("dark");
+        initTheme("night");
         const c = new ToolExecutionComponent("bash", { command: LONG }, tui, "/repo");
         c.updateResult({ content: [{ type: "text", text: "ok" }], isError: false }, false);
         const title = c
@@ -254,8 +246,7 @@ describe("the row uses the width it actually has", () => {
     });
 
     test("task rows show the prompt the width allows, not 50 characters of it", () => {
-        setActiveUiMode("noir");
-        initTheme("dark");
+        initTheme("night");
         const prompt =
             "find every call site of the legacy auth helper and report which ones still pass the old token shape";
         expect(prompt.length).toBeGreaterThan(50);
@@ -275,8 +266,7 @@ describe("the row uses the width it actually has", () => {
     });
 
     test("the default box gives a task row the same width", () => {
-        setActiveUiMode("loop");
-        initTheme("dark");
+        initTheme("night");
         const prompt = "trace the retry path through the queue worker and say where a message can be dropped";
         const c = new ToolExecutionComponent("task", { agent: "plan", prompt }, tui, "/repo");
         c.updateResult({ content: [{ type: "text", text: "ok" }], isError: false }, false);
@@ -287,15 +277,15 @@ describe("the row uses the width it actually has", () => {
         expect(title).toContain("can be dropped");
     });
 
-    test("a folded run's member rows use the width too", () => {
-        setActiveUiMode("noir");
+    test("an opened run's rows use the width too", () => {
         initTheme("night");
-        setLiveVariant(true);
         const h = new ChatHistory(tui, "/repo");
         for (let i = 0; i < 2; i++) {
             h.addToolCall("bash", `c${i}`, { command: `${LONG} # ${i}` });
             h.addToolResult(`c${i}`, "ok");
         }
+        h.selectLast();
+        h.setSelectedExpanded(true); // open the run: the calls are rows again
         const out = h.render(200).map(strip).join("\n");
         expect(out).toContain("head -50");
         for (const line of h.render(200).map(strip)) expect(line.length).toBeLessThanOrEqual(200);

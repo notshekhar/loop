@@ -7,7 +7,6 @@ process.env.COLORTERM = "truecolor";
 
 import { ChatHistory } from "../src/interactive/components/chat-history";
 import { addStartupNotice, replayStartupNotices, resetStartupNotices } from "../src/interactive/welcome";
-import { setActiveUiMode } from "../src/interactive/ui/ui-mode";
 import { initTheme } from "../src/interactive/ui/theme";
 
 const W = 70;
@@ -25,8 +24,7 @@ const text = (h: ChatHistory) =>
         .join("\n");
 
 beforeEach(() => {
-    setActiveUiMode("loop");
-    initTheme("dark");
+    initTheme("night");
     resetStartupNotices();
 });
 

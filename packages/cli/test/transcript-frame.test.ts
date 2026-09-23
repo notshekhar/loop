@@ -5,7 +5,6 @@ import type { TUI } from "@notshekhar/loop-tui";
 
 process.env.COLORTERM = "truecolor";
 
-import { setActiveUiMode } from "../src/interactive/ui/ui-mode";
 import { initTheme } from "../src/interactive/ui/theme";
 import { ChatHistory } from "../src/interactive/components/chat-history";
 
@@ -25,13 +24,11 @@ const lines = (h: ChatHistory) => h.render(W).map(strip);
 
 beforeEach(() => {
     terminal = { rows: ROWS, columns: 80 };
-    setActiveUiMode("loop");
-    initTheme("dark");
+    initTheme("night");
 });
 
 afterEach(() => {
-    setActiveUiMode("loop");
-    initTheme("dark");
+    initTheme("night");
 });
 
 function history(messages: number): ChatHistory {
@@ -40,29 +37,32 @@ function history(messages: number): ChatHistory {
     return h;
 }
 
-describe("what the transcript must never take from the terminal", () => {
-    // loop does not own the scroll: the terminal keeps its scrollback, its
-    // wheel and its drag-selection. Owning the scroll means asking for mouse
-    // reporting, and asking for mouse reporting is exactly what stops a
-    // terminal drag-selecting text. These guard the property, not the
-    // implementation.
+describe("who owns the mouse", () => {
+    // Mouse reporting is the TUI's, declared once when the alt screen opens
+    // and handed back when it closes — it is what makes the wheel scroll and
+    // what lets a drag select text inside the frame. What must NOT happen is
+    // the app or the input handler grabbing and releasing it underneath that:
+    // a mode that takes the mouse on entry and gives it back on exit is a mode
+    // whose text selection works or not depending on where the keyboard is.
     const appSource = readFileSync(join(import.meta.dir, "..", "src", "interactive", "app.ts"), "utf8");
     const inputSource = readFileSync(join(import.meta.dir, "..", "src", "interactive", "input-handler.ts"), "utf8");
 
-    test("the app never asks the terminal for mouse reporting", () => {
-        expect(appSource).not.toContain("?1006h");
-        expect(appSource).not.toContain("?1000h");
-        expect(appSource).not.toContain("?1002h");
+    test("neither the app nor the input handler toggles mouse reporting", () => {
+        for (const source of [appSource, inputSource]) {
+            for (const mode of ["?1006h", "?1000h", "?1002h", "?1000l", "?1006l"]) {
+                expect(source).not.toContain(mode);
+            }
+        }
     });
 
-    test("only navigation mode asks for it, and gives it straight back", () => {
-        // Nav mode is a mode you enter and leave; holding the mouse for the
-        // length of a session is what was unacceptable.
-        expect(inputSource).toContain("enterScrollbackFocus");
-        const enter = inputSource.slice(inputSource.indexOf("const enterScrollbackFocus"));
-        expect(enter).toContain("?1006h");
-        const exit = inputSource.slice(inputSource.indexOf("const exitScrollbackFocus"));
-        expect(exit).toContain("?1000l");
+    test("a click is handed over by the viewport, not intercepted from it", () => {
+        // The gesture is recognised where text selection already recognises
+        // it, and reported through `onClick`. Intercepting the press instead
+        // would trade "a click selects an entry" for "you can no longer select
+        // text", which is the trade this arrangement exists to avoid.
+        expect(appSource).toContain("tui.onClick =");
+        expect(appSource).not.toContain("setMouseInterceptor");
+        expect(inputSource).not.toContain("\\x1b[<");
     });
 });
 
@@ -123,38 +123,37 @@ describe("a frame that shrinks pulls its content back down", () => {
     });
 });
 
-describe("navigation mode still owns its window", () => {
-    test("Tab's viewport still clips and still shows how much is off-screen", () => {
+describe("the transcript renders whole", () => {
+    // There is no navigation viewport any more: entries are selectable wherever
+    // the keyboard is, and the window onto the transcript is the frame's — the
+    // same one the wheel and PgUp move. What the transcript owes the frame is
+    // geometry: where the selected entry sits, so the app can scroll to it.
+    test("every line is rendered, whatever the terminal height", () => {
         const h = history(60);
-        h.setReserveRows(() => 8);
-        h.setViewport(true);
-        const out = lines(h);
-        expect(out.length).toBe(ROWS - 8);
-        expect(out.join("\n")).toMatch(/▲ \d+ more lines/);
-    });
-
-    test("scrolling the nav window still works", () => {
-        const h = history(60);
-        h.setReserveRows(() => 8);
-        h.setViewport(true);
-        lines(h);
-        h.scrollViewportLines(-10);
-        expect(lines(h).join("\n")).toMatch(/▼ \d+ more lines/);
-    });
-
-    test("leaving navigation gives the whole transcript back", () => {
-        const h = history(60);
-        h.setReserveRows(() => 8);
-        h.setViewport(true);
-        expect(lines(h).length).toBe(ROWS - 8);
-        h.setViewport(false);
+        expect(lines(h).length).toBeGreaterThan(ROWS);
+        terminal = { rows: 8, columns: 80 };
         expect(lines(h).length).toBeGreaterThan(ROWS);
     });
 
-    test("the nav window fills the screen exactly", () => {
+    test("no clip indicators — nothing is being clipped here", () => {
+        const out = lines(history(60)).join("\n");
+        expect(out).not.toMatch(/▲ \d+ more lines/);
+        expect(out).not.toMatch(/▼ \d+ more lines/);
+    });
+
+    test("the selected entry reports where it sits, and only after a move", () => {
         const h = history(60);
-        h.setReserveRows(() => 8);
-        h.setViewport(true);
-        expect(lines(h).length + 8).toBe(ROWS);
+        h.addToolCall("bash", "c1", { command: "echo hi" });
+        h.addToolResult("c1", "hi");
+        expect(h.selectedRange()).toBeNull();
+        h.selectLast();
+        lines(h); // ranges come from a render
+        const range = h.selectedRange()!;
+        expect(range.start).toBeGreaterThan(0);
+        expect(range.end).toBeGreaterThanOrEqual(range.start);
+        // One reveal per user action: the flag is taken, not polled, so a
+        // streaming turn re-rendering cannot drag the page around.
+        expect(h.takeRevealRequest()).toBe(true);
+        expect(h.takeRevealRequest()).toBe(false);
     });
 });

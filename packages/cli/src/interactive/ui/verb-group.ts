@@ -8,9 +8,15 @@
  *
  * Everything folds — reads, listings, searches, fetches, subagents, commands,
  * edits, and third-party calls — because a run's individual detail is noise you
- * can open the group to get back. The exceptions are not about noise at all:
- * `ask` and `plan` are surfaces the user has to act on, and one folded into a
- * count is one nobody answers.
+ * can open the header to get back. The one exception is `plan`: a document the
+ * rest of the turn is judged against, never reduced to a count.
+ *
+ * This is where loop parts from grok, deliberately. grok folds only calls that
+ * LOOK and keeps commands and edits as rows; loop folds them too, and keeps
+ * grok's distinction for one moment only — while a call is RUNNING. A looking
+ * call folds live (the header counts it as it lands); an acting one keeps its
+ * row until it finishes, so a command's output can be watched as it runs.
+ * See {@link foldsWhileRunning}.
  *
  * ## Tools we did not write
  *
@@ -61,10 +67,12 @@ const KIND = {
     web: { past: "Fetched", present: "Fetching", nounOne: "website", nounMany: "websites", folds: true },
     memory: { past: "Searched", present: "Searching", nounOne: "memory", nounMany: "memories", folds: true },
     subagent: { past: "Ran", present: "Running", nounOne: "subagent", nounMany: "subagents", folds: true },
-    todo: { past: "Updated", present: "Updating", nounOne: "todo list", nounMany: "todo lists", folds: true },
     data: { past: "Queried", present: "Querying", nounOne: "datasource", nounMany: "datasources", folds: true },
-    artifact: { past: "Created", present: "Creating", nounOne: "artifact", nounMany: "artifacts", folds: true },
 
+    // Everything below ACTS. It folds once finished like everything else, but
+    // keeps its row while it runs (see foldsWhileRunning).
+    todo: { past: "Updated", present: "Updating", nounOne: "todo list", nounMany: "todo lists", folds: true },
+    artifact: { past: "Created", present: "Creating", nounOne: "artifact", nounMany: "artifacts", folds: true },
     command: { past: "Ran", present: "Running", nounOne: "command", nounMany: "commands", folds: true },
 
     // Reading or killing a background shell — the noun is the shell, not the
@@ -72,7 +80,8 @@ const KIND = {
     shell: { past: "Checked", present: "Checking", nounOne: "shell", nounMany: "shells", folds: true },
 
     // Tools we did not write, named by the only thing we reliably know about
-    // them — where they came from. Both fold; see the layering note above.
+    // them — where they came from. We cannot know that they only look, so they
+    // count as acting while they run; see the layering note above.
     mcp: { past: "Called", present: "Calling", nounOne: "MCP tool", nounMany: "MCP tools", folds: true },
     extension: {
         past: "Called",
@@ -84,12 +93,10 @@ const KIND = {
 
     edit: { past: "Edited", present: "Editing", nounOne: "file", nounMany: "files", folds: true },
 
-    // An ask folds only once it has been ANSWERED, which costs nothing to
-    // arrange: a question still waiting on the user is `isPartial`, and a
-    // running call is never groupable (see isGroupable). So `folds: true` here
-    // never hides a live question — it only lets a settled one join the run
-    // behind it, the way every other finished call does, carrying the answer
-    // in its receipt.
+    // A question folds only once it has been ANSWERED — while it waits on the
+    // user it is running, and a running question is an acting call, so it
+    // keeps its row. Settled, it joins the run carrying the answer in its
+    // receipt.
     ask: { past: "Asked", present: "Asking", nounOne: "question", nounMany: "questions", folds: true },
 
     // A plan is the exception that stays: unlike a question it is not answered
@@ -182,6 +189,25 @@ export function kindOf(toolName: string): VerbGroupKind {
 /** Whether a run of this tool collapses into a group header on its own. */
 export function foldsEagerly(toolName: string): boolean {
     return kindOf(toolName).folds;
+}
+
+/**
+ * The kinds that only LOOK. A read, a search, a listing, a fetch, a skill, a
+ * subagent, a query: how the agent finds its way, never what it did.
+ */
+const LOOKING: ReadonlySet<VerbGroupKindId> = new Set(["file", "skill", "dir", "search", "web", "memory", "subagent", "data"]);
+
+/**
+ * Whether a call folds into its run while it is still RUNNING.
+ *
+ * A looking call does, as in grok: the header counts it as it lands
+ * ("Reading 3 files") and the transcript holds still. An acting call — a
+ * command, an edit, a question, anything we did not write — keeps its own row
+ * until it finishes, because its live output is the thing you are watching,
+ * and folds into the run the moment it lands.
+ */
+export function foldsWhileRunning(toolName: string): boolean {
+    return LOOKING.has(kindIdOf(toolName));
 }
 
 export interface GroupMember {

@@ -25,7 +25,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Session, withSession } from "./harness";
 
-const NOIR = '{"uiMode": "noir"}';
+const NOIR = '{"theme": "night"}';
 
 const failures: string[] = [];
 let checks = 0;
@@ -119,7 +119,7 @@ function mcpSettings(): string {
         "mock-mcp-features.mjs",
     );
     return JSON.stringify({
-        uiMode: "noir",
+        theme: "night",
         mcpServers: { feat: { type: "stdio", command: process.execPath, args: [fixture] } },
     });
 }
@@ -202,7 +202,7 @@ async function testSelectorCostsNothing(): Promise<void> {
         await s.send("/settings\r", 3.0);
         const rows = s.screenRows();
         check(
-            rows.some((r) => r.includes("uiMode")),
+            rows.some((r) => r.includes("theme:")),
             "the settings menu is showing",
         );
         // Running the command appends its own echo to the transcript ("/settings"
@@ -477,7 +477,7 @@ async function testMenuFollowsThePromptWhenScrolled(): Promise<void> {
         await s.send("/settings\r", 2.5);
         rows = s.screenRows();
         at = promptRows(rows);
-        const menu = rowsWith(rows, "uiMode");
+        const menu = rowsWith(rows, "theme:");
         check(
             menu.length > 0 && at.length > 0 && menu[0]! < at[0]!,
             "/settings opens on the prompt too",
@@ -587,7 +587,7 @@ async function testWheelScrollsTheDocument(): Promise<void> {
 async function testPinnedInput(): Promise<void> {
     const up = "\x1b[<64;20;10M";
     const down = "\x1b[<65;20;10M";
-    await withSession({ settings: '{"uiMode": "noir", "pinnedInput": true}' }, async (s) => {
+    await withSession({ settings: '{"theme": "night", "pinnedInput": true}' }, async (s) => {
         await s.pump(7);
         const boot = s.screenRows();
         check(
@@ -1195,7 +1195,7 @@ async function testHandoff(): Promise<void> {
         },
     });
     try {
-        const settings = JSON.stringify({ uiMode: "noir", defaultModel: "custom:fixture/fixture" });
+        const settings = JSON.stringify({ theme: "night", defaultModel: "custom:fixture/fixture" });
         await withSession({ settings, envExtra: { LOOP_SKIP_VERSION_CHECK: "1" } }, async (s) => {
             s.writeHome(
                 ".loop/auth.json",
@@ -1341,6 +1341,193 @@ async function testMcpPanel(): Promise<void> {
     });
 }
 
+
+/** A reply the fixture model streams back, in Anthropic's event stream. */
+function streamedReply(text: string): Response {
+    const sse = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    const body =
+        sse("message_start", {
+            type: "message_start",
+            message: {
+                id: "msg_fixture",
+                type: "message",
+                role: "assistant",
+                model: "fixture",
+                content: [],
+                stop_reason: null,
+                stop_sequence: null,
+                usage: { input_tokens: 20, output_tokens: 0 },
+            },
+        }) +
+        sse("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }) +
+        sse("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } }) +
+        sse("content_block_stop", { type: "content_block_stop", index: 0 }) +
+        sse("message_delta", {
+            type: "message_delta",
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: { output_tokens: 15 },
+        }) +
+        sse("message_stop", { type: "message_stop" });
+    return new Response(body, { headers: { "content-type": "text/event-stream" } });
+}
+
+/**
+ * A session wired to a local model fixture that answers every request with
+ * `respond()`, with one prompt already sent. A turn STREAMS, so a successful
+ * fixture has to speak Anthropic's event stream (see streamedReply).
+ */
+async function withFixtureModel(respond: () => Response, body: (s: Session) => Promise<void>): Promise<void> {
+    const server = Bun.serve({
+        port: 0,
+        fetch: async (req) => {
+            await req.arrayBuffer();
+            return respond();
+        },
+    });
+    try {
+        const settings = JSON.stringify({ theme: "night", defaultModel: "custom:fixture/fixture" });
+        await withSession({ settings, envExtra: { LOOP_SKIP_VERSION_CHECK: "1" } }, async (s) => {
+            s.writeHome(
+                ".loop/auth.json",
+                JSON.stringify({
+                    active: "custom:fixture",
+                    customProviders: {
+                        fixture: {
+                            name: "fixture",
+                            sdk: "anthropic",
+                            baseURL: `http://127.0.0.1:${server.port}/v1`,
+                            apiKey: "fixture",
+                            auth: { kind: "apikey", apiKey: "fixture" },
+                            models: [{ id: "fixture", contextWindow: 100000, maxOutput: 4096 }],
+                        },
+                    },
+                }),
+            );
+            await s.pump(7);
+            await s.send("does validation run before the write?\r", 4.0);
+            await body(s);
+        });
+    } finally {
+        server.stop(true);
+    }
+}
+
+/** A conversation with one prompt and one reply — both selectable. */
+function withConversation(body: (s: Session) => Promise<void>): Promise<void> {
+    return withFixtureModel(() => streamedReply("Checked it. The validation runs before the write."), body);
+}
+
+/**
+ * A turn the model fails closes with ONE line saying so — grok's TurnFailed.
+ * It used to print `error: …` and then "Turn completed in 0s." under it, and
+ * an error raised mid-turn was appended below the turn, so the rest of the
+ * turn streamed in above it and the error stuck to the bottom of the screen.
+ */
+async function testTurnFailed(): Promise<void> {
+    const failure = () =>
+        Response.json(
+            { type: "error", error: { type: "invalid_request_error", message: "fixture says no" } },
+            { status: 400 },
+        );
+    await withFixtureModel(failure, async (s) => {
+        const text = s.screenRows().join("\n");
+        check(text.includes("Turn failed in"), "the turn closes as failed", s.screenRows());
+        check(text.includes("fixture says no"), "and says why", s.screenRows());
+        check(!text.includes("Turn completed"), "and never claims it completed", s.screenRows());
+        const failed = s.screenRows().findIndex((r) => r.includes("Turn failed in"));
+        const asked = s.screenRows().findIndex((r) => r.includes("does validation run before the write?"));
+        check(asked >= 0 && failed > asked, "under the prompt it failed on", s.screenRows());
+    });
+}
+
+/**
+ * Navigation is FOCUS and nothing else.
+ *
+ * The transcript used to swap itself for a windowed viewport when it took the
+ * keyboard: the same conversation re-laid-out around you, rows regrouping, the
+ * page jumping — a second mode wearing the first one's clothes. Now the only
+ * thing ctrl+e changes is who the arrows belong to, which is what these checks
+ * are: the conversation must not move, and leaving must put the frame back
+ * exactly as it was.
+ */
+async function testNavigationIsFocusOnly(): Promise<void> {
+    await withConversation(async (s) => {
+        const before = s.screenRows();
+        const committedBefore = s.committed();
+        check(
+            before.some((r) => r.includes("validation runs before the write")),
+            "the reply is on screen",
+            before,
+        );
+
+        await s.send("\x05", 1.5); // ctrl+e
+        const inNav = s.screenRows();
+        check(
+            inNav.some((r) => r.includes("▌")),
+            "entering navigation marks an entry",
+            inNav,
+        );
+        check(s.committed() === committedBefore, "and commits nothing to the terminal");
+        // The conversation itself is untouched — the bar takes a column of the
+        // selected entry and the hint replaces the status rows; nothing else
+        // may differ, and in particular nothing may move.
+        const text = (rows: string[]) => rows.map((r) => r.replace(/▌/g, " ").trimEnd());
+        const movedRows = text(before).filter((line, i) => line.trim() && line !== text(inNav)[i]);
+        check(movedRows.length <= 2, "and leaves the conversation exactly where it was", movedRows);
+
+        await s.send("\x1b", 1.5); // esc
+        const after = s.screenRows();
+        check(
+            !after.some((r) => r.includes("▌")),
+            "leaving takes the mark with it",
+            after,
+        );
+        check(after.join("\n") === before.join("\n"), "and puts the frame back as it was", {
+            before: before.slice(-8),
+            after: after.slice(-8),
+        });
+    });
+}
+
+/**
+ * Inside navigation a click selects the entry under the pointer. Outside it a
+ * click is the terminal's business and must not move focus or selection —
+ * ctrl+e is the one way in.
+ */
+async function testClickSelectsAnEntry(): Promise<void> {
+    await withConversation(async (s) => {
+        const rows = s.screenRows();
+        const target = rows.findIndex((r) => r.includes("validation runs before the write"));
+        check(target > 0, "there is a reply to click on", rows);
+        // SGR press + release on the same cell (one-based): a click, not a drag.
+        const y = target + 1;
+
+        await s.send(`\x1b[<0;6;${y}M`, 0.3);
+        await s.send(`\x1b[<0;6;${y}m`, 1.2);
+        check(
+            !s.screenRows().some((r) => r.includes("▌")),
+            "a click while typing selects nothing",
+            s.screenRows(),
+        );
+
+        await s.send("\x05", 1.2); // ctrl+e — now clicks mean something
+        await s.send(`\x1b[<0;6;${y}M`, 0.3);
+        await s.send(`\x1b[<0;6;${y}m`, 1.2);
+        const clicked = s.screenRows();
+        check(
+            clicked.some((r) => r.includes("▌") && r.includes("validation runs before the write")),
+            "the clicked entry is the selected one",
+            clicked,
+        );
+
+        await s.send("\x1b", 1.2);
+        check(
+            !s.screenRows().some((r) => r.includes("▌")),
+            "and Esc hands the keyboard back",
+        );
+    });
+}
+
 const SCENARIOS: Record<string, () => Promise<void>> = {
     handoff: testHandoff,
     recipes: testRecipes,
@@ -1367,6 +1554,9 @@ const SCENARIOS: Record<string, () => Promise<void>> = {
     "mcp-panel": testMcpPanel,
     "lua-command": testLuaCommand,
     "lua-fullscreen": testLuaFullscreen,
+    nav: testNavigationIsFocusOnly,
+    "turn-failed": testTurnFailed,
+    click: testClickSelectsAnEntry,
 };
 
 async function main(): Promise<number> {

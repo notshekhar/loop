@@ -166,12 +166,6 @@ export interface ExtensionTheme {
 export interface ToolSummaryContext {
     toolName: string;
     cwd: string;
-    /**
-     * The active UI mode id — "loop" or "noir" today, and whatever a mode
-     * extension registers. The two modes have different row grammar, so a
-     * renderer that cares should branch on this rather than assume one.
-     */
-    uiMode: string;
     /** Active theme, so extension output matches the surrounding chrome. */
     theme: ExtensionTheme;
 }
@@ -437,28 +431,6 @@ export interface ExtensionThemeJson {
 }
 
 /**
- * A UI mode — a named chat "experience" bundling its own themes and a
- * declarative style spec layered over the builtin `loop` defaults. Registering
- * one makes it selectable (`/uimode`), and its themes become available while
- * it's active.
- *
- * `style` is passed through to the renderer as-is; every knob it omits keeps
- * the loop default. The imperative per-block renderers the builtin modes can
- * use are deliberately NOT part of this surface — they take internal component
- * and theme types that would pin the extension to loop's rendering internals.
- */
-export interface ExtensionUiMode {
-    /** Unique id, used in settings (`uiMode`) and the picker. */
-    id: string;
-    /** Picker label; falls back to id. */
-    name?: string;
-    /** Themes this mode owns; [0] is its default. */
-    themes: ExtensionThemeJson[];
-    /** Declarative style knobs layered over the loop defaults. */
-    style?: Record<string, unknown>;
-}
-
-/**
  * A thing that can draw itself into a region of the screen.
  *
  * Deliberately structural rather than the TUI's `Component` type: core cannot
@@ -657,14 +629,15 @@ export interface ExtensionAPI {
     };
 
     /**
-     * Chat experiences and palettes. A mode is selectable via `/uimode` and
-     * settings `uiMode`; its themes become available while it is active.
-     * `addThemes` extends a mode loop already has (e.g. another palette for
-     * `noir`) without redefining it.
+     * Palettes. A registered theme is pickable by name in `/theme`, in
+     * `/settings`, and from the `theme` setting, exactly like a shipped one.
+     *
+     * A palette may be PARTIAL — the slots it leaves out are filled from the
+     * built-in `night` theme — so restyling a handful of colours does not mean
+     * restating fifty. A name that collides with a shipped theme replaces it.
      */
-    uiModes: {
-        register(mode: ExtensionUiMode): void;
-        addThemes(modeId: string, ...themes: ExtensionThemeJson[]): void;
+    themes: {
+        register(...themes: ExtensionThemeJson[]): void;
     };
 
     providers: { register(provider: ProviderPlugin): void; unregister(id: string): void };

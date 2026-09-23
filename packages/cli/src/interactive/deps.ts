@@ -4,6 +4,7 @@ import type { ChatHistory } from "./components/chat-history";
 import type { StatusLine } from "./components/status-line";
 import type { TodoPanel } from "./components/todo-panel";
 import type { ShellsPanel } from "./components/shells-panel";
+import type { ScrollbackFocus } from "./scrollback-focus";
 
 /**
  * Stable references for handlers. Functions and objects here don't change
@@ -63,4 +64,14 @@ export interface AppDeps {
     revealPrompt: () => void;
     /** Jump the transcript to its newest line and resume following it. */
     scrollTranscriptToEnd: () => void;
+    /** Who the keyboard belongs to: the prompt, or the transcript. Shared by
+     * the ctrl+e chord and the pointer, so both doors behave the same. */
+    scrollbackFocus: ScrollbackFocus;
+    /**
+     * Scroll the selected entry into view, if a navigation action asked for
+     * it (see ChatHistory.takeRevealRequest). The transcript renders whole
+     * and reports where each entry sits; moving the window onto it is the
+     * frame's job, which is why this lives here and not in the component.
+     */
+    revealSelection: () => void;
 }

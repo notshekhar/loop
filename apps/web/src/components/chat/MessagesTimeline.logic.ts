@@ -503,7 +503,7 @@ export function deriveMessagesTimelineRows(input: {
         // a RUN of finished tool calls whose individual detail is noise (reads,
         // listings, searches) is gathered into a single row, which draws as one
         // foldable "Read 3 files" line the reader opens when they want the
-        // calls. See loopVerbGroup.ts; the terminal's live mode folds the same
+        // calls. See loopVerbGroup.ts; the terminal folds the same
         // runs with the same vocabulary. A running call is never groupable, so
         // it ends the run and keeps its own row until it lands.
         if (workEntryIndicatesToolNeutralStatus(timelineEntry.entry)) {

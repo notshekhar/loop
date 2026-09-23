@@ -25,6 +25,9 @@ export interface TurnEmitterDeps {
     todoPanel: TodoPanel;
     showWorking: (message?: string) => void;
     refreshStatusLine: (usage?: UsageBlock) => void;
+    /** The turn hit an error that ends it. Reported, not printed: the runner
+     * closes every turn with one line that says how it went. */
+    onTurnError: (err: unknown) => void;
 }
 
 /**
@@ -35,7 +38,8 @@ export interface TurnEmitterDeps {
  * wiring it replaces.
  */
 export function wireTurnEmitter(emitter: TurnEmitter, deps: TurnEmitterDeps): void {
-    const { history, tui, state, turnProvider, subagentStream, todoPanel, showWorking, refreshStatusLine } = deps;
+    const { history, tui, state, turnProvider, subagentStream, todoPanel, showWorking, refreshStatusLine, onTurnError } =
+        deps;
 
     emitter.on("text-delta", (t: string) => {
         history.appendAssistantDelta(t, turnProvider, state.modelId);
@@ -185,7 +189,7 @@ export function wireTurnEmitter(emitter: TurnEmitter, deps: TurnEmitterDeps): vo
         tui.requestRender();
     });
     emitter.on("error", (err: unknown) => {
-        history.addError(formatError(err));
+        onTurnError(err);
         // The turn may still reach `Stop` after a stream error, so the outcome
         // is remembered rather than chimed here — see sound-reporter.ts.
         noteTurnError();

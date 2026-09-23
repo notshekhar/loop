@@ -1182,7 +1182,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
     : "Work Log";
 
   // Runs of finished reads/listings/searches fold into one line the reader can
-  // open — the same fold the terminal's live mode makes, with the same
+  // open — the same fold the terminal makes, with the same
   // vocabulary. A call still running keeps its own row: it is the one worth
   // watching, and it joins the header when it lands.
   const runs = useMemo(

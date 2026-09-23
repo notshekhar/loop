@@ -12,18 +12,13 @@ import type { TUI } from "@notshekhar/loop-tui";
 
 process.env.COLORTERM = "truecolor";
 
-import { registerNoirMode } from "../src/interactive/ui/noir-mode";
-import { setActiveUiMode, setLiveVariant } from "../src/interactive/ui/ui-mode";
 import { initTheme } from "../src/interactive/ui/theme";
 import { fitAroundTail } from "../src/interactive/ui/fit";
 import { ToolExecutionComponent } from "../src/interactive/ui/tool-execution";
 import { ChatHistory } from "../src/interactive/components/chat-history";
 
-beforeAll(() => registerNoirMode());
 afterEach(() => {
-    setLiveVariant(false);
-    setActiveUiMode("loop");
-    initTheme("dark");
+    initTheme("night");
 });
 
 const tui = { requestRender() {}, terminal: { rows: 40, columns: 100 } } as unknown as TUI;
@@ -55,8 +50,7 @@ describe("fitAroundTail", () => {
 
 describe("a single tool row", () => {
     const row = (width: number, args: Record<string, unknown>, tool = "bash", finish = false) => {
-        setActiveUiMode("noir");
-        initTheme("dark");
+        initTheme("night");
         const c = new ToolExecutionComponent(tool, args, tui, "/repo");
         if (finish) c.updateResult({ content: [{ type: "text", text: "ok" }], isError: false }, false);
         return c
@@ -81,8 +75,7 @@ describe("a single tool row", () => {
     });
 
     test("the expand hint does not push the status off the row", () => {
-        setActiveUiMode("noir");
-        initTheme("dark");
+        initTheme("night");
         const c = new ToolExecutionComponent("bash", { command: LONG }, tui, "/repo");
         c.updateResult({ content: [{ type: "text", text: "a\n".repeat(40) }], isError: false }, false);
         c.setSelected(true);
@@ -90,47 +83,32 @@ describe("a single tool row", () => {
     });
 });
 
-describe("a folded run's member rows", () => {
-    test("a mixed run keeps every receipt whole", () => {
-        setActiveUiMode("noir");
+describe("rows inside an opened fold", () => {
+    test("each row keeps its receipt whole, and nothing overflows", () => {
         initTheme("night");
-        setLiveVariant(true);
         const h = new ChatHistory(tui, "/repo");
         h.addToolCall("bash", "a", { command: LONG });
         h.addToolResult("a", "x");
         h.addToolCall("read", "b", { path: DEEP });
         h.addToolResult("b", "line\n".repeat(30));
+        h.selectLast();
+        h.setSelectedExpanded(true); // open the run
 
         for (const w of [100, 90, 80]) {
             const lines = h.render(w).map(strip);
-            // The tool column costs its name PLUS a separator; counting only
-            // the name built rows two columns too wide, and the two characters
-            // the fit then removed came off the receipt.
+            // The receipt is the part of a row that must never be what gives
+            // way to a long command or path.
+            expect(lines.some((l) => l.includes("Ran 1 command, Read 1 file"))).toBe(true);
             expect(lines.some((l) => l.includes("ok · 1 line"))).toBe(true);
             expect(lines.some((l) => l.includes("30 lines"))).toBe(true);
             for (const l of lines) expect(l.length).toBeLessThanOrEqual(w);
         }
     });
-
-    test("a single-kind run keeps them too", () => {
-        setActiveUiMode("noir");
-        initTheme("night");
-        setLiveVariant(true);
-        const h = new ChatHistory(tui, "/repo");
-        for (let i = 0; i < 2; i++) {
-            h.addToolCall("bash", `c${i}`, { command: `${LONG} # ${i}` });
-            h.addToolResult(`c${i}`, "x");
-        }
-        const lines = h.render(90).map(strip);
-        expect(lines.filter((l) => l.includes("ok · 1 line")).length).toBe(2);
-        for (const l of lines) expect(l.length).toBeLessThanOrEqual(90);
-    });
 });
 
 describe("the default mode's box", () => {
     const box = (width: number, args: Record<string, unknown>, tool = "bash") => {
-        setActiveUiMode("loop");
-        initTheme("dark");
+        initTheme("night");
         const c = new ToolExecutionComponent(tool, args, tui, "/repo");
         c.updateResult({ content: [{ type: "text", text: "ok" }], isError: false }, false);
         return c.render(width).map(strip);
@@ -150,8 +128,7 @@ describe("the default mode's box", () => {
     });
 
     test("re-cuts when the terminal is resized", () => {
-        setActiveUiMode("loop");
-        initTheme("dark");
+        initTheme("night");
         const c = new ToolExecutionComponent("bash", { command: LONG }, tui, "/repo");
         c.updateResult({ content: [{ type: "text", text: "ok" }], isError: false }, false);
         // The box is built lazily and cached; width has to be part of what

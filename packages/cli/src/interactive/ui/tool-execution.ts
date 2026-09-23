@@ -15,15 +15,22 @@ import {
     taskPromptSnippet,
 } from "./tool-summary";
 import { formatToolReceipt, toolPeek, type ToolPeek } from "./tool-receipt";
-import { uiRenderers, uiStyle, type ToolGroupMember } from "./ui-mode";
+import { renderTool } from "./blocks/tool-row";
+import { EXPAND_HINT, TOOL_BULLET } from "./blocks/shared";
+import { peekLines as detailPeekLines } from "./tool-detail";
+import type { ToolBlockState } from "./blocks/types";
+import type { RunStep } from "../transcript-folds";
 import { markSelectedLines } from "./messages";
 import { fitAroundTail } from "./fit";
-import { foldsEagerly, isPlanSurface } from "./verb-group";
+import { foldsEagerly, foldsWhileRunning, isPlanSurface, type GroupMember } from "./verb-group";
 /** Live-streaming preview cap in EXPANDED mode. Highlighting runs on every
  * flush while input streams — unbounded, a large file made a single frame
  * expensive enough to freeze the box. The full content still renders once
  * the call completes (the result path has no such cap). */
 const STREAMING_EXPANDED_LINES = 200;
+
+/** Output lines the plan box previews before it truncates. */
+const COLLAPSED_OUTPUT_LINES = 6;
 
 /** Cap on a replayed edit's reconstructed diff (see editReplayDiff). Matches
  * the cap `write` puts on the real thing. */
@@ -85,6 +92,12 @@ export class ToolExecutionComponent extends Container {
      * streaming delta was pure waste under such modes. */
     private boxDirty = true;
 
+    /** Does this row open its block with a blank line? A fold header standing
+     * in for it follows the same rule, so folding never moves the gaps. */
+    leadsWithGap(): boolean {
+        return this.groupLead;
+    }
+
     setGroupLead(lead: boolean): void {
         this.groupLead = lead;
     }
@@ -123,64 +136,32 @@ export class ToolExecutionComponent extends Container {
         return this.expanded;
     }
 
-    /** The tool this row calls — the key a verb group aggregates on. */
-    getToolName(): string {
-        return this.toolName;
-    }
-
-    /** Did this call fail? (Feeds the group header's "· N failed" suffix.) */
-    hasError(): boolean {
-        return this.result?.isError ?? false;
-    }
-
-    /** Still streaming. A running call never joins a group, so this only ever
-     * reports the row's own state — see {@link isGroupable}. */
-    isRunning(): boolean {
-        return this.isPartial;
-    }
-
     /**
-     * Whether this row may be swallowed into a verb group.
+     * How this call takes part in a run right now (see transcript-folds.ts).
      *
-     * Four gates. A RUNNING call never groups: live mode is the base mode plus
-     * folding, not a different way to watch a turn — while a call is in flight
-     * it renders exactly the row noir renders normally, showing which file is
-     * being read and its live status. Only once it lands does it fold into the
-     * header with the calls before it. Grouping mid-flight was tried (it holds
-     * the transcript height still) and hid the one thing you look at the
-     * transcript mid-turn to see.
-     *
-     * An OPEN call also leaves the group — the user asked to see that one —
-     * and the plan surfaces (`plan`, `exit_plan_mode`) never join, being
-     * approval surfaces that must stay readable.
-     *
-     * The last gate is the tool's KIND. Every kind folds — reads, commands,
-     * edits, third-party calls — except the surfaces the user has to act on
-     * (`ask`, `plan`). See verb-group.ts for the vocabulary.
+     * - Collapsed and finished, it is a MEMBER: it joins the header in front
+     *   of it ("Read 3 files, Ran 2 commands").
+     * - Running, a call that only LOOKS is a member too — it folds live, the
+     *   header counting it as it lands. One that ACTS (a command, an edit)
+     *   keeps its own row until it finishes, because its live output is what
+     *   you are watching; meanwhile it is transparent.
+     * - OPENED, or INTERRUPTED (no result to fold into a count, and "finished,
+     *   returned nothing" would be a lie), it keeps its own rows — transparent:
+     *   it neither joins nor splits the run.
+     * - A plan never folds: it is the document the rest of the turn is judged
+     *   against.
      */
-    isGroupable(): boolean {
-        return !this.isPartial && !this.expanded && !isPlanSurface(this.toolName) && foldsEagerly(this.toolName);
+    foldStep(): RunStep {
+        if (isPlanSurface(this.toolName) || !foldsEagerly(this.toolName)) return { kind: "break" };
+        const watching = this.isPartial && !foldsWhileRunning(this.toolName);
+        if (this.interrupted || this.expanded || watching) return { kind: "transparent" };
+        const failed = !this.isPartial && (this.result?.isError ?? false);
+        return { kind: "member", running: this.isPartial, failed };
     }
 
-    /**
-     * This call as one line of a folded verb group.
-     *
-     * The group renders members itself rather than calling back into each
-     * row's renderer: a member is a DIFFERENT shape from a row — one line, a
-     * shared receipt column, no peek — and reusing the row renderer would mean
-     * teaching it a second layout it only ever uses here.
-     *
-     * Note what is NOT here: no output, not even for an edit or a failure. The
-     * receipt is the whole of a member, by design — see ToolGroupMember.
-     */
-    groupMember(): ToolGroupMember {
-        const output = this.outputText();
-        return {
-            toolName: this.toolName,
-            summary: this.argsSummary(),
-            receipt: this.receiptText(output),
-            isError: this.result?.isError ?? false,
-        };
+    /** What this call adds to a fold header's label. */
+    groupMember(): GroupMember {
+        return { toolName: this.toolName, isError: this.result?.isError ?? false, isRunning: this.isPartial };
     }
 
     /** Selection highlight for the ctrl+up/down block navigation. */
@@ -247,7 +228,20 @@ export class ToolExecutionComponent extends Container {
     }
 
     override render(width: number): string[] {
-        const lines = this.renderInner(width);
+        return this.renderRow(width, this.groupLead);
+    }
+
+    /**
+     * This call's rows without the blank line it would open its block with —
+     * for when a run's header sits directly above it and has already opened
+     * the block.
+     */
+    renderBelowHeader(width: number): string[] {
+        return this.renderRow(width, false);
+    }
+
+    private renderRow(width: number, lead: boolean): string[] {
+        const lines = this.renderInner(width, lead);
         return this.selected ? markSelectedLines(lines) : lines;
     }
 
@@ -258,36 +252,39 @@ export class ToolExecutionComponent extends Container {
         return output ? `${title}\n${output}` : title;
     }
 
-    private renderInner(width: number): string[] {
-        const override = uiRenderers().toolExecution;
-        if (override) {
-            const output = this.outputText();
-            const peek = this.peekLines(output);
-            const lines = override(
-                {
-                    toolName: this.toolName,
-                    args: this.args,
-                    summary: this.argsSummary(),
-                    output,
-                    receipt: this.receiptText(output),
-                    peek: peek.lines,
-                    peekHidden: peek.hidden,
-                    isError: this.result?.isError ?? false,
-                    isPartial: this.isPartial,
-                    expanded: this.expanded,
-                    selected: this.selected,
-                    groupLead: this.groupLead,
-                    interrupted: this.interrupted,
-                    statusText: this.statusText,
-                    streamingContent: this.streamingContent,
-                    taskStats: this.taskStats,
-                    cwd: this.cwd,
-                    finishedAt: this.finishedAt,
-                },
-                { width, theme },
-            );
-            if (lines) return lines;
-        }
+    /** Everything the row renderer needs, and nothing it does not — the one
+     * place this component's private state crosses into a pure renderer. */
+    private blockState(lead: boolean): ToolBlockState {
+        const output = this.outputText();
+        const peek = this.peekLines(output);
+        return {
+            toolName: this.toolName,
+            args: this.args,
+            summary: this.argsSummary(),
+            output,
+            receipt: this.receiptText(output),
+            peek: peek.lines,
+            peekHidden: peek.hidden,
+            isError: this.result?.isError ?? false,
+            isPartial: this.isPartial,
+            expanded: this.expanded,
+            selected: this.selected,
+            groupLead: lead,
+            interrupted: this.interrupted,
+            statusText: this.statusText,
+            streamingContent: this.streamingContent,
+            taskStats: this.taskStats,
+            cwd: this.cwd,
+            finishedAt: this.finishedAt,
+        };
+    }
+
+    private renderInner(width: number, lead: boolean): string[] {
+        // A row first, a box only where a row would be wrong: the plan
+        // surfaces are an approval the user has to READ, so `renderTool`
+        // declines them and the box below draws them instead.
+        const row = renderTool(this.blockState(lead), { width, theme });
+        if (row) return row;
         // Width is part of what the box is built FROM, not just how it is
         // drawn: the title has to be cut to fit, and a Text child wraps rather
         // than clipping — which turned one long call into a two-line title.
@@ -354,7 +351,7 @@ export class ToolExecutionComponent extends Container {
         const lines = this.colorOutput(output.split("\n"));
         // Collapsed → short preview capped at the mode's collapsedLines;
         // expanded (ctrl+e) → the full output, no cap.
-        const cap = uiStyle().tool.collapsedLines;
+        const cap = COLLAPSED_OUTPUT_LINES;
         const truncated = !this.expanded && lines.length > cap;
         const shown = truncated ? lines.slice(0, cap) : lines;
 
@@ -363,7 +360,7 @@ export class ToolExecutionComponent extends Container {
         if (truncated) {
             this.box.addChild(
                 new Text(
-                    theme.fg("dim", `… +${lines.length - cap} lines (${uiStyle().hints.expandHint} to expand)`),
+                    theme.fg("dim", `… +${lines.length - cap} lines (${EXPAND_HINT} to expand)`),
                     0,
                     0,
                 ),
@@ -371,12 +368,13 @@ export class ToolExecutionComponent extends Container {
         }
     }
 
-    /** Title color by state: pending/stale grey, failed vivid red, done normal.
-     * Modes with mutedCollapsed grey the finished title while folded. */
+    /** Title colour by state: pending/stale grey, failed vivid red, and a
+     * finished-but-folded title greyed as well — the box only reaches full
+     * strength when it is open. */
     private titleColor(): "muted" | "toolError" | "toolTitle" {
         if (this.isPartial || this.interrupted) return "muted";
         if (this.result?.isError) return "toolError";
-        if (uiStyle().tool.mutedCollapsed && !this.expanded) return "muted";
+        if (!this.expanded) return "muted";
         return "toolTitle";
     }
 
@@ -393,15 +391,13 @@ export class ToolExecutionComponent extends Container {
                   ? "failed"
                   : ["done", ...this.taskStatsParts()].join(" · ");
             const snippet = taskPromptSnippet(this.args);
-            const bullet = uiStyle().tool.bullet;
             const title =
-                (bullet ? theme.fg(this.titleColor(), `${bullet} `) : "") +
+                theme.fg(this.titleColor(), `${TOOL_BULLET} `) +
                 theme.fg(this.titleColor(), theme.bold(`task ${agent}`));
             return fitAroundTail(`${title} `, theme.fg("muted", snippet ? `${state} · ${snippet}` : state), "", width);
         }
-        const bullet = uiStyle().tool.bullet;
         const title =
-            (bullet ? theme.fg(this.titleColor(), `${bullet} `) : "") +
+            theme.fg(this.titleColor(), `${TOOL_BULLET} `) +
             theme.fg(this.titleColor(), theme.bold(this.toolName));
         const summary = this.argsSummary();
         if (!summary) return title;
@@ -467,7 +463,7 @@ export class ToolExecutionComponent extends Container {
                           this.toolName,
                           output,
                           this.result?.isError ?? false,
-                          uiStyle().tool.peekLines,
+                          detailPeekLines(),
                           this.args,
                       );
         }
@@ -497,13 +493,13 @@ export class ToolExecutionComponent extends Container {
         const raw = this.streamingContent.split("\n");
         // Expanded mode is capped too: the preview re-highlights on every
         // flush, so an unbounded window froze the TUI on large files.
-        const cap = this.expanded ? STREAMING_EXPANDED_LINES : uiStyle().tool.collapsedLines;
+        const cap = this.expanded ? STREAMING_EXPANDED_LINES : COLLAPSED_OUTPUT_LINES;
         const truncated = raw.length > cap;
         const shown = truncated ? raw.slice(-cap) : raw;
         const lang = getLanguageFromPath(String(this.args.path ?? ""));
         const lines = lang ? highlightCode(shown.join("\n"), lang) : shown.map((l) => theme.fg("toolOutput", l));
         if (!truncated) return lines;
-        const hint = this.expanded ? "streaming" : `${uiStyle().hints.expandHint} to expand`;
+        const hint = this.expanded ? "streaming" : `${EXPAND_HINT} to expand`;
         return [...lines, theme.fg("dim", `… +${raw.length - cap} earlier lines (${hint})`)];
     }
 

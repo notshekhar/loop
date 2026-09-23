@@ -3,6 +3,7 @@ import { AGENT_TOOL_NAMES, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME }
 import {
     clearToolVerbGroups,
     foldsEagerly,
+    foldsWhileRunning,
     kindIdOf,
     registerToolVerbGroup,
     verbGroupLabel,
@@ -26,16 +27,23 @@ describe("classification", () => {
         expect(kindIdOf("task")).toBe("subagent");
     });
 
-    test("everything folds except the surfaces the user acts on", () => {
-        for (const t of ["read", "ls", "grep", "webfetch", "task", "bash", "edit", "write", "artifact"]) {
+    test("everything folds except the plan surfaces", () => {
+        for (const t of ["read", "ls", "grep", "webfetch", "task", "sql", "bash", "edit", "write", "artifact", "ask"]) {
             expect(foldsEagerly(t)).toBe(true);
         }
-        // An ANSWERED question folds like anything else — a pending one is
-        // still running, and a running call is never groupable. A plan is the
-        // one surface that keeps its rows: a document read against, not
-        // answered and done with.
-        expect(foldsEagerly("ask")).toBe(true);
         for (const t of ["plan", "enter_plan_mode", "exit_plan_mode"]) expect(foldsEagerly(t)).toBe(false);
+    });
+
+    test("only calls that LOOK fold while they are still running", () => {
+        // A read folds live — the header counts it as it lands. A command
+        // keeps its row until it finishes, because its live output is what
+        // you are watching.
+        for (const t of ["read", "skill", "ls", "grep", "find", "websearch", "webfetch", "memory", "task", "sql"]) {
+            expect(foldsWhileRunning(t)).toBe(true);
+        }
+        for (const t of ["bash", "shells", "edit", "write", "artifact", "todo", "ask", "linear__x", "frobnicate"]) {
+            expect(foldsWhileRunning(t)).toBe(false);
+        }
     });
 });
 
@@ -61,12 +69,13 @@ describe("loop's own tools are never mistaken for somebody else's", () => {
     });
 
     test("the plan surfaces keep their rows", () => {
-        // A plan is a document the rest of the turn is judged against, so it is
-        // never reduced to a count. An `ask` is not in this set: once answered
-        // it is history like any other call, and while it is still waiting it
-        // is `isPartial`, which never groups anyway.
+        // A plan is a document the rest of the turn is judged against, so it
+        // is never reduced to a count. An `ask` is not in this set: once
+        // answered it is history like any other call, and while it waits it
+        // is running — an acting call, which keeps its row until it lands.
         for (const t of ["plan", "enter_plan_mode", "exit_plan_mode"]) expect(foldsEagerly(t)).toBe(false);
         expect(foldsEagerly("ask")).toBe(true);
+        expect(foldsWhileRunning("ask")).toBe(false);
     });
 });
 

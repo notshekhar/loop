@@ -1,43 +1,63 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { TUI } from "@notshekhar/loop-tui";
 
 /**
- * Byte-identity gate for the UI-mode seam refactor: the default (loop mode)
- * rendering of every chat block must not change, ANSI bytes included. These
- * snapshots were captured BEFORE the seam existed — if a refactor changes any
- * of them, that is a regression in loop mode, not a snapshot to update.
+ * Byte-identity gate for THE transcript — every chat block as noir renders it,
+ * ANSI bytes included.
  *
- * Deliberate re-baselines since capture (each changed ONLY the noted bytes):
- * - 2026-07-10: expand hints "(ctrl+e to expand)" → "(ctrl+e then e to
- *   expand)" — ctrl+e was repurposed to enter nav mode, so the old hint lied.
+ * These replaced the old `ui-mode-snapshot.test.ts`, which pinned the legacy
+ * `loop` mode's boxed look. They were captured just before the UI-mode system
+ * was deleted — under noir with the knobs its `live` variant used to add
+ * (verb grouping, `→` hints) turned on, because that is what the one
+ * remaining look is. The teardown had to leave these bytes exactly as they
+ * were, and this is the file that proved it.
+ *
+ * Re-baseline log (each entry changed ONLY the noted bytes):
+ * - 2026-09-22: the palette became GrokNight/GrokDay — grok's own theme files
+ *   rather than a hand-normalised set. A palette is colour VALUES and nothing
+ *   else, so the only bytes that could move are the SGR escapes; the diffs
+ *   that were inspected before rebaselining were exactly that (same glyphs,
+ *   same widths, different hexes).
+ * - 2026-09-23: markdown went back to loop's own softer colours (headings,
+ *   inline code, code blocks, links, syntax — NIGHT_MARKDOWN in themes.ts);
+ *   the canvas and greys stay grok's. Colour VALUES only.
+ * - 2026-09-23: folding became grok's fold pass (transcript-folds.ts), with
+ *   loop's own rule that every kind folds once finished. One snapshot moved:
+ *   a fold is ONE header row — the member table that used to hang under
+ *   "Read 3 files" (and "Ran 1 command") is gone. No other byte changed.
  */
 // Pin the color pipeline before the theme module reads COLORTERM.
 process.env.COLORTERM = "truecolor";
 /**
- * ...and before chalk reads FORCE_COLOR, for the same reason.
+ * Pin the CLOCK too, in both of its dimensions.
  *
- * These two halves of "colour" come from different places: the theme's `fg`/
- * `bg` build truecolor escapes by hand and always emit them, while `bold`/
- * `italic`/`underline` go through chalk, which emits NOTHING at level 0.
- * Under `bun test` stdout is not a TTY, so chalk sits at 0 — which is the
- * state these snapshots were captured in.
- *
- * `FORCE_COLOR` overrides that, and a developer who exports it (or a CI that
- * sets it) got chalk at level 3 and 16 of 26 snapshots failing on bold/italic
- * bytes alone, with nothing in the repo changed. Pinning it makes the gate
- * compare like with like whoever runs it.
- *
- * The cost, stated plainly: at level 0 the bold/italic paths render as plain
- * text, so these snapshots do not cover them. `theme-attributes.test.ts` does.
+ * Rows carry a right-aligned `h:mm` timestamp, so a snapshot captured at 3:00
+ * fails at 3:10 with nothing changed — and the same bytes would differ between
+ * two machines in different zones. `TZ` fixes the zone (bun applies it at
+ * runtime) and the frozen `Date.now` below fixes the instant, which together
+ * make these byte comparisons about the rendering and nothing else.
+ */
+process.env.TZ = "UTC";
+/**
+ * ...and before chalk reads FORCE_COLOR. The two halves of "colour" come from
+ * different places: the theme's `fg`/`bg` build truecolor escapes by hand and
+ * always emit them, while `bold`/`italic`/`underline` go through chalk, which
+ * emits NOTHING at level 0. Under `bun test` stdout is not a TTY, so chalk sits
+ * at 0 — which is the state these snapshots are captured in, and pinning it
+ * makes the gate compare like with like whoever runs it (a developer with
+ * FORCE_COLOR exported would otherwise get chalk at level 3 and a wall of
+ * failures with nothing in the repo changed).
  *
  * Set on the instance, not via the env var: chalk reads `FORCE_COLOR` when it
- * is imported, and ES imports hoist above this file's statements — so
- * assigning `process.env.FORCE_COLOR` here happens strictly too late and
- * changes nothing. `chalk.level` is read per call, so this lands.
+ * is imported, and ES imports hoist above this file's statements.
  */
 import chalk from "chalk";
 
 chalk.level = 0;
+
+/** 2026-01-30 15:00:00 UTC — an arbitrary instant, held still. */
+const FIXED_NOW = 1769871600000;
+const realNow = Date.now;
 
 import { ChatHistory } from "../src/interactive/components/chat-history";
 import {
@@ -53,13 +73,17 @@ import { ToolExecutionComponent } from "../src/interactive/ui/tool-execution";
 import { initTheme } from "../src/interactive/ui/theme";
 
 beforeAll(() => {
-    initTheme("dark");
-    // Re-asserted here, not only at module scope: chalk is a singleton and bun
-    // shares it across every test file in the process, so a file that raises
-    // the level (theme-attributes.test.ts) could otherwise leave it raised
-    // depending on load order — and these snapshots would fail for a reason
-    // that has nothing to do with them.
+    Date.now = () => FIXED_NOW;
+    initTheme("night");
+    // Re-asserted here, not only at module scope: chalk is a singleton bun
+    // shares across every test file in the process, so a file that raises the
+    // level (theme-attributes.test.ts) could otherwise leave it raised
+    // depending on load order.
     chalk.level = 0;
+});
+
+afterAll(() => {
+    Date.now = realNow;
 });
 
 const tui = { requestRender() {} } as unknown as TUI;
@@ -232,6 +256,23 @@ describe("chat history end-to-end", () => {
         h.addToolCall("bash", "c1", { command: "seq 12" });
         h.addToolResult("c1", Array.from({ length: 12 }, (_, i) => String(i + 1)).join("\n"));
         h.setToolsExpanded(true);
+        expect(h.render(W)).toMatchSnapshot();
+    });
+
+    /**
+     * Verb grouping — the one piece of the old `live` variant with a visual
+     * footprint of its own: a run of finished, folded, same-verb calls renders
+     * as one row. It is captured here because it becomes unconditional, so
+     * this snapshot is the proof that "always on" produced the same row the
+     * variant used to.
+     */
+    test("a run of finished reads folds into one group row", () => {
+        const h = new ChatHistory(tui, CWD);
+        h.addUser("read the auth files");
+        for (const [i, path] of ["/repo/src/login.ts", "/repo/src/token.ts", "/repo/src/session.ts"].entries()) {
+            h.addToolCall("read", `r${i}`, { path });
+            h.addToolResult(`r${i}`, "const x = 1;\nexport default x;");
+        }
         expect(h.render(W)).toMatchSnapshot();
     });
 });

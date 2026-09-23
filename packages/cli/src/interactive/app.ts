@@ -67,9 +67,7 @@ import {
     type Session,
     CONFIG_DIR_NAME,
 } from "@notshekhar/loop-core";
-import { getSelectListTheme, initUiModeAndTheme, theme } from "./ui/theme";
-import { applyExtensionUiModes } from "./ui/ui-mode";
-import { registerNoirMode } from "./ui/noir-mode";
+import { getSelectListTheme, initThemeFromSettings, theme } from "./ui/theme";
 import { probeSystemScheme, stopSystemSchemeProbes } from "./ui/system-scheme";
 import { printResumeHint } from "./resume-hint";
 import { applyCanvasWash, resetCanvasWash } from "./ui/canvas-wash";
@@ -94,6 +92,8 @@ import { createInputHandler } from "./input-handler";
 import { isEventTraceEnabled, setEventTraceSink, toggleEventTrace } from "./debug-log";
 import { createTurnRunner } from "./turn-runner";
 import { createStatusLineRefresher } from "./status-line-refresh";
+import { createScrollbackFocus } from "./scrollback-focus";
+import { scrollTopFor } from "./transcript-scroll";
 import { createWorkingIndicator } from "./working-indicator";
 import { createAgentStatusBus } from "./agent-status";
 import { attachSoundReporter } from "./sound-reporter";
@@ -104,6 +104,7 @@ import { attachNotchReporter } from "./notch-reporter";
 import { createTicker } from "./ticker";
 import { registerAppKeybindings } from "./app-keybindings";
 import { installConsoleBridge } from "./console-bridge";
+import { formatError } from "./format-error";
 import { runStartupTrustAndHooks, showWhatsNew, showWorkspaceBanners, startUpdateCheck } from "./startup";
 import { startEnabledGateways, stopRunningGateways } from "./gateway-process";
 import { showWelcomeBanner } from "./welcome";
@@ -172,8 +173,10 @@ async function showNoModelGuidance(history: ChatHistory, tui: TUI): Promise<void
 }
 
 export async function runInteractive(opts: InteractiveOptions): Promise<void> {
-    registerNoirMode();
-    initUiModeAndTheme();
+    // A theme before anything can paint. Extensions may contribute one of
+    // their own, so this runs again once the host is up (below) — it is
+    // cheap, and the alternative is a first frame with no colours at all.
+    initThemeFromSettings();
     registerAppKeybindings();
 
     // Model precedence: CLI flag > this folder's last pick > global default.
@@ -213,10 +216,9 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     // silently getting nothing (the screen is built further down).
     getExtensionHost().setServices({ openExternal: (url) => openBrowser(url), interactive: true });
     await getExtensionHost().init();
-    // Modes an extension registers must exist before the configured mode is
-    // activated, so drain them and re-resolve the mode + its theme.
-    applyExtensionUiModes();
-    initUiModeAndTheme();
+    // Extensions may contribute palettes, and one of them may be the theme
+    // settings names — so the host is up (above) before the theme resolves.
+    initThemeFromSettings();
     const commands = new CommandRegistry();
     await registerBuiltins(commands, { cwd: opts.cwd });
     getExtensionHost().applyCommands(commands);
@@ -275,7 +277,12 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     statusLine.setAgent(state.agent);
 
     const { refreshStatusLine, refreshStatusLineCtx } = createStatusLineRefresher(statusLine, tracker, tui, state);
-    refreshStatusLineCtx();
+    // The whole line, not just the context gauge: a session opened with
+    // `--session` has cost, a context size and possibly a plan mode to
+    // restore, and /resume (which restores all three) is the same session
+    // arriving by a different door. The two were drifting apart one field at a
+    // time.
+    refreshStatusLine();
 
     const editor = new Editor(tui, editorTheme, { paddingX: 1 });
 
@@ -417,42 +424,46 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     if (state.pinnedInput) tui.setLayoutRoot(pinnedFrame);
     const transcriptViewport = (): { top: number; height: number } => ({
         top: tui.viewportTop,
-        height: state.pinnedInput ? transcriptView.viewportHeight : tui.terminal.rows,
+        // Pinned, the transcript has a pane of its own. Flowing, it shares the
+        // screen with the chrome below it, and the rows the chrome is using
+        // are not rows the transcript can be seen through.
+        height: state.pinnedInput
+            ? transcriptView.viewportHeight
+            : Math.max(1, tui.terminal.rows - chromeRows()),
     });
 
-    // What the transcript window may NOT use: every row the chrome under it is
-    // taking this frame (loader slot, todos, queued messages, editor, status
-    // line, trailing spacer). Measured rather than assumed, because all of it
-    // moves — the editor grows a row per line of draft, the todo panel appears
-    // mid-turn — and an under-reserve is what pushes the prompt off the
-    // screen. Re-rendering to measure is safe: component renders are pure (the
-    // spinner advances on its own interval, not on render), the same property
-    // the click-to-select mapper already relies on, and the transcript itself
-    // is NOT re-rendered here — it is the one child this skips.
-    //
-    // Do not "optimize" this into a cached height — a height cached ACROSS
-    // frames is stale in exactly the case that matters, the frame where the
-    // editor grows a line, and a one-frame under-reserve is a one-frame
-    // overflow of the screen.
-    //
-    // Memoizing WITHIN a single frame is a different thing, and safe: the
-    // answer cannot change while one frame is being composed. Worth doing
-    // because the measurement is only ~1µs on an empty draft — the editor has
-    // no render cache of its own and re-lays out the whole draft on every call
-    // (measured 0.05ms at 400 chars, 0.31ms at 4k, 1.2ms at 20k) — and a
-    // pinned frame asks twice, once here and once when the chrome is really
-    // rendered. The memo is dropped the moment the render pass ends, so
-    // anything asking BETWEEN frames (PgUp sizing its page) still measures the
-    // chrome as it is right then.
+    /**
+     * How many rows the chrome under the transcript is taking this frame: the
+     * loader slot, the todo and shells panels, queued messages, the editor,
+     * the status line, the trailing spacer.
+     *
+     * Measured rather than assumed, because all of it moves — the editor grows
+     * a row per line of draft, the todo panel appears mid-turn — and it is
+     * what says how much of the transcript is actually on screen. Re-rendering
+     * to measure is safe: component renders are pure (the spinner advances on
+     * its own interval, not on render), the same property click-to-select
+     * relies on, and the transcript itself is not re-rendered here.
+     *
+     * Do not "optimize" this into a cached height — a height cached ACROSS
+     * frames is stale in exactly the case that matters, the frame where the
+     * editor grows a line. Memoizing WITHIN a single frame is a different
+     * thing, and safe: the answer cannot change while one frame is being
+     * composed. Worth doing because the measurement is only ~1µs on an empty
+     * draft — the editor has no render cache of its own and re-lays out the
+     * whole draft on every call (measured 0.05ms at 400 chars, 0.31ms at 4k,
+     * 1.2ms at 20k) — and a pinned frame asks twice, once here and once when
+     * the chrome is really rendered. The memo is dropped the moment the render
+     * pass ends, so anything asking BETWEEN frames still measures the chrome
+     * as it is right then.
+     */
     let reserve: { frame: number; rows: number } | null = null;
-    history.setReserveRows(() => {
+    const chromeRows = (): number => {
         const rendering = tui.isRendering();
         if (rendering && reserve?.frame === tui.renderFrameId) return reserve.rows;
-        const width = tui.terminal.columns;
-        const rows = chrome.render(width).length;
+        const rows = chrome.render(tui.terminal.columns).length;
         reserve = rendering ? { frame: tui.renderFrameId, rows } : null;
         return rows;
-    });
+    };
 
     // loop is up and the first frame is about to go out.
     playCue("bloom");
@@ -469,12 +480,17 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         .catch(() => {})
         .then(() => {
             // The catalog (including custom-provider models) resolves
-            // asynchronously; the status line booted before it landed, so a
-            // model that isn't resolvable synchronously — a custom-provider id —
-            // came up with reasoning unknown and hid the thinking level. Re-apply
-            // now that getModelSync can see it, then repaint.
+            // asynchronously, and the status line booted before it landed. A
+            // model that is not resolvable synchronously — a custom-provider or
+            // gateway id — came up with reasoning unknown, which hid the
+            // thinking level, AND with a context window of zero, which is what
+            // made `loop --session <id>` show an empty context gauge while
+            // /resume inside a session showed the real one: by then the catalog
+            // had long been warm. The whole status line is re-applied rather
+            // than the model alone, so anything else computed from the model
+            // (the ctx meter, the cost row, the plan flag) lands with it.
             statusLine.setModel(state.modelId);
-            tui.requestRender();
+            refreshStatusLine();
         });
 
     const workingIndicator = createWorkingIndicator(tui, statusContainer, statusIdleSpacer);
@@ -596,6 +612,28 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     const scrollTranscriptToEnd = (): void => {
         if (state.pinnedInput) transcriptView.scrollTo(Number.MAX_SAFE_INTEGER);
         else if (!tui.isFollowingOutput) tui.scrollToBottom();
+    };
+
+    /**
+     * Bring the selected entry into view after a navigation action.
+     *
+     * The transcript is one long document and the frame is a window onto it,
+     * so this is ordinary scrolling — the same window the wheel and PgUp move.
+     * The entry's line range comes from a fresh render (component renders are
+     * pure, which is what the click mapper relies on too), and an entry taller
+     * than the window pins to its TOP: trying to fit both ends makes the page
+     * ping-pong between them on every keystroke.
+     */
+    const revealSelection = (): void => {
+        if (!history.takeRevealRequest()) return;
+        history.render(tui.terminal.columns);
+        const range = history.selectedRange();
+        if (!range) return;
+        const view = transcriptViewport();
+        const next = scrollTopFor(range, view);
+        if (next === view.top) return;
+        if (state.pinnedInput) transcriptView.scrollTo(next);
+        else tui.scrollBy(next - view.top);
     };
 
     /** Rows of the frame that sit BELOW the editor: the status line, the spacer. */
@@ -809,6 +847,13 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     syncTickerRef = syncTicker;
 
     const restoreConsole = installConsoleBridge(history, tui);
+    // A frame that threw painted nothing. It is logged once with its stack
+    // (render-error.log in the agent directory); say so once in the chat, so
+    // a UI that recovers on the next frame also tells you it stumbled — and
+    // where the evidence is.
+    tui.onRenderError = (error) => {
+        history.addError(`a frame failed to draw and was skipped: ${formatError(error)} (see render-error.log)`);
+    };
 
     // Event tracer: dim trace lines in the chat + ~/.loop/events-debug.log.
     // Off by default; LOOP_DEBUG_EVENTS=1 enables at startup, Shift+Ctrl+D
@@ -904,6 +949,16 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         });
     };
 
+    const scrollbackFocus = createScrollbackFocus(state, { tui, history, statusLine, transcriptViewport, revealSelection });
+    // A click selects the transcript entry under it while navigating. The
+    // viewport recognises the gesture (it has to, to tell a click from a
+    // drag-selection) and hands it over rather than consuming it, so text
+    // selection is untouched. It reports 0-based cells; the focus service
+    // speaks screen rows the way terminals do.
+    tui.onClick = (_x, y) => {
+        scrollbackFocus.clickAtScreenRow(y + 1);
+    };
+
     const deps: AppDeps = {
         tui,
         history,
@@ -937,6 +992,8 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         transcriptViewport,
         revealPrompt,
         scrollTranscriptToEnd,
+        revealSelection,
+        scrollbackFocus,
     };
     syncTicker();
 

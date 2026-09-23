@@ -16,14 +16,18 @@ import {
     visibleWidth,
 } from "@notshekhar/loop-tui";
 import { getMarkdownTheme, theme, verticalRuleSlot } from "./theme";
-import { type ThinkingBlockState, uiRenderers, uiStyle } from "./ui-mode";
+import { renderThinking } from "./blocks/thinking";
+import { EXPAND_HINT } from "./blocks/shared";
+import type { ThinkingBlockState } from "./blocks/types";
+
+/** What a user message wears in front of its text — the prompt glyph, so a
+ * turn reads as something you said rather than one more block on the page. */
+const USER_PREFIX = "❯";
 
 // OSC 133 shell-integration zones — let terminals jump between messages
 const ZONE_START = "\x1b]133;A\x07";
 const ZONE_END = "\x1b]133;B\x07";
 const ZONE_FINAL = "\x1b]133;C\x07";
-
-const expandHint = () => uiStyle().hints.expandHint;
 
 export class DynamicBorder implements Component {
     private color: (str: string) => string;
@@ -118,10 +122,9 @@ export class UserMessageComponent extends Container {
         markdownTheme: MarkdownTheme = getMarkdownTheme(),
     ) {
         super();
-        const prefix = uiStyle().userMessage.prefix;
         const box = new Box(1, 1, (content: string) => theme.bg("userMessageBg", content));
         box.addChild(
-            new Markdown(prefix ? `${prefix} ${text}` : text, 0, 0, markdownTheme, {
+            new Markdown(`${USER_PREFIX} ${text}`, 0, 0, markdownTheme, {
                 color: (content: string) => theme.fg("userMessageText", content),
             }),
         );
@@ -142,12 +145,9 @@ export class UserMessageComponent extends Container {
     }
 
     private renderInner(width: number): string[] {
-        const override = uiRenderers().userMessage;
-        let lines = (override ? override({ text: this.text }, { width, theme }) : null) ?? super.render(width);
-        if (uiStyle().userMessage.timestamp && lines.length > 1) {
-            lines[1] = injectBoxTimestamp(lines[1], this.createdAt);
-        }
-        if (!this.expanded) lines = foldLines(lines, uiStyle().hints.selectedExpandHint);
+        let lines = super.render(width);
+        if (lines.length > 1) lines[1] = injectBoxTimestamp(lines[1], this.createdAt);
+        if (!this.expanded) lines = foldLines(lines, EXPAND_HINT);
         return lines;
     }
 
@@ -176,52 +176,30 @@ export interface TrackedBlock {
     readonly contentIndex: number;
 }
 
-/** Thinking content — dispatches to the mode's thinking renderer when one is
- * registered, else renders the default italic markdown. All state is read
- * fresh through getters: the component instances are recreated on every
- * streaming delta, so per-block state lives in the parent (keyed by content
- * index) and only flows through here. */
+/** Thinking content — a collapsing block with its own rail (see
+ * `blocks/thinking.ts`). All state is read fresh through the getter: the
+ * component instances are recreated on every streaming delta, so per-block
+ * state lives in the parent (keyed by content index) and only flows through
+ * here. */
 class ThinkingBlock implements Component, TrackedBlock {
     readonly blockKind = "thinking" as const;
-    private md: Markdown;
 
     constructor(
         readonly contentIndex: number,
         private text: string,
         private state: () => Omit<ThinkingBlockState, "text">,
-        markdownTheme: MarkdownTheme,
-    ) {
-        this.md = new Markdown(text, 1, 0, markdownTheme, {
-            color: (t: string) => theme.fg("thinkingText", t),
-            italic: true,
-        });
-    }
+    ) {}
 
-    /** Grow this block in place. The instance surviving the delta is the whole
-     * point: it is what lets the markdown keep its settled head instead of
-     * re-lexing the block from the top on every token. */
+    /** Grow this block in place — the instance surviving the delta is what
+     * keeps the transcript from rebuilding the whole turn per token. */
     setText(text: string): void {
-        if (text === this.text) return;
         this.text = text;
-        this.md.setText(text);
     }
 
-    invalidate(): void {
-        this.md.invalidate();
-    }
-
-    private renderInner(width: number): string[] {
-        this.md.setStreaming(this.state().streaming);
-        const override = uiRenderers().thinking;
-        if (override) {
-            const lines = override({ text: this.text, ...this.state() }, { width, theme });
-            if (lines) return lines;
-        }
-        return this.md.render(width);
-    }
+    invalidate(): void {}
 
     render(width: number): string[] {
-        const lines = this.renderInner(width);
+        const lines = renderThinking({ text: this.text, ...this.state() }, { width, theme });
         return this.state().selected ? markSelectedLines(lines) : lines;
     }
 }
@@ -258,13 +236,11 @@ class ResponseTextBlock implements Component, TrackedBlock {
         const { expanded, createdAt, streaming } = this.state();
         this.md.setStreaming(streaming);
         let lines = this.md.render(width);
-        if (uiStyle().userMessage.timestamp && !streaming && lines.length > 0) {
-            lines[0] = appendTimestamp(lines[0], createdAt, width);
-        }
-        if (!expanded) lines = foldLines(lines, uiStyle().hints.selectedExpandHint);
-        // Block-gap modes: the response block owns its single leading blank.
-        if (uiStyle().layout.blockGaps) lines = ["", ...lines];
-        return lines;
+        if (!streaming && lines.length > 0) lines[0] = appendTimestamp(lines[0], createdAt, width);
+        if (!expanded) lines = foldLines(lines, EXPAND_HINT);
+        // Every block owns its single leading blank — see the gap rule in
+        // AssistantMessageComponent.
+        return ["", ...lines];
     }
 
     render(width: number): string[] {
@@ -379,10 +355,9 @@ export class AssistantMessageComponent extends Container {
         this.thinkingOverride.clear();
     }
 
-    /** Drop every per-block fold override, back to the mode's own defaults —
-     * see ChatHistory.resetFolds for why leaving navigation does this. */
+    /** Drop every per-block fold override (thinking and response text), back
+     * to the default view — see ChatHistory.resetFolds. */
     resetFolds(): void {
-        this.thinkingExpanded = false;
         this.thinkingOverride.clear();
         this.textOverride.clear();
         this.invalidate();
@@ -457,13 +432,10 @@ export class AssistantMessageComponent extends Container {
         const previous = this.blocks;
         this.blocks = new Map();
 
-        // Block-gap modes: every block renders its own leading blank, so the
-        // container-level spacers here would double every gap.
-        const blockGaps = uiStyle().layout.blockGaps;
-        const hasVisibleContent = message.content.some(
-            (c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
-        );
-        if (hasVisibleContent && !blockGaps) this.contentContainer.addChild(new Spacer(1));
+        // Every block renders its own single leading blank, so there are no
+        // container-level spacers here to double it. One deterministic gap
+        // rule for live streaming AND replay, which build this tree
+        // differently.
 
         for (let i = 0; i < message.content.length; i++) {
             const content = message.content[i];
@@ -505,15 +477,10 @@ export class AssistantMessageComponent extends Container {
                                       durationMs: time?.end !== undefined ? time.end - time.start : undefined,
                                   };
                               },
-                              this.markdownTheme,
                           );
                 block.setText(content.thinking.trim());
                 this.blocks.set(index, block);
                 this.contentContainer.addChild(block);
-                const hasVisibleContentAfter = message.content
-                    .slice(i + 1)
-                    .some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()));
-                if (hasVisibleContentAfter && !blockGaps) this.contentContainer.addChild(new Spacer(1));
             }
         }
 
@@ -589,7 +556,7 @@ export class SkillInvocationMessageComponent extends Box {
                 new Text(
                     theme.fg("customMessageLabel", "\x1b[1m[skill]\x1b[22m ") +
                         theme.fg("customMessageText", this.skillBlock.name) +
-                        theme.fg("dim", ` (${expandHint()} to expand)`),
+                        theme.fg("dim", ` (${EXPAND_HINT} to expand)`),
                     0,
                     0,
                 ),
@@ -655,7 +622,7 @@ export class CompactionSummaryMessageComponent extends Box {
             this.addChild(
                 new Text(
                     theme.fg("customMessageText", `${lead} (`) +
-                        theme.fg("dim", expandHint()) +
+                        theme.fg("dim", EXPAND_HINT) +
                         theme.fg("customMessageText", " to expand)"),
                     0,
                     0,
@@ -702,7 +669,7 @@ export class BranchSummaryMessageComponent extends Box {
             this.addChild(
                 new Text(
                     theme.fg("customMessageText", "Branch summary (") +
-                        theme.fg("dim", expandHint()) +
+                        theme.fg("dim", EXPAND_HINT) +
                         theme.fg("customMessageText", " to expand)"),
                     0,
                     0,

@@ -27,7 +27,6 @@ import type {
     ToolCallMiddleware,
     ToolResultMiddleware,
     ExtensionThemeJson,
-    ExtensionUiMode,
     ToolSummaryContext,
     ToolSummaryRenderer,
     TurnMiddleware,
@@ -146,8 +145,7 @@ interface Contributions {
     toolCallMws: { match: (name: string) => boolean; mw: ToolCallMiddleware }[];
     toolResultMws: { match: (name: string) => boolean; mw: ToolResultMiddleware }[];
     toolSummaries: { match: (name: string) => boolean; fn: ToolSummaryRenderer }[];
-    uiModes: ExtensionUiMode[];
-    themeAdditions: { modeId: string; themes: ExtensionThemeJson[] }[];
+    themes: ExtensionThemeJson[];
     providers: Map<string, ProviderPlugin>;
     modelInfos: ModelInfo[];
     agents: AgentPlugin[];
@@ -199,8 +197,7 @@ function emptyContributions(): Contributions {
         toolCallMws: [],
         toolResultMws: [],
         toolSummaries: [],
-        uiModes: [],
-        themeAdditions: [],
+        themes: [],
         providers: new Map(),
         modelInfos: [],
         agents: [],
@@ -472,9 +469,8 @@ export class ExtensionHost {
                 }) as ExtensionAPI["settings"]["getOwn"],
                 setOwn: ((key: string, value: unknown) => writeOwn(key, value)) as never,
             },
-            uiModes: {
-                register: (mode) => c.uiModes.push(mode),
-                addThemes: (modeId, ...themes) => c.themeAdditions.push({ modeId, themes }),
+            themes: {
+                register: (...themes) => c.themes.push(...themes),
             },
 
             providers: {
@@ -704,15 +700,12 @@ export class ExtensionHost {
     }
 
     /**
-     * UI modes and extra palettes contributed by extensions. The CLI drains
-     * these into its mode registry after `init()` and after any reload — core
-     * only collects them, since the registry and renderer live in the CLI.
+     * Palettes contributed by extensions. The CLI resolves theme names against
+     * these alongside its own — core only collects them, since the theme
+     * engine lives in the CLI.
      */
-    getUiModes(): { modes: ExtensionUiMode[]; themeAdditions: { modeId: string; themes: ExtensionThemeJson[] }[] } {
-        return {
-            modes: [...this.loaded.values()].flatMap((l) => l.contributions.uiModes),
-            themeAdditions: [...this.loaded.values()].flatMap((l) => l.contributions.themeAdditions),
-        };
+    getThemes(): ExtensionThemeJson[] {
+        return [...this.loaded.values()].flatMap((l) => l.contributions.themes);
     }
 
     /** Status-line contributors + transforms, aggregated across extensions. */

@@ -1,30 +1,25 @@
-import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import type { TUI } from "@notshekhar/loop-tui";
 
 process.env.COLORTERM = "truecolor";
 
 import {
-    registerNoirMode,
-    setNoirSystem,
+    builtinThemes,
+    setSystemScheme,
     systemCanvasHex,
     systemTheme,
     DAY_PALETTE,
     DAY_THEME,
     NIGHT_PALETTE,
     NIGHT_THEME,
-} from "../src/interactive/ui/noir-mode";
+} from "../src/interactive/ui/themes";
 import { contrastRatio } from "../src/interactive/ui/palette";
-import {
-    activeUiMode,
-    nextToolDetail,
-    setActiveUiMode,
-    setToolDetail,
-    uiStyle,
-} from "../src/interactive/ui/ui-mode";
+import { nextToolDetail, setToolDetail } from "../src/interactive/ui/tool-detail";
 import {
     resumeSystemSchemeProbesForTest,
     stopSystemSchemeProbes,
     probeSystemScheme,
+    resolveScheme,
     syncSystemScheme,
 } from "../src/interactive/ui/system-scheme";
 import { initTheme, Theme, theme } from "../src/interactive/ui/theme";
@@ -34,25 +29,23 @@ import { ToolExecutionComponent } from "../src/interactive/ui/tool-execution";
 import { ChatHistory } from "../src/interactive/components/chat-history";
 import { setAnimTickForTest } from "../src/interactive/ui/anim";
 
-beforeAll(() => {
-    registerNoirMode();
-});
-
 afterEach(() => {
-    setActiveUiMode("loop");
-    initTheme("dark");
-    setNoirSystem("dark"); // module state — a light probe must not leak
+    initTheme("night");
+    setSystemScheme("dark"); // module state — a light probe must not leak
 });
 
-const noirOn = () => {
-    setActiveUiMode("noir");
-    initTheme("night");
+const noirOn = () => initTheme("night");
+
+/** Finished calls fold into a run; tests about ROWS open it first. */
+const openLastRun = (h: ChatHistory): void => {
+    h.selectLast();
+    h.setSelectedExpanded(true);
+    h.clearSelection();
 };
 
-/** noir on its `system` theme, at the scheme the terminal is pretending to be. */
+/** The `system` theme, at the scheme the terminal is pretending to be. */
 const noirSystem = (scheme: "dark" | "light" = "dark", canvas?: string) => {
-    setNoirSystem(scheme, canvas);
-    setActiveUiMode("noir");
+    setSystemScheme(scheme, canvas);
     initTheme("system");
 };
 
@@ -113,7 +106,7 @@ describe("noir mode themes", () => {
     test("night theme resolves the wash color", () => {
         const t = new Theme(NIGHT_THEME);
         expect(t.raw("bgBase")).toBe("#141414");
-        expect(t.raw("bgRaised")).toBe("#1f1f21");
+        expect(t.raw("bgRaised")).toBe("#242424");
     });
 
     test("initTheme finds night via the active mode's theme set", () => {
@@ -121,26 +114,9 @@ describe("noir mode themes", () => {
         expect(theme.raw("bgBase")).toBe("#141414");
     });
 
-    test("loop mode cannot see noir's themes (falls back to dark)", () => {
-        setActiveUiMode("loop");
-        initTheme("night"); // not a loop theme, not a custom file → fallback
-        expect(theme.name).toBe("dark");
-    });
-});
-
-describe("noir mode style spec", () => {
-    test("resolves the noir knobs over loop defaults", () => {
-        noirOn();
-        const s = uiStyle();
-        expect(s.canvas.wash).toBe(true);
-        expect(s.thinking.display).toBe("block");
-        expect(s.thinking.collapseOnFinish).toBe(true);
-        expect(s.tool.bullet).toBe("◆");
-        expect(s.tool.mutedCollapsed).toBe(true);
-        expect(s.userMessage.prefix).toBe("❯");
-        expect(s.turn.summaryLine).toBe(true);
-        // untouched knobs keep loop values
-        expect(s.tool.collapsedLines).toBe(6);
+    test("an unknown theme name falls back to night rather than failing", () => {
+        initTheme("no-such-theme");
+        expect(theme.name).toBe("night");
     });
 });
 
@@ -209,8 +185,11 @@ describe("noir mode rendering", () => {
         h.addToolResult("c1", five("OUT-ONE"));
         h.addToolCall("bash", "c2", { command: "echo two" });
         h.addToolResult("c2", five("OUT-TWO"));
-        h.moveSelection(-1); // selects c2 (most recent)
-        h.moveSelection(-1); // walk up to c1
+        // Finished calls fold into their run first, so opening one is two
+        // steps: open the run, then open the call inside it.
+        openLastRun(h);
+        h.selectLast(); // c2
+        h.moveSelection(-1); // c1
         h.toggleSelected();
         const text = h.render(W).map(strip).join("\n");
         // the opened call shows its whole output
@@ -253,12 +232,15 @@ describe("noir mode rendering", () => {
         h.addToolResult("g1", "a");
         h.addToolCall("bash", "g2", { command: "echo b" });
         h.addToolResult("g2", "b");
+        openLastRun(h);
         const plain = h.render(W).map(strip);
         const t1 = plain.findIndex((l) => l.includes("◆ bash echo a"));
         const t2 = plain.findIndex((l) => l.includes("◆ bash echo b"));
-        // blank line between the text and the first tool row
-        expect(plain[t1 - 1].trim()).toBe("");
-        // consecutive tool rows stay adjacent — each call is now its row, its
+        // The open run's header sits directly above its first row, with one
+        // blank line between the text and the header — the block opens once.
+        expect(plain[t1 - 1]).toContain("Ran 2 commands");
+        expect(plain[t1 - 2].trim()).toBe("");
+        // consecutive tool rows stay adjacent — each call is its row, its
         // receipt and its peek, and no blank opens up between the two calls
         expect(t2).toBe(t1 + 3);
         expect(plain[t1 + 1]).toContain("└ ok · 1 line");
@@ -350,90 +332,24 @@ describe("noir mode rendering", () => {
         expect(h.render(W).map(strip).join("\n")).toContain("l6");
     });
 
-    test("REGRESSION: a streaming turn must not drag the nav window to the bottom", () => {
+    test("REGRESSION: a streaming turn must not ask to move the page", () => {
         noirOn();
-        const smallTui = { requestRender() {}, terminal: { rows: 18 } } as unknown as TUI;
-        const h = new ChatHistory(smallTui, "/repo");
+        const h = new ChatHistory(tui, "/repo");
         for (let i = 0; i < 15; i++) {
             h.addToolCall("bash", `c${i}`, { command: `echo ${i}` });
             h.addToolResult(`c${i}`, String(i));
         }
-        h.setViewport(true);
         h.selectLast();
-        h.render(W); // anchor consumed here
-        // user scrolls up to read history
-        h.scrollViewportLines(-8);
-        const before = h.render(W).map(strip);
-        // a turn streams in: growing response text + more entries below
+        expect(h.takeRevealRequest()).toBe(true); // the selection moved
+        // A turn streams in: growing response text and more entries below.
+        // None of it is a user action, so the page stays where the reader
+        // left it.
         for (let i = 0; i < 30; i++) h.appendAssistantDelta(`stream line ${i}\n`, "p", "m");
-        const after = h.render(W).map(strip);
-        // the window must NOT move — same first visible content line
-        expect(after[1]).toBe(before[1]);
-        // moving the selection re-anchors deliberately (one user action)
+        h.render(W);
+        expect(h.takeRevealRequest()).toBe(false);
+        // Moving the selection asks again — one reveal per action.
         h.moveSelection(1);
-        const anchored = h.render(W).map(strip).join("\n");
-        expect(anchored).not.toBe(after.join("\n"));
-    });
-
-    test("nav scroll cache: identical output, no stale content, and actually fast", () => {
-        noirOn();
-        const smallTui = { requestRender() {}, terminal: { rows: 20 } } as unknown as TUI;
-        const h = new ChatHistory(smallTui, "/repo");
-        for (let i = 0; i < 120; i++) {
-            h.addToolCall("bash", `c${i}`, { command: `echo entry-${i}` });
-            h.addToolResult(`c${i}`, `out-${i}`);
-        }
-        h.setViewport(true);
-        h.selectLast();
-        h.render(W);
-        // cached scroll renders must equal a cold (dirty) render of the same offset
-        h.scrollViewportLines(-40);
-        const cached = h.render(W).join("\n");
-        (h as unknown as { markDirty(): void }).markDirty();
-        const cold = h.render(W).join("\n");
-        expect(cached).toBe(cold);
-        // a streaming mutation busts the cache — new content appears
-        h.scrollViewportEdge("bottom");
-        h.render(W);
-        h.appendAssistantDelta("fresh-delta-text", "p", "m");
-        h.scrollViewportEdge("bottom");
-        expect(h.render(W).join("\n")).toContain("fresh-delta-text");
-        // cached scrolling is at least 5x faster than dirty re-renders
-        const t0 = performance.now();
-        for (let i = 0; i < 50; i++) {
-            h.scrollViewportLines(i % 2 === 0 ? -5 : 5);
-            h.render(W);
-        }
-        const cachedMs = performance.now() - t0;
-        const t1 = performance.now();
-        for (let i = 0; i < 50; i++) {
-            (h as unknown as { markDirty(): void }).markDirty();
-            h.scrollViewportLines(i % 2 === 0 ? -5 : 5);
-            h.render(W);
-        }
-        const dirtyMs = performance.now() - t1;
-        expect(cachedMs * 5).toBeLessThan(dirtyMs);
-    });
-
-    test("an entry taller than the window pins to its top (no ping-pong)", () => {
-        noirOn();
-        const smallTui = { requestRender() {}, terminal: { rows: 18 } } as unknown as TUI;
-        const h = new ChatHistory(smallTui, "/repo");
-        h.addToolCall("bash", "c0", { command: "echo pad" });
-        h.addToolResult("c0", "pad");
-        h.addToolCall("bash", "c1", { command: "seq 40" });
-        h.addToolResult("c1", Array.from({ length: 40 }, (_, i) => String(i + 1)).join("\n"));
-        h.setViewport(true);
-        h.selectLast();
-        h.toggleSelected(); // expand: entry is now ~41 lines vs a 10-row window
-        const first = h.render(W).map(strip);
-        const again = h.render(W).map(strip);
-        const third = h.render(W).map(strip);
-        // stable across renders — the old logic oscillated top/bottom
-        expect(again).toEqual(first);
-        expect(third).toEqual(first);
-        // pinned to the entry's top: the header row is visible
-        expect(first.join("\n")).toContain("◆ bash seq 40");
+        expect(h.takeRevealRequest()).toBe(true);
     });
 
     test("a long user message folds the same way", () => {
@@ -460,7 +376,7 @@ describe("noir mode rendering", () => {
         // selecting must not shift the layout
         expect(lines.length).toBe(unselectedHeight);
         const plain = lines.map(strip);
-        const row = plain.findIndex((l) => l.includes("◆ bash echo hi"));
+        const row = plain.findIndex((l) => l.includes("Ran 1 command"));
         expect(row).toBeGreaterThan(-1);
         expect(plain[row].trimStart().startsWith("▌")).toBe(true);
         h.clearSelection();
@@ -476,7 +392,8 @@ describe("noir mode rendering", () => {
         expect(h.getSelectedText()).toBeNull();
         expect(h.selectLast()).toBe(true);
         expect(h.hasSelection()).toBe(true);
-        // right = expand, left = fold
+        // Two-level, grok-style: → opens the run first, then the call.
+        expect(h.setSelectedExpanded(true)).toBe(true);
         expect(h.setSelectedExpanded(true)).toBe(true);
         // The selection spine and the rail share column 0 — a selected entry
         // wears "▌" where its rail would be, so nothing shifts sideways.
@@ -507,124 +424,42 @@ describe("noir mode rendering", () => {
         expect(respLine).toMatch(/\d{1,2}:\d{2} [AP]M\s*$/);
     });
 
-    test("loop mode renders no timestamps (knob off)", () => {
-        setActiveUiMode("loop");
-        initTheme("dark");
-        const h = new ChatHistory(tui, "/repo");
-        h.addUser("hello", new Date(2026, 6, 9, 21, 10).getTime());
-        expect(h.render(W).map(strip).join("\n")).not.toContain("9:10 PM");
-    });
-
-    test("nav viewport: window follows the selection and clips with indicators", () => {
+    test("click selects the entry that owns the clicked line", () => {
         noirOn();
-        const smallTui = { requestRender() {}, terminal: { rows: 20 } } as unknown as TUI;
-        const h = new ChatHistory(smallTui, "/repo");
-        // 30 tool rows -> far taller than the 12-row window (20 - 8)
-        for (let i = 0; i < 30; i++) {
+        const h = new ChatHistory(tui, "/repo");
+        h.addUser("question");
+        for (let i = 0; i < 6; i++) {
             h.addToolCall("bash", `c${i}`, { command: `echo ${i}` });
             h.addToolResult(`c${i}`, String(i));
         }
-        // no viewport: full height
-        expect(h.render(W).length).toBeGreaterThanOrEqual(30);
-        h.setViewport(true);
-        h.selectLast();
-        let win = h.render(W);
-        expect(win.length).toBeLessThanOrEqual(12);
-        let plain = win.map(strip);
-        // bottom entry selected: window is anchored at the bottom, top clipped
-        expect(plain[0]).toContain("▲");
-        expect(plain.join("\n")).toContain("echo 29");
-        // walk far up: window follows, bottom becomes clipped
-        for (let i = 0; i < 25; i++) h.moveSelection(-1);
-        plain = h.render(W).map(strip);
-        expect(plain.join("\n")).toContain("echo 4");
-        expect(plain.join("\n")).not.toContain("echo 29");
-        expect(plain[plain.length - 1]).toContain("▼");
-        // manual scroll releases follow; selection move re-engages
-        h.scrollViewportLines(h.viewportPage());
-        const scrolled = h.render(W).map(strip).join("\n");
-        expect(scrolled).not.toContain("echo 4 ");
-        h.moveSelection(-1);
-        expect(h.render(W).map(strip).join("\n")).toContain("echo 3");
-        // expand-all keeps the selection in view (no fling to bottom)
-        h.setToolsExpanded(true);
-        expect(h.render(W).map(strip).join("\n")).toContain("echo 3");
-        // exit: full height again
-        h.setViewport(false);
-        expect(h.render(W).length).toBeGreaterThanOrEqual(30);
+        openLastRun(h);
+        const plain = h.render(W).map(strip);
+        const rowOf = (needle: string) => plain.findIndex((l) => l.includes(needle));
+        expect(h.clickAtLocalLine(rowOf("echo 3"))).toBe(true);
+        expect(h.getSelectedText()).toBe("bash echo 3\n3");
+        // A click lands on the whole entry, its receipt and peek included, not
+        // only on the header row.
+        expect(h.clickAtLocalLine(rowOf("echo 3") + 1)).toBe(true);
+        expect(h.getSelectedText()).toBe("bash echo 3\n3");
+        // spacer/gap lines miss cleanly
+        expect(h.clickAtLocalLine(0)).toBe(false);
+        // so does a line past the end of the transcript
+        expect(h.clickAtLocalLine(plain.length + 10)).toBe(false);
     });
 
-    test("replayed thinking keeps its persisted duration (reasoningMs)", () => {
+    test("a long stretch of commands is one row once they finish", () => {
+        // Every finished call folds into its run, so forty commands are one
+        // header, not forty rows.
         noirOn();
         const h = new ChatHistory(tui, "/repo");
-        // replay path: duration passed straight through instead of wall clock
-        h.appendAssistantThinking("old reasoning", "p", "m", 3200);
-        h.finishAssistant();
-        expect(h.render(W).map(strip).join("\n")).toContain("◆ Thought for 3.2s");
-    });
-
-    test("durations round on unit boundaries (59.7s is 1m00s, not 60s)", () => {
-        noirOn();
-        const render = (ms: number): string => {
-            const h = new ChatHistory(tui, "/repo");
-            h.appendAssistantThinking("r", "p", "m", ms);
-            h.finishAssistant();
-            return h.render(W).map(strip).join("\n");
-        };
-        expect(render(59700)).toContain("Thought for 1m00s");
-        expect(render(119700)).toContain("Thought for 2m00s");
-        expect(render(41000)).toContain("Thought for 41s");
-    });
-
-    test("REGRESSION: long tool headers truncate — never exceed the width (crash guard)", () => {
-        noirOn();
-        const long =
-            "find /some/deeply/nested/path -name '*.ts' -not -path node_modules -exec grep -l 'pattern' {} \\; | head -50";
-        const c = new ToolExecutionComponent("bash", { command: long }, tui, "/repo");
-        c.updateResult({ content: [{ type: "text", text: "ok" }], isError: false }, false);
-        for (const sel of [false, true]) {
-            c.setSelected(sel);
-            for (const l of c.render(W)) {
-                expect(strip(l).length).toBeLessThanOrEqual(W);
-            }
-        }
-        // thinking headers with the selected hint fit too
-        const h = new ChatHistory(tui, "/repo");
-        h.appendAssistantThinking("x", "p", "m");
-        h.finishAssistant();
-        h.selectLast();
-        for (const l of h.render(40)) expect(strip(l).length).toBeLessThanOrEqual(40);
-    });
-
-    test("click selects the entry under the line, through the viewport window", () => {
-        noirOn();
-        const smallTui = { requestRender() {}, terminal: { rows: 20 } } as unknown as TUI;
-        const h = new ChatHistory(smallTui, "/repo");
-        h.addUser("question");
+        h.addUser("run them all");
         for (let i = 0; i < 20; i++) {
             h.addToolCall("bash", `c${i}`, { command: `echo ${i}` });
             h.addToolResult(`c${i}`, String(i));
         }
-        // full render (no viewport): clicking a tool row's line selects it
-        const plain = h.render(W).map(strip);
-        const rowOf = (needle: string) => plain.findIndex((l) => l.includes(needle));
-        expect(h.clickAtLocalLine(rowOf("echo 5"))).toBe(true);
-        expect(h.getSelectedText()).toBe("bash echo 5\n5");
-        // spacer/gap lines miss cleanly
-        expect(h.clickAtLocalLine(0)).toBe(false);
-        // windowed: local lines shift by the window offset + indicator row
-        h.setViewport(true);
-        h.selectLast();
-        const win = h.render(W).map(strip);
-        // Whichever call the window happens to hold — how many fit depends on
-        // how tall a row is, and that is not what this test is about.
-        const winRow = win.findLastIndex((l) => /◆ bash echo \d+/.test(l));
-        expect(winRow).toBeGreaterThan(0);
-        const n = /echo (\d+)/.exec(win[winRow])![1];
-        expect(h.clickAtLocalLine(winRow)).toBe(true);
-        expect(h.getSelectedText()).toBe(`bash echo ${n}\n${n}`);
-        // indicator rows are not clickable
-        expect(h.clickAtLocalLine(0)).toBe(false);
+        const out = h.render(W).map(strip).join("\n");
+        expect(out).toContain("◈ Ran 20 commands");
+        expect(out).not.toContain("echo 0");
     });
 
     test("noir spacing invariant: single blank between blocks, never double", () => {
@@ -651,12 +486,11 @@ describe("noir mode rendering", () => {
         const thought = plain.findIndex((l) => l.includes("◆ Thought"));
         const intro = plain.findIndex((l) => l.includes("Intro text."));
         expect(intro - thought).toBe(2);
-        // tools tight within the group, one blank before the group
-        const t1 = plain.findIndex((l) => l.includes("◆ bash echo a"));
-        const t2 = plain.findIndex((l) => l.includes("◆ bash echo b"));
-        // row + receipt + peek per call, and still no blank between the calls
-        expect(t2).toBe(t1 + 3);
-        expect(plain[t1 - 1]).toBe("");
+        // The two finished calls fold into one header row, with a single
+        // blank before the block.
+        const g = plain.findIndex((l) => l.includes("Ran 2 commands"));
+        expect(g).toBeGreaterThan(-1);
+        expect(plain[g - 1]).toBe("");
     });
 
     test("replay renders a step's text before its subagent boxes (live order)", async () => {
@@ -690,7 +524,9 @@ describe("noir mode rendering", () => {
         renderSessionBranch(fakeSession, h, "xai/grok-4.5");
         const plain = h.render(W).map(strip);
         const text = plain.findIndex((l) => l.includes("Fanning out subagents."));
-        const task = plain.findIndex((l) => l.includes("◆ task explore"));
+        // The finished subagent folds into its verb group, so the row to find
+        // is the group header rather than the call's own.
+        const task = plain.findIndex((l) => l.includes("Ran 1 subagent"));
         expect(text).toBeGreaterThan(-1);
         expect(task).toBeGreaterThan(text); // text first, task boxes after — like live
     });
@@ -754,11 +590,11 @@ describe("noir mode rendering", () => {
 
     test("day theme carries the higher-contrast palette", () => {
         const t = new Theme(DAY_THEME);
-        expect(t.raw("bgBase")).toBe("#fcfcfc");
-        expect(t.raw("muted")).toBe("#71717b");
-        // Noir holds the brand blue at its own set's lightness rather than the
-        // full-chroma primary loop mode uses.
-        expect(t.raw("selectionBorder")).toBe("#3463a6");
+        expect(t.raw("bgBase")).toBe("#eeeeee");
+        expect(t.raw("muted")).toBe("#444444");
+        // GrokDay's accents are the night hues deepened until they hold on a
+        // light canvas — the same blue, several steps darker.
+        expect(t.raw("selectionBorder")).toBe("#2f64d2");
     });
 
     test("both plan surfaces keep the default box look in noir mode (approval surfaces)", () => {
@@ -830,17 +666,6 @@ describe("noir mode rendering", () => {
         expect(h.render(W).map(strip).join("\n")).toContain("Turn completed in 1m23s.");
     });
 
-    test("loop mode rendering is untouched by grok being registered", () => {
-        initTheme("dark");
-        const c = new AssistantMessageComponent({
-            content: [{ type: "thinking", thinking: "inline italic thinking" }],
-            stopReason: "stop",
-        });
-        const text = c.render(W).map(strip).join("\n");
-        expect(text).toContain("inline italic thinking");
-        expect(text).not.toContain("▌");
-        expect(text).not.toContain("Thinking…");
-    });
 });
 
 describe("canvas wash", () => {
@@ -853,19 +678,18 @@ describe("canvas wash", () => {
         noirOn();
         const { writes, stream } = fakeOut();
         applyCanvasWash(stream);
-        expect(writes).toEqual(["\x1b]11;#141414\x07", "\x1b]10;#f5f5f5\x07"]);
+        expect(writes).toEqual(["\x1b]11;#141414\x07", "\x1b]10;#e1e1e1\x07"]);
         resetCanvasWash(stream);
-        expect(writes).toEqual(["\x1b]11;#141414\x07", "\x1b]10;#f5f5f5\x07", "\x1b]111\x07", "\x1b]110\x07"]);
+        expect(writes).toEqual(["\x1b]11;#141414\x07", "\x1b]10;#e1e1e1\x07", "\x1b]111\x07", "\x1b]110\x07"]);
     });
 
-    test("loop mode does not wash, and un-washes a previous wash", () => {
+    test("a canvas-less theme un-washes a previous wash", () => {
         noirOn();
         const { writes, stream } = fakeOut();
         applyCanvasWash(stream);
-        setActiveUiMode("loop");
-        initTheme("dark");
-        applyCanvasWash(stream); // wash off now → emits the reset
-        expect(writes).toEqual(["\x1b]11;#141414\x07", "\x1b]10;#f5f5f5\x07", "\x1b]111\x07", "\x1b]110\x07"]);
+        noirSystem("dark"); // `system` has no canvas of its own
+        applyCanvasWash(stream); // nothing to wash with now → emits the reset
+        expect(writes).toEqual(["\x1b]11;#141414\x07", "\x1b]10;#e1e1e1\x07", "\x1b]111\x07", "\x1b]110\x07"]);
         resetCanvasWash(stream); // already reset → no-op
         expect(writes).toHaveLength(4);
     });
@@ -877,14 +701,13 @@ describe("noir system theme", () => {
         return { writes, stream: { write: (s: string) => (writes.push(s), true) } as unknown as NodeJS.WriteStream };
     };
 
-    test("noir offers night, day and system", () => {
-        noirOn();
-        expect(activeUiMode().themes.map((t) => t.name)).toEqual(["night", "day", "system"]);
+    test("the built-in set is night, day and system", () => {
+        expect(builtinThemes().map((t) => t.name)).toEqual(["night", "day", "system"]);
     });
 
     test("system carries no canvas but keeps every other surface", () => {
         for (const scheme of ["dark", "light"] as const) {
-            setNoirSystem(scheme);
+            setSystemScheme(scheme);
             const t = new Theme(systemTheme());
             expect(t.raw("bgBase")).toBe(""); // nothing to wash the terminal with
             // The tints are still mixed against a canvas, so the surfaces that
@@ -902,7 +725,7 @@ describe("noir system theme", () => {
         // the wash went away on a lighter terminal, and dim (2.9:1 by design)
         // fell to 2.4:1 — the quiet half of the UI went to mush.
         const terminal = "#262626";
-        setNoirSystem("dark", terminal);
+        setSystemScheme("dark", terminal);
         const t = new Theme(systemTheme());
         // The ceiling: a lighter canvas cannot reach night's 16.9:1 text even
         // at pure white, so a clamped slot is held to what IS reachable.
@@ -938,7 +761,7 @@ describe("noir system theme", () => {
             syntaxComment: NIGHT_PALETTE.syntax.comment,
         };
         for (const ground of ["#1e1e1e", "#262626", "#2e2e2e"]) {
-            setNoirSystem("dark", ground);
+            setSystemScheme("dark", ground);
             const colors = systemTheme().colors as Record<string, string>;
             for (const [slot, nightHex] of Object.entries(nightSlots)) {
                 const want = Math.min(
@@ -953,7 +776,7 @@ describe("noir system theme", () => {
     test("a darker terminal is left alone — the lift is one-sided", () => {
         // Pure black gives every slot MORE contrast than noir's own canvas.
         // Holding the ratio exactly would mean dimming a screen already right.
-        setNoirSystem("dark", "#000000");
+        setSystemScheme("dark", "#000000");
         const colors = systemTheme().colors as Record<string, string>;
         expect(colors.dim).toBe(NIGHT_PALETTE.dim);
         expect(colors.accent).toBe(NIGHT_PALETTE.accent);
@@ -962,7 +785,7 @@ describe("noir system theme", () => {
 
     test("the light set solves against a light terminal the same way", () => {
         const terminal = "#eaeaea";
-        setNoirSystem("light", terminal);
+        setSystemScheme("light", terminal);
         const t = new Theme(systemTheme());
         expect(t.isLight).toBe(true);
         const ceiling = contrastRatio("#000000", terminal);
@@ -975,7 +798,7 @@ describe("noir system theme", () => {
     });
 
     test("surfaces lift off the REAL canvas, never below it", () => {
-        setNoirSystem("dark", "#2b2b2b");
+        setSystemScheme("dark", "#2b2b2b");
         const t = new Theme(systemTheme());
         // A user message on a terminal lighter than noir's own canvas must
         // still read as raised — reusing night's #1f1f21 would have sunk it.
@@ -985,7 +808,7 @@ describe("noir system theme", () => {
     });
 
     test("a ratio the canvas cannot reach clamps to the pole", () => {
-        setNoirSystem("dark", "#808080"); // mid-grey: 16.9:1 is impossible
+        setSystemScheme("dark", "#808080"); // mid-grey: 16.9:1 is impossible
         const t = new Theme(systemTheme());
         expect(t.raw("text")).toBe("#ffffff");
     });
@@ -996,18 +819,18 @@ describe("noir system theme", () => {
         expect(theme.isLight).toBe(false);
 
         // What a live colour-scheme notification does.
-        expect(setNoirSystem("light")).toBe(true);
+        expect(setSystemScheme("light")).toBe(true);
         initTheme("system");
         expect(theme.isLight).toBe(true);
-        expect(setNoirSystem("light")).toBe(false); // no change → no repaint
-        expect(setNoirSystem("light", "#ffffff")).toBe(true); // a new canvas is a change
+        expect(setSystemScheme("light")).toBe(false); // no change → no repaint
+        expect(setSystemScheme("light", "#ffffff")).toBe(true); // a new canvas is a change
     });
 
     test("no OSC 11 wash at all, and switching to it un-washes", () => {
         noirOn();
         const { writes, stream } = fakeOut();
         applyCanvasWash(stream);
-        expect(writes).toEqual(["\x1b]11;#141414\x07", "\x1b]10;#f5f5f5\x07"]);
+        expect(writes).toEqual(["\x1b]11;#141414\x07", "\x1b]10;#e1e1e1\x07"]);
 
         noirSystem();
         applyCanvasWash(stream);
@@ -1039,7 +862,7 @@ describe("noir system theme", () => {
         expect(new Theme(systemTheme()).isLight).toBe(true);
         expect(systemCanvasHex()).toBe("#eaeaea"); // the ramp is solved against the real thing
 
-        setNoirSystem("dark");
+        setSystemScheme("dark");
         // No scheme report — a near-white background still reads as light.
         expect(await syncSystemScheme(fakeTui({ bg: { r: 252, g: 252, b: 252 } }))).toBe(true);
         expect(new Theme(systemTheme()).isLight).toBe(true);
@@ -1049,15 +872,34 @@ describe("noir system theme", () => {
         // The background is what we actually paint on, so it wins — otherwise
         // the light set lands on a dark screen: near-black text, a near-white
         // input bar.
-        setNoirSystem("light");
+        setSystemScheme("light");
         expect(await syncSystemScheme(fakeTui({ scheme: "light", bg: { r: 30, g: 30, b: 30 } }))).toBe(true);
         expect(new Theme(systemTheme()).isLight).toBe(false);
         expect(systemCanvasHex()).toBe("#1e1e1e");
 
-        // And a report with no background at all is still honoured.
-        setNoirSystem("dark");
-        expect(await syncSystemScheme(fakeTui({ scheme: "light" }))).toBe(true);
-        expect(new Theme(systemTheme()).isLight).toBe(true);
+        // Whether a report with no background is honoured depends on the
+        // platform — see the resolveScheme tests below, which pin it on every
+        // platform instead of only the one the suite happens to run on.
+    });
+
+    test("resolveScheme: the colour decides; the report is a fallback, never on macOS", () => {
+        const dark = { r: 30, g: 30, b: 30 };
+        const light = { r: 240, g: 240, b: 240 };
+        // The background wins over any report, everywhere.
+        expect(resolveScheme({ background: dark, reported: "light", platform: "darwin" })).toEqual({
+            scheme: "dark",
+            canvas: "#1e1e1e",
+        });
+        expect(resolveScheme({ background: light, platform: "linux" })?.scheme).toBe("light");
+        // No colour: elsewhere the report is the best evidence there is...
+        expect(resolveScheme({ reported: "light", platform: "linux" })).toEqual({ scheme: "light" });
+        // ...but on macOS it is the OS appearance, not the terminal. This is
+        // the dark cmux terminal on a light desktop that came up with
+        // near-white message boxes: no colour there means a slow reply, and
+        // the dark default is legible on any dark screen.
+        expect(resolveScheme({ reported: "light", platform: "darwin" })).toBeUndefined();
+        // Nothing at all keeps the default.
+        expect(resolveScheme({ platform: "linux" })).toBeUndefined();
     });
 
     test("the terminal is asked ONCE — a report can never provoke another query", async () => {
@@ -1071,16 +913,25 @@ describe("noir system theme", () => {
         noirSystem("dark");
         await syncSystemScheme(t);
         await Promise.resolve();
-        expect(counts.scheme).toBe(1);
+        // The colour answered, so the weaker question is never asked at all.
         expect(counts.background).toBe(1);
+        expect(counts.scheme).toBe(0);
 
         // Nothing is subscribed, so a report — solicited or not — goes nowhere.
         flip("light");
         flip("dark");
         await Promise.resolve();
         await Promise.resolve();
-        expect(counts.scheme).toBe(1);
         expect(counts.background).toBe(1);
+        expect(counts.scheme).toBe(0);
+
+        // And a terminal that will not name its colour is asked the report
+        // once, and only once.
+        const silent = echoingTui(undefined);
+        await syncSystemScheme(silent.tui);
+        await Promise.resolve();
+        expect(silent.counts.background).toBe(1);
+        expect(silent.counts.scheme).toBe(1);
     });
 
     test("no unsolicited-report mode is ever switched on", () => {
@@ -1124,7 +975,11 @@ describe("noir system theme", () => {
                 contrastRatio(NIGHT_PALETTE.dim, NIGHT_PALETTE.bg) - 0.02,
             );
         }
-        expect(contrastRatio(NIGHT_PALETTE.dim, "#262626")).toBeLessThan(2.5); // what it used to do
+        // ...which is exactly what night's own hex stops doing once it is
+        // moved off its canvas: the same grey loses contrast on a lighter one.
+        expect(contrastRatio(NIGHT_PALETTE.dim, "#262626")).toBeLessThan(
+            contrastRatio(NIGHT_PALETTE.dim, NIGHT_PALETTE.bg) - 0.5,
+        );
     });
 });
 
@@ -1192,18 +1047,6 @@ describe("tool detail density", () => {
         const out = bashRow().render(W).map(strip).join("\n");
         expect(out).toContain("└ ok · 10 lines");
         expect(out).toContain("… +7 lines");
-    });
-
-    test("density can only ever take away — it never invents a receipt", () => {
-        // loop mode shows no receipt at any density: `compact` has nothing to
-        // remove and the others have nothing to add.
-        setActiveUiMode("loop");
-        initTheme("dark");
-        for (const d of ["compact", "normal", "full"] as const) {
-            setToolDetail(d);
-            expect(uiStyle().tool.receipt).toBe(false);
-            expect(uiStyle().tool.peekLines).toBe(0);
-        }
     });
 
     test("the cycle wraps compact → normal → full → compact", () => {

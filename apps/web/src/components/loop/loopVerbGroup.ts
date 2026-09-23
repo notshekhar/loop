@@ -2,7 +2,7 @@
  * Runs of finished tool calls, as one line of English.
  *
  * This is a port of `packages/cli/src/interactive/ui/verb-group.ts`, which is
- * what the terminal's live mode folds a transcript with: a tool is classified
+ * what the terminal folds a transcript with: a tool is classified
  * into a KIND, kinds carry a tense-aware verb and a noun, and a run of adjacent
  * calls becomes `Read 2 files, Listed 1 dir`. The web is a second surface for
  * the same transcript and has to agree with the terminal about what a run is

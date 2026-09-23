@@ -1,20 +1,20 @@
 /**
- * Canvas wash — modes with `canvas.wash` set the terminal's default
- * background to the theme's bgBase via OSC 11 AND the default foreground to
- * the theme's text via OSC 10, so the whole screen (not just painted cells)
- * matches the mode. Both must move together: washing only the background left
+ * Canvas wash — a theme that owns its canvas sets the terminal's default
+ * background to its `bgBase` via OSC 11 AND the default foreground to its
+ * `text` via OSC 10, so the whole screen (not just painted cells) is the
+ * theme's. Both must move together: washing only the background left
  * unpainted text at the terminal's own default foreground — white-on-white in
  * a dark terminal running the day theme. OSC 111/110 restore the terminal's
- * own colors on exit or when the wash goes away.
+ * own colours on exit, and on a switch to a theme that washes nothing
+ * (`system`, whose `bgBase` is the terminal default and so has no hex here).
  */
 import { theme } from "./theme";
-import { uiStyle } from "./ui-mode";
 
 let washApplied = false;
 
-/** Apply (or re-apply after a mode/theme change) the active mode's wash. */
+/** Apply (or re-apply after a theme change) the active theme's wash. */
 export function applyCanvasWash(out: NodeJS.WriteStream = process.stdout): void {
-    const bg = uiStyle().canvas.wash ? theme.raw("bgBase") : undefined;
+    const bg = theme.raw("bgBase");
     if (typeof bg === "string" && bg.startsWith("#")) {
         out.write(`\x1b]11;${bg}\x07`);
         const fg = theme.raw("text");

@@ -194,12 +194,13 @@ export function createMiscHandlers(state: AppState, deps: AppDeps): MiscHandlers
                 'Ctrl+G          send "continue" (resume interrupted work)',
                 "Ctrl+L          clear screen",
                 "Ctrl+P          cycle scoped models",
-                "Ctrl+E          navigate transcript;",
-                "                inside: arrows select, e expand all, y copy, Esc exit",
+                "Ctrl+E          give the keyboard to the transcript;",
+                "                inside: arrows or a click select, →/← open/fold, e expand all,",
+                "                d density, y copy, Esc back to the prompt",
                 "PgUp / PgDn     scroll the conversation · Home / End top / bottom",
                 "Ctrl+↑/↓        jump to the previous / next prompt",
                 "Ctrl+Shift+F    search the conversation; Enter next, Shift+Enter previous, Esc close",
-                "Mouse           wheel scrolls, drag selects text",
+                "Mouse           wheel scrolls, drag selects text (click selects an entry in Ctrl+E)",
             ];
             for (const l of lines) history.addSystem(l);
             tui.requestRender();

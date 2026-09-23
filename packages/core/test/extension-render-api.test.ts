@@ -12,10 +12,9 @@ const markerTheme: ExtensionTheme = {
     underline: (text) => `<u>${text}</u>`,
 };
 
-const ctx = (uiMode: string): ToolSummaryContext => ({
+const ctx = (): ToolSummaryContext => ({
     toolName: "lsp",
     cwd: "/proj",
-    uiMode,
     theme: markerTheme,
 });
 
@@ -23,7 +22,7 @@ describe("lsp renders its own call summary", () => {
     test("a position operation shows operation and file:line:col", () => {
         const out = summarizeLspCall(
             { operation: "goToDefinition", filePath: "/proj/src/main.ts", line: 4, character: 23 },
-            ctx("loop"),
+            ctx(),
         );
         expect(out).toContain("goToDefinition");
         expect(out).toContain("src/main.ts:4:23");
@@ -33,15 +32,15 @@ describe("lsp renders its own call summary", () => {
 
     test("workspaceSymbol shows the query instead of a position", () => {
         expect(
-            summarizeLspCall({ operation: "workspaceSymbol", filePath: "/proj/a.ts", query: "greet" }, ctx("loop")),
+            summarizeLspCall({ operation: "workspaceSymbol", filePath: "/proj/a.ts", query: "greet" }, ctx()),
         ).toContain('"greet"');
         expect(
-            summarizeLspCall({ operation: "workspaceSymbol", filePath: "/proj/a.ts", query: "" }, ctx("loop")),
+            summarizeLspCall({ operation: "workspaceSymbol", filePath: "/proj/a.ts", query: "" }, ctx()),
         ).toContain("(all symbols)");
     });
 
     test("documentSymbol shows just the file", () => {
-        const out = summarizeLspCall({ operation: "documentSymbol", filePath: "/proj/src/a.ts" }, ctx("loop"));
+        const out = summarizeLspCall({ operation: "documentSymbol", filePath: "/proj/src/a.ts" }, ctx());
         expect(out).toContain("src/a.ts");
         expect(out).not.toMatch(/:\d+:\d+/);
     });
@@ -49,22 +48,20 @@ describe("lsp renders its own call summary", () => {
     test("colors come from the supplied theme, never hardcoded", () => {
         const out = summarizeLspCall(
             { operation: "hover", filePath: "/proj/a.ts", line: 1, character: 1 },
-            ctx("loop"),
+            ctx(),
         );
         expect(out).toContain("<muted>");
     });
 
-    test("noir gets a bolder operation than loop — the modes differ", () => {
-        const args = { operation: "hover", filePath: "/proj/a.ts", line: 1, character: 1 };
-        const noir = summarizeLspCall(args, ctx("noir"));
-        const loop = summarizeLspCall(args, ctx("loop"));
-        expect(noir).toContain("<b>hover</b>");
-        expect(loop).not.toContain("<b>");
-        expect(noir).not.toBe(loop);
+    test("the operation is the bold half of the row", () => {
+        // There is one transcript now, so there is one answer: the verb leads
+        // the row in bold and the target follows it plain.
+        const out = summarizeLspCall({ operation: "hover", filePath: "/proj/a.ts", line: 1, character: 1 }, ctx());
+        expect(out).toContain("<b>hover</b>");
     });
 
     test("garbage arguments still render something, never throw", () => {
-        expect(() => summarizeLspCall({}, ctx("loop"))).not.toThrow();
-        expect(summarizeLspCall({}, ctx("loop"))).toContain("lsp");
+        expect(() => summarizeLspCall({}, ctx())).not.toThrow();
+        expect(summarizeLspCall({}, ctx())).toContain("lsp");
     });
 });

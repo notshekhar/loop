@@ -18,7 +18,6 @@ import { formatError } from "./format-error";
 import { createSubagentStream } from "./subagent-stream";
 import { wireTurnEmitter } from "./turn-emitter";
 import { traceEvent } from "./debug-log";
-import { uiStyle } from "./ui/ui-mode";
 import { goalModeEngine } from "./goal-mode";
 import { maybeTitleSession } from "./session-title";
 import { dim, warn } from "./ui/text";
@@ -32,6 +31,17 @@ function commandExists(commands: { has(name: string): boolean }, input: string):
     const space = input.indexOf(" ");
     const name = (space < 0 ? input.slice(1) : input.slice(1, space)).trim();
     return commands.has(name);
+}
+
+/**
+ * Why a turn failed, in one line: the first error, which is the cause, plus
+ * how many different ones followed it. A stream error and the exception that
+ * carries it out of the turn are the same failure, so repeats are not counted.
+ */
+export function describeTurnFailure(errors: readonly unknown[]): string {
+    const messages = [...new Set(errors.map((e) => formatError(e)))];
+    const [cause, ...rest] = messages;
+    return rest.length === 0 ? cause : `${cause} (and ${rest.length} more)`;
 }
 
 export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandContext) {
@@ -212,6 +222,15 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
         history.ensureAssistant(turnProvider, state.modelId);
         const emitter = asTurnEmitter(new EventEmitter());
         const subagentStream = createSubagentStream(history, tui);
+        // Every turn closes with ONE line saying how it went — grok's
+        // TurnCompleted / TurnFailed. An error that ends the turn is held here
+        // (the first is the cause; a stream error and the throw that follows it
+        // are one failure, not two) and printed as that closing line, instead
+        // of an `error:` line followed by a "Turn completed" that contradicts it.
+        const turnErrors: unknown[] = [];
+        const noteTurnFailure = (err: unknown): void => {
+            turnErrors.push(err);
+        };
         wireTurnEmitter(emitter, {
             history,
             tui,
@@ -221,6 +240,7 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
             todoPanel: deps.todoPanel,
             showWorking,
             refreshStatusLine,
+            onTurnError: noteTurnFailure,
         });
         // Goal mode reads the turn's final text (bail phrases, verifier
         // input) — accumulate it here rather than re-parsing history.
@@ -280,7 +300,7 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
                 agent: turnAgent,
             });
         } catch (err) {
-            history.addError(formatError(err));
+            noteTurnFailure(err);
         } finally {
             traceEvent("turn", `end   "${text}" abortedAtEnd=${turnSignal.aborted}`);
             state.busy = false;
@@ -301,8 +321,10 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
             // is the one change the renderer cannot make cleanly; a turn
             // boundary is where the transcript is settled anyway.
             deps.shellsPanel.retireFinished();
-            if (uiStyle().turn.summaryLine && !turnSignal.aborted) {
-                history.addTurnSummary((Date.now() - turnStartedAt) / 1000);
+            if (!turnSignal.aborted) {
+                const seconds = (Date.now() - turnStartedAt) / 1000;
+                if (turnErrors.length > 0) history.addTurnFailed(seconds, describeTurnFailure(turnErrors));
+                else history.addTurnSummary(seconds);
             }
             syncPlanMode();
             hideWorking();

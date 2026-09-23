@@ -204,7 +204,7 @@ const RPC_METHODS = [
 /**
  * Settings a remote client may read and toggle — the boolean rows of the
  * TUI's /settings screen. An allowlist (not a passthrough) so the RPC surface
- * can't write arbitrary keys; terminal-only toggles (clock, uiMode…) and
+ * can't write arbitrary keys; terminal-only toggles (clock, theme…) and
  * structured settings (hooks, sandbox…) stay local.
  */
 const WEB_SETTINGS: ReadonlyArray<{ key: keyof AppSettings; label: string; description: string; def: boolean }> = [

@@ -4,14 +4,12 @@ import { Container } from "@notshekhar/loop-tui";
 process.env.COLORTERM = "truecolor";
 
 import { AssistantMessageComponent, type AssistantMessageLike } from "../src/interactive/ui/messages";
-import { setActiveUiMode } from "../src/interactive/ui/ui-mode";
 import { initTheme } from "../src/interactive/ui/theme";
 
 const W = 80;
 
 beforeEach(() => {
-    setActiveUiMode("noir");
-    initTheme("dark");
+    initTheme("night");
 });
 
 /** The thinking/response blocks an assistant message is currently made of —

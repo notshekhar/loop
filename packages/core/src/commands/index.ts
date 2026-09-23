@@ -29,10 +29,10 @@ export interface CommandContext {
     openModelPicker(): Promise<void>;
     showSessionInfo(): void;
     showHotkeys(): void;
+    /** /theme — show the picker, or switch straight to a named theme. */
+    switchTheme(args: string): void;
     copyLastAssistant(): Promise<void>;
     setSessionName(name: string): void;
-    /** /ui — show or switch the UI mode ("experience"): /ui · /ui <mode>. */
-    switchUiMode(args: string): void;
     attachImage(path?: string): Promise<void> | void;
     exportSession(target?: string): Promise<void>;
     importSession(path: string): Promise<void>;
@@ -408,9 +408,9 @@ export async function registerBuiltins(reg: CommandRegistry, opts: { cwd?: strin
             },
         },
         {
-            name: "ui",
-            description: "Show or switch the UI mode (experience): /ui · /ui <mode>",
-            handler: (ctx, args) => ctx.switchUiMode(args ?? ""),
+            name: "theme",
+            description: "Show or switch the theme: /theme · /theme <name>",
+            handler: (ctx, args) => ctx.switchTheme(args ?? ""),
         },
         {
             name: "hotkeys",

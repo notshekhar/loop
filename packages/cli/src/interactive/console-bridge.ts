@@ -36,12 +36,42 @@ export function installConsoleBridge(history: ChatHistory, tui: TUI): () => void
     // Last-resort error surfacing: anything that escapes a handler renders in
     // chat instead of tearing the TUI via stderr or killing the process.
     // Display only — errors are never written to the session transcript.
-    const surfaceError = (prefix: string) => (err: unknown) => {
-        history.addError(`${prefix}: ${formatError(err)}`);
-        tui.requestRender();
-    };
-    process.on("uncaughtException", surfaceError("uncaught"));
-    process.on("unhandledRejection", surfaceError("unhandled"));
+    const surfaceError = createErrorSurface(history, tui);
+    process.on("uncaughtException", (err) => surfaceError("uncaught", err));
+    process.on("unhandledRejection", (err) => surfaceError("unhandled", err));
 
     return restore;
+}
+
+/** How long an identical error is counted rather than shown again. */
+const REPEAT_WINDOW_MS = 5_000;
+
+/**
+ * Show an escaped error in the chat — without AMPLIFYING it.
+ *
+ * An error that recurs on every tick (a timer, a render) used to add a chat
+ * line and request a repaint each time; the repaint could raise it again, and
+ * the transcript grew by one line per frame until the UI stopped responding.
+ * The same message inside the quiet window is counted instead, and the count
+ * is reported once the next different error arrives.
+ */
+export function createErrorSurface(
+    history: Pick<ChatHistory, "addError">,
+    tui: Pick<TUI, "requestRender">,
+    now: () => number = Date.now,
+): (prefix: string, err: unknown) => void {
+    let last: { text: string; at: number; repeats: number } | null = null;
+    return (prefix, err) => {
+        const text = `${prefix}: ${formatError(err)}`;
+        const at = now();
+        if (last && last.text === text && at - last.at < REPEAT_WINDOW_MS) {
+            last.repeats++;
+            last.at = at;
+            return;
+        }
+        if (last && last.repeats > 0) history.addError(`${last.text} (repeated ${last.repeats}×)`);
+        last = { text, at, repeats: 0 };
+        history.addError(text);
+        tui.requestRender();
+    };
 }

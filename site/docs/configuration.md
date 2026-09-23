@@ -38,8 +38,7 @@ The last model you picked in a folder is remembered per project.
 | --------------------- | ------------------------ | ------------------------------------------------------------------------------ |
 | `defaultModel`        | —                        | Full `provider/model` id                                                       |
 | `thinkingLevel`       | —                        | `off` … `xhigh`                                                                |
-| `uiMode`              | `noir`                   | Chat look — `noir` (flat rows, collapsing thoughts) or `loop` (classic boxed)  |
-| `theme`               | `dark`                   | `dark` / `light`, plus any JSON theme in `agent/themes/`                       |
+| `theme`               | `night`                  | `night` / `day` / `system`, plus any JSON theme in `agent/themes/`             |
 | `webSearch`           | off                      | The `websearch` tool (DuckDuckGo, no API key)                                  |
 | `askUser`             | off                      | Lets the agent pause and ask you multiple-choice questions                     |
 | `todos`               | off                      | Visible checklist the agent maintains during multi-step work                   |
@@ -95,9 +94,9 @@ The catalog itself refreshes from models.dev hourly, so new public models usuall
 
 ## Themes
 
-`dark` and `light` are built in. Drop pi-mono-format JSON themes into `~/.loop/agent/themes/` and pick one via `/settings → theme` — it applies live.
+`night` (default) and `day` wash the canvas — they claim the terminal's own background and foreground, so the whole screen is the theme's. `system` is the same ink with no canvas of its own: it asks the terminal what its background is and rebuilds every slot to hold the same contrast against it, so your true black, transparency or background image shows through.
 
-Each UI mode keeps its own theme: `loop` mode uses the `theme` key, other modes use `uiThemes` (e.g. `{ "noir": "day" }`).
+Drop pi-mono-format JSON themes into `~/.loop/agent/themes/` and pick one via `/theme` or `/settings → theme` — it applies live, and the pick is saved under the `theme` key.
 
 ## Environment variables
 

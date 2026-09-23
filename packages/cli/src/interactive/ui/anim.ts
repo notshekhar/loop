@@ -19,7 +19,7 @@
  *    holds no timer at all — `setActive(false)` clears it — so a session
  *    sitting at the prompt costs exactly what it did before.
  *
- * Renderers read {@link animTick} directly (module-level, like `uiStyle()`)
+ * Renderers read {@link animTick} directly (module-level, like the active theme)
  * rather than threading a tick through every render signature.
  */
 import type { TUI } from "@notshekhar/loop-tui";

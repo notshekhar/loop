@@ -9,7 +9,6 @@
 import { getExtensionHost, type ExtensionTheme } from "@notshekhar/loop-core";
 import { theme, type Theme } from "./theme";
 import { highlightShellCommand } from "./shell-highlight";
-import { activeUiMode } from "./ui-mode";
 
 type ThemeSlot = Parameters<Theme["fg"]>[0];
 
@@ -82,7 +81,6 @@ export function formatToolArgs(toolName: string, args: Record<string, unknown>, 
     // loop needs no knowledge of any tool it doesn't ship itself.
     const custom = getExtensionHost().renderToolSummary(toolName, args, {
         cwd,
-        uiMode: activeUiMode().id,
         theme: extensionTheme,
     });
     if (custom !== undefined) return custom;
@@ -119,6 +117,15 @@ export function formatToolArgs(toolName: string, args: Record<string, unknown>, 
             const conn = typeof a.connectionId === "string" ? a.connectionId : "";
             const q = typeof a.query === "string" ? a.query.replace(/\s+/g, " ").trim() : "";
             return [conn, clamp(q)].filter(Boolean).join(" · ");
+        }
+        case "task": {
+            // A subagent's identity is its agent and what it was sent to do.
+            // The row renderer builds that itself (`task explore · look
+            // around`), but a FOLDED member line reads this — and without a
+            // case here it read the raw JSON args blob.
+            const agent = typeof a.agent === "string" ? a.agent : "default";
+            const prompt = taskPromptSnippet(a);
+            return prompt ? `${agent} · ${prompt}` : agent;
         }
         case "plan":
         case "exit_plan_mode": {

@@ -32,15 +32,25 @@
  */
 import type { RgbColor, TUI } from "@notshekhar/loop-tui";
 import { applyCanvasWash } from "./canvas-wash";
-import { setNoirSystem, SYSTEM_THEME_NAME } from "./noir-mode";
+import { setSystemScheme, SYSTEM_THEME_NAME } from "./themes";
 import { initTheme, theme } from "./theme";
 
 /**
- * How long a probe waits. Terminals that support these reports answer in
- * microseconds; the timeout only bounds the ones that will never answer, and
- * nothing is blocked on it — the probe runs in the background.
+ * How long the background-colour question may take.
+ *
+ * Terminals answer in microseconds when idle — but a loaded machine can take
+ * far longer to deliver the reply, and a reply that misses its window is not
+ * a terminal without the feature, it is an answer thrown away. It was 250ms,
+ * and on a busy machine the colour lost that race: the probe fell back to the
+ * scheme report, which on macOS is the OS appearance, and a dark terminal on
+ * a light desktop was painted with the light set (near-white message boxes,
+ * dark text). Nothing waits on this — the probe runs in the background after
+ * the first paint — so the window can afford to be generous.
  */
-const PROBE_TIMEOUT_MS = 250;
+const BACKGROUND_TIMEOUT_MS = 1_500;
+
+/** The scheme report is only asked when the colour did not come back. */
+const SCHEME_TIMEOUT_MS = 250;
 
 /** Rec.601 luma — the same weights `palette.ts` weighs a hex with. */
 function isLight(rgb: RgbColor): boolean {
@@ -62,25 +72,47 @@ export function systemThemeActive(): boolean {
     return theme.name === SYSTEM_THEME_NAME;
 }
 
+/** What the terminal told us, and where we are asking from. */
+export interface SchemeEvidence {
+    /** OSC 11 — the colour of the surface we are drawing on. */
+    readonly background?: RgbColor;
+    /** `CSI ? 996 n` — the colour-scheme report. */
+    readonly reported?: "dark" | "light";
+    readonly platform: NodeJS.Platform;
+}
+
 /**
- * Ask the terminal both questions; undefined when it tells us nothing.
+ * Decide which set to wear from what the terminal said; undefined keeps the
+ * default (the dark set on its safe canvas).
  *
- * The BACKGROUND COLOUR decides, and the scheme report is the fallback — which
- * is the opposite of how it first looks, and the difference is a bug worth
- * remembering. `CSI ? 996 n` reports the user's colour-scheme PREFERENCE, and
- * on macOS that is the OS appearance: a light desktop running a dark-themed
- * terminal answers "light" perfectly correctly, and a theme that believed it
- * painted near-black text and a near-white input bar onto a dark screen.
+ * The BACKGROUND COLOUR decides. It is the surface we are actually drawing on,
+ * so it settles the polarity AND tunes the palette.
  *
- * OSC 11 has no such gap — it is the colour of the surface we are actually
- * drawing on. So when both answer, the colour wins the polarity AND tunes the
- * palette; the report is what's left when a terminal won't name its background.
+ * The scheme report is the fallback for a terminal that will not name its
+ * background — except on macOS, where it is not evidence about the terminal
+ * at all. There it reports the user's colour-scheme PREFERENCE, which is the
+ * OS appearance: a light desktop running a dark-themed terminal answers
+ * "light" perfectly correctly, and a theme that believed it painted near-black
+ * text and near-white message boxes onto a dark screen. Every macOS terminal
+ * in use answers OSC 11, so no colour there means the reply was slow, not
+ * missing — and the dark default is legible on any dark background, where
+ * trusting the report is unreadable on the common one.
  */
+export function resolveScheme(evidence: SchemeEvidence): { scheme: "dark" | "light"; canvas?: string } | undefined {
+    const { background, reported, platform } = evidence;
+    if (background) return { scheme: isLight(background) ? "light" : "dark", canvas: toHex(background) };
+    if (!reported || platform === "darwin") return undefined;
+    return { scheme: reported };
+}
+
+/** Ask the terminal — the colour first, the report only if the colour did
+ * not come back. */
 async function probe(tui: TUI): Promise<{ scheme: "dark" | "light"; canvas?: string } | undefined> {
-    const reported = await tui.queryTerminalColorScheme({ timeoutMs: PROBE_TIMEOUT_MS });
-    const bg = await tui.queryTerminalBackgroundColor({ timeoutMs: PROBE_TIMEOUT_MS });
-    if (bg) return { scheme: isLight(bg) ? "light" : "dark", canvas: toHex(bg) };
-    return reported ? { scheme: reported } : undefined;
+    const background = await tui.queryTerminalBackgroundColor({ timeoutMs: BACKGROUND_TIMEOUT_MS });
+    const reported = background
+        ? undefined
+        : await tui.queryTerminalColorScheme({ timeoutMs: SCHEME_TIMEOUT_MS });
+    return resolveScheme({ background, reported, platform: process.platform });
 }
 
 /** Re-resolve `system` under the answer just recorded and repaint. */
@@ -109,7 +141,7 @@ export async function syncSystemScheme(tui: TUI): Promise<boolean> {
     probing = true;
     try {
         const answer = await probe(tui);
-        if (!answer || !setNoirSystem(answer.scheme, answer.canvas)) return false;
+        if (!answer || !setSystemScheme(answer.scheme, answer.canvas)) return false;
         if (systemThemeActive()) repaint(tui);
         return true;
     } finally {

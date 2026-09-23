@@ -15,19 +15,13 @@ import {
     isCtrlUp,
     isCtrlV,
     isDown,
-    isEnd,
     isEnter,
     isEsc,
-    isHome,
     isKeyboardInput,
     isClearLine,
     isLeft,
-    isPageDown,
-    isPageUp,
     isPrintableChar,
     isRight,
-    countWheelScroll,
-    MOUSE_SGR_ANY,
     isShiftLeft,
     isShiftRight,
     isShiftTab,
@@ -35,7 +29,7 @@ import {
     isUp,
 } from "./keys";
 import { isKeyRelease } from "@notshekhar/loop-tui";
-import { activeUiMode, getToolDetail, nextToolDetail, setLiveVariant, setToolDetail } from "./ui/ui-mode";
+import { nextToolDetail, setToolDetail } from "./ui/tool-detail";
 import { copyToClipboard, readClipboardText } from "./clipboard";
 import { traceEvent } from "./debug-log";
 import { pickImageFile, readClipboardImageToFile } from "./clipboard-image";
@@ -100,13 +94,8 @@ function droppedAttachments(
     return { allowed: allowed.map((i) => i.path), rejected: rejected.map((i) => i.path) };
 }
 
-/** The navigation key hint. Carries the current density, since `d` cycles it
- * and a cycle with no visible state is a key nobody trusts. */
-const scrollbackHint = (): string =>
-    `live · ↑/↓ select · shift+←/→ turn · →/← open/fold · Enter toggle · e all · d detail:${getToolDetail()} · wheel/PgUp scroll · y copy · ctrl+e/Esc exit`;
-
 export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandContext): InputListener {
-    const { tui, history, queuedMessages, renderPending, hideWorking, cleanExit, editor, statusLine } = deps;
+    const { tui, history, queuedMessages, renderPending, hideWorking, cleanExit, editor, statusLine, scrollbackFocus } = deps;
 
     const clipboardTip = new ClipboardImageTip();
 
@@ -119,80 +108,6 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
             state.modelId.split("/")[0],
         );
         return probe.allowed.length > 0;
-    };
-
-    /**
-     * Enter/leave the active mode's live variant. Live is a STATE of the mode
-     * you are already in, not a mode of its own — the theme and canvas never
-     * change, so flipping in and out mid-turn only moves the frame and the
-     * folds.
-     */
-    const setLive = (on: boolean): void => {
-        if (setLiveVariant(on)) history.invalidate();
-    };
-
-    /**
-     * The live state the user actually chose (the `uiLive` setting, honoured
-     * only by modes that have a live variant) — the same expression theme.ts
-     * applies at startup.
-     *
-     * Leaving navigation has to come back to THIS, not to off: a user whose
-     * mode starts live was being dropped out of live every time they left nav,
-     * which looks exactly like the transcript un-grouping itself.
-     */
-    const preferredLive = (): boolean => Boolean(getSetting("uiLive")) && Boolean(activeUiMode().live);
-
-    const enterScrollbackFocus = (): boolean => {
-        if (!history.selectLast()) return false;
-        state.scrollbackFocus = true;
-        setLive(true);
-        history.setViewport(true);
-        statusLine.setHint(scrollbackHint());
-        // SGR mouse reporting, live-scoped: the wheel scrolls the window here;
-        // outside it the terminal keeps native selection/copy behavior.
-        tui.terminal.write("\x1b[?1006h\x1b[?1000h");
-        tui.requestRender();
-        return true;
-    };
-
-    const exitScrollbackFocus = (): void => {
-        state.scrollbackFocus = false;
-        setLive(preferredLive());
-        history.setViewport(false);
-        history.clearSelection();
-        // Folds opened while navigating are part of navigating — the prompt
-        // gets the mode's default view back, not whatever was left open.
-        history.resetFolds();
-        statusLine.setHint(null);
-        tui.terminal.write("\x1b[?1000l\x1b[?1006l");
-        if (wheelTimer) {
-            clearTimeout(wheelTimer);
-            wheelTimer = null;
-            wheelAccum = 0;
-        }
-        tui.requestRender();
-    };
-
-    // Wheel deltas coalesce over a short window and apply as ONE net scroll:
-    // macOS trackpads emit micro-events that alternate direction on slow
-    // scrolls (lift-off/momentum jitter) — applied individually they made the
-    // window flicker back and forth between the same lines.
-    let wheelAccum = 0;
-    let wheelTimer: ReturnType<typeof setTimeout> | null = null;
-    const WHEEL_COALESCE_MS = 30;
-    const queueWheel = (delta: number): void => {
-        wheelAccum += delta;
-        if (wheelTimer) return;
-        wheelTimer = setTimeout(() => {
-            wheelTimer = null;
-            const page = history.viewportPage();
-            const net = Math.max(-page, Math.min(page, wheelAccum * 2));
-            wheelAccum = 0;
-            if (net !== 0 && state.scrollbackFocus) {
-                history.scrollViewportLines(net);
-                tui.requestRender();
-            }
-        }, WHEEL_COALESCE_MS);
     };
 
     /**
@@ -211,7 +126,7 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
         settingsStore.set("toolDetail", next);
         history.setToolsExpanded(next === "full");
         history.invalidate();
-        statusLine.setHint(scrollbackHint());
+        statusLine.setHint(scrollbackFocus.hint());
         tui.requestRender();
     };
 
@@ -228,80 +143,49 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
         });
     };
 
-    /** Map a clicked screen row (1-based) to the chat history's own rendered
-     * lines and select the entry there. The transcript is the first thing in
-     * the document, so its line under a screen row is the row plus however far
-     * the window it is shown through has scrolled — whether that window is the
-     * whole screen (flowing layout) or the transcript's own pane (pinned).
-     * Component renders are pure, so measuring by re-rendering is safe
-     * (clicks are rare). */
-    const selectAtScreenRow = (row: number): boolean => {
-        const { top, height } = deps.transcriptViewport();
-        const screenLine = row - 1;
-        if (screenLine < 0 || screenLine >= height) return false;
-        const local = screenLine + top;
-        if (local >= history.render(tui.terminal.columns).length) return false;
-        return history.clickAtLocalLine(local);
-    };
-
-    /** grok's scrollback focus: Tab (on an empty prompt) hands the keyboard to
-     * the transcript — arrows walk entries, Left/Right fold, letters bounce
-     * straight back to the prompt and type. */
+    /** Scrollback focus: the transcript holds the keyboard — arrows walk
+     * entries, Left/Right fold, letters bounce straight back to the prompt
+     * and type. */
     const handleScrollbackFocus = (data: string): { consume: boolean } | undefined => {
         if (isUp(data) || isDown(data) || isCtrlUp(data) || isCtrlDown(data)) {
-            if (history.moveSelection(isUp(data) || isCtrlUp(data) ? -1 : 1)) tui.requestRender();
+            if (history.moveSelection(isUp(data) || isCtrlUp(data) ? -1 : 1)) {
+                deps.revealSelection();
+                tui.requestRender();
+            }
             return { consume: true };
         }
         if (isShiftLeft(data) || isShiftRight(data) || isAltUp(data) || isAltDown(data)) {
-            if (history.jumpTurn(isShiftLeft(data) || isAltUp(data) ? -1 : 1)) tui.requestRender();
+            if (history.jumpTurn(isShiftLeft(data) || isAltUp(data) ? -1 : 1)) {
+                deps.revealSelection();
+                tui.requestRender();
+            }
             return { consume: true };
         }
         if (isLeft(data) || isRight(data)) {
-            if (history.setSelectedExpanded(isRight(data))) tui.requestRender();
+            if (history.setSelectedExpanded(isRight(data))) {
+                deps.revealSelection();
+                tui.requestRender();
+            }
             return { consume: true };
         }
         if (isEnter(data)) {
-            if (history.toggleSelected()) tui.requestRender();
+            if (history.toggleSelected()) {
+                deps.revealSelection();
+                tui.requestRender();
+            }
             return { consume: true };
         }
-        // Window scrolling without moving the selection (grok's scroll keys).
-        if (isPageUp(data) || isPageDown(data)) {
-            history.scrollViewportLines(isPageUp(data) ? -history.viewportPage() : history.viewportPage());
-            tui.requestRender();
-            return { consume: true };
-        }
-        if (isCtrlD(data) || data === "\x15" /* ctrl+u */) {
-            history.scrollViewportLines(
-                isCtrlD(data) ? Math.ceil(history.viewportPage() / 2) : -Math.ceil(history.viewportPage() / 2),
-            );
-            tui.requestRender();
-            return { consume: true };
-        }
-        if (isHome(data) || isEnd(data)) {
-            history.scrollViewportEdge(isHome(data) ? "top" : "bottom");
-            tui.requestRender();
-            return { consume: true };
-        }
-        // Mouse wheel: coalesced (see queueWheel) — 2 lines per net event,
-        // one-page cap per window, direction jitter cancels to zero.
-        const wheel = countWheelScroll(data);
-        if (wheel !== 0) {
-            queueWheel(wheel);
-            return { consume: true };
-        }
-        // Left-click selects the entry under the pointer (button 0 press; no
-        // wheel/motion bits — modifier bits are fine).
-        const click = /^\x1b\[<(\d+);(\d+);(\d+)M/.exec(data);
-        if (click) {
-            const button = Number(click[1]);
-            if ((button & 0b1100011) === 0 && selectAtScreenRow(Number(click[3]))) tui.requestRender();
-            return { consume: true };
-        }
-        if (MOUSE_SGR_ANY.test(data)) return { consume: true };
-        // e: expand/collapse everything (the viewport re-anchors on the
-        // selection, so this never flings the screen to the bottom).
+        // Scrolling the page — wheel, PgUp/PgDn, ctrl+u/d, Home/End — is the
+        // frame's, not navigation's: the same keys move the same window
+        // whether or not the transcript has the keyboard. They fall through
+        // to the TUI's own viewport handling rather than being re-implemented
+        // here against a second one.
+        //
+        // e: expand/collapse everything (the selection is scrolled back into
+        // view afterwards, so this never flings the page to the bottom).
         if (data === "e") {
             history.toggleToolsExpanded();
+            deps.revealSelection();
             tui.requestRender();
             return { consume: true };
         }
@@ -317,13 +201,13 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
             return { consume: true };
         }
         if (isEsc(data) || isCtrlE(data) || isTab(data) || data === " " || data === "q") {
-            exitScrollbackFocus();
+            scrollbackFocus.exit();
             return { consume: true };
         }
         // Any other printable key: back to the prompt, and let the editor
         // receive this very keystroke (grok's letter-key auto-focus).
         if (isPrintableChar(data) || BRACKETED_PASTE.test(data)) {
-            exitScrollbackFocus();
+            scrollbackFocus.exit();
             return undefined;
         }
         // Remaining control chords (ctrl+c quit, shift+tab agent cycle, …)
@@ -371,7 +255,7 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
             if (handled) return handled;
         } else if (state.scrollbackFocus) {
             // A selector/overlay took over — drop focus mode quietly.
-            exitScrollbackFocus();
+            scrollbackFocus.exit();
         }
 
         // A key brings the prompt back into view, the way a shell scrolls to
@@ -459,12 +343,12 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
             if (next !== state.modelId) void ctx.setModel(next);
             return { consume: true };
         }
-        // ctrl+e is the ONLY way in to live mode (expand-all moved to `e`
-        // inside it) — Esc/ctrl+arrows used to enter too, but stray Esc
-        // presses on an idle prompt kept flinging people into it. See
-        // keys.ts:isCtrlE for why Ghostty's cmd+→ no longer counts.
+        // ctrl+e is the keyboard's way in (a click is the pointer's, and
+        // `e` inside means expand-all) — Esc/ctrl+arrows used to enter too,
+        // but stray Esc presses on an idle prompt kept flinging people into
+        // it. See keys.ts:isCtrlE for why Ghostty's cmd+→ no longer counts.
         if (isCtrlE(data) && editorFocused && deps.getSelectorDepth() === 0) {
-            enterScrollbackFocus();
+            scrollbackFocus.enter();
             return { consume: true };
         }
         // Cmd+V with an image on the clipboard, in the terminals that report it
