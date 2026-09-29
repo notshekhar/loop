@@ -859,7 +859,10 @@ export class RpcServer {
                     const result = await runCompact({
                         session: ctx.session,
                         modelId: ctx.modelId,
-                        keepTurns: 0,
+                        manual: true,
+                        ...(typeof params.focus === "string" && params.focus.trim()
+                            ? { focus: params.focus.trim() }
+                            : {}),
                         tracker: ctx.tracker,
                         cwd: ctx.session.info.cwd,
                     });

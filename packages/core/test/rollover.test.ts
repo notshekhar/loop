@@ -179,3 +179,29 @@ describe("rollover survives the store round-trip", () => {
         expect(back.rollover).toBeUndefined();
     });
 });
+
+describe("the tool batch no model has read yet", () => {
+    test("carries the results' output, not an empty string", () => {
+        const branch: Entry[] = [
+            userMsg("u1", "run the tests"),
+            assistantCall("a1", "bash", { command: "bun test" }, "u1"),
+            {
+                type: "message",
+                role: "tool",
+                ts: 3,
+                id: "t1",
+                parentId: "a1",
+                content: [
+                    {
+                        type: "tool-result",
+                        toolCallId: "a1-c",
+                        toolName: "bash",
+                        output: { type: "text", value: "3 pass\n1 fail: parser rejects empty input" },
+                    },
+                ],
+            } as Entry,
+        ];
+        const out = buildRolloverHandoff(branch, { limit: 20_000 })!;
+        expect(out).toContain("parser rejects empty input");
+    });
+});

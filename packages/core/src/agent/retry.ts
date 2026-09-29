@@ -131,3 +131,23 @@ export function describeRetry(err: unknown): string {
     if (!text) return "stream failed";
     return text.length > 120 ? `${text.slice(0, 117)}…` : text;
 }
+
+/**
+ * Provider wording for "this request is bigger than I take" — a context-window
+ * overflow or a body-size limit. The two are one problem for a caller that can
+ * shrink its request, and gateways blur them anyway (a 413 from a proxy, a 400
+ * whose body names the context length).
+ */
+const CONTEXT_OVERFLOW_MESSAGE =
+    /context.?(length|window)|maximum context|too many (input )?tokens|prompt is too long|input is too long|request entity too large|payload too large|body (is )?too (large|big)|request too large|reduce the length/i;
+
+/** Did the provider refuse this request for its size? */
+export function isContextOverflowError(err: unknown): boolean {
+    for (const link of chain(err)) {
+        const status = (link as { statusCode?: unknown; status?: unknown }) ?? {};
+        if (status.statusCode === 413 || status.status === 413) return true;
+        const body = APICallError.isInstance(link) ? (link.responseBody ?? "") : "";
+        if (CONTEXT_OVERFLOW_MESSAGE.test(`${textOf(link)} ${body}`)) return true;
+    }
+    return false;
+}

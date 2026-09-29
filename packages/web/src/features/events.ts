@@ -135,7 +135,7 @@ export function onEvent(params: any): void {
             addNote("compacting…");
             break;
         case "compact-end":
-            addNote("compacted");
+            addNote(data && data.error ? "compact failed: " + data.error : "compacted");
             break;
         case "todo-update": {
             const el = byId("todos");

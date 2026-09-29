@@ -90,10 +90,14 @@ export default {
                 // fallback (auto_compact_fallback_prompt).
                 if (!handoff) return { kind: "summarize" };
 
-                // The user's message for THIS turn is already appended, and the
-                // threshold check runs after it. Cutting at messages.length
-                // would throw away the request they just typed.
-                const cutAt = Math.max(0, input.session.messages().length - 1);
+                // Before the first step, the user's message for THIS turn is
+                // already appended and cutting at messages.length would throw
+                // away the request they just typed. Between steps, or after the
+                // provider refused a request for its size, the whole window
+                // rolls: the handoff carries the finished tool results and the
+                // user's requests with them.
+                const messageCount = input.session.messages().length;
+                const cutAt = input.reason === "threshold" ? Math.max(0, messageCount - 1) : messageCount;
                 return { kind: "rollover", handoff, cutAt };
             },
         });

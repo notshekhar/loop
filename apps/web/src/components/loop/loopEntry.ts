@@ -62,6 +62,7 @@ export interface LoopCompactEntry {
   readonly tokensBefore?: number;
   readonly tokensAfter?: number;
   readonly aborted?: boolean;
+  readonly error?: string;
 }
 
 interface LoopCarrier {
@@ -154,6 +155,7 @@ export function loopCompactOf(entry: LoopCarrier): LoopCompactEntry | null {
     ...(typeof compact.tokensBefore === "number" ? { tokensBefore: compact.tokensBefore } : {}),
     ...(typeof compact.tokensAfter === "number" ? { tokensAfter: compact.tokensAfter } : {}),
     ...(compact.aborted === true ? { aborted: true } : {}),
+    ...(typeof compact.error === "string" ? { error: compact.error } : {}),
   };
 }
 

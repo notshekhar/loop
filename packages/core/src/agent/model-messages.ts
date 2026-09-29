@@ -4,7 +4,7 @@
  */
 import type { ModelMessage, SystemModelMessage } from "ai";
 import type { Session } from "../sessions";
-import { compactedContextEntries, compactionBodyText, latestCompactEntry, ROLLOVER_PREAMBLE } from "./compact";
+import { compactedContextEntries, compactionBlockText, latestCompactEntry } from "./compact";
 
 // Per-entry size cache for the chars/4 context heuristic. Session entries
 // are append-only with stable object identity, so old entries are never
@@ -21,13 +21,9 @@ const entryCharCache = new WeakMap<object, number>();
  */
 export function estimateContextTokens(session: Session, overheadTokens = 0): number {
     const compact = latestCompactEntry(session);
-    // A rollover's block is the handoff, not the summary (which is empty) — miss
-    // it and the next threshold check reads several thousand tokens low. The
-    // preamble length is derived, never a literal: it lives in compact.ts and a
-    // hardcoded number would drift the moment its wording changes.
-    let chars = compact
-        ? compactionBodyText(compact).length + (compact.handoff ? ROLLOVER_PREAMBLE.length + 40 : 200)
-        : 0;
+    // Measured as the exact block the model reads (summary or rollover handoff,
+    // with its wrapper), so /context and the threshold check agree with it.
+    let chars = compact ? compactionBlockText(compact).length : 0;
     let messageIndex = 0;
     // Branch-path walk: abandoned branches don't reach the model context.
     for (const e of session.getBranch()) {

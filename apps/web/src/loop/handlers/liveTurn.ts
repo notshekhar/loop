@@ -138,6 +138,8 @@ export interface LiveCompaction {
   tokensAfter?: number;
   /** Cancelled or failed — no summary was written. */
   aborted?: boolean;
+  /** Why it failed, when it did; the turn carried on uncompacted. */
+  error?: string;
   /** Position in the turn; see `seq` on LiveTurn. */
   readonly seq: number;
   readonly startedAt: number;
@@ -655,7 +657,13 @@ function apply(sessionId: string, part: LoopTurnPart): void {
     case "compact-end":
       touch(sessionId, (turn) => {
         const record = data as
-          | { summary?: string; tokensBefore?: number; tokensAfter?: number; aborted?: boolean }
+          | {
+              summary?: string;
+              tokensBefore?: number;
+              tokensAfter?: number;
+              aborted?: boolean;
+              error?: string;
+            }
           | undefined;
         // Closes the open one rather than the last one: a `compact-end` with
         // nothing open would otherwise reopen a settled row as it rewrote it.
@@ -666,6 +674,7 @@ function apply(sessionId: string, part: LoopTurnPart): void {
         if (typeof record?.tokensBefore === "number") open.tokensBefore = record.tokensBefore;
         if (typeof record?.tokensAfter === "number") open.tokensAfter = record.tokensAfter;
         if (record?.aborted === true) open.aborted = true;
+        if (typeof record?.error === "string") open.error = record.error;
       });
       return;
     case "ask":

@@ -30,6 +30,7 @@ function formatTokens(count: number): string {
 export function compactLabel(compact: LoopCompactEntry): string {
   if (compact.running) return "Compacting context…";
   if (compact.aborted) return "Compaction cancelled";
+  if (compact.error) return `Compaction failed · ${compact.error}`;
   const { tokensBefore, tokensAfter } = compact;
   // Both counts or neither: "148k → " with a missing half reads as a bug.
   if (tokensBefore !== undefined && tokensAfter !== undefined) {

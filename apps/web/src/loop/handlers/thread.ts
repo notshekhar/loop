@@ -445,6 +445,7 @@ export interface LoopCompactPayload {
   readonly tokensBefore?: number;
   readonly tokensAfter?: number;
   readonly aborted?: boolean;
+  readonly error?: string;
 }
 
 /** Payload key for a tool call rendered the way loop's terminal renders it. */
@@ -1126,6 +1127,7 @@ function foldLiveTurn(
             : { tokensBefore: compaction.tokensBefore }),
           ...(compaction.tokensAfter === undefined ? {} : { tokensAfter: compaction.tokensAfter }),
           ...(compaction.aborted ? { aborted: true } : {}),
+          ...(compaction.error === undefined ? {} : { error: compaction.error }),
         }),
     });
   }

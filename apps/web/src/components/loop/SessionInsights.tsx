@@ -284,7 +284,7 @@ export const SessionInsights = memo(function SessionInsights({
           <p className="mt-1.5 text-muted-foreground/60 text-xs">
             {running
               ? "Not while a turn is running."
-              : "Summarizes everything so far and drops it from the model's context."}
+              : "Summarizes the older conversation and keeps the most recent part word for word."}
           </p>
           {error ? <p className="mt-1.5 text-destructive text-xs">{error}</p> : null}
         </div>

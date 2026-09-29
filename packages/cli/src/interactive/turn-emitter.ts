@@ -167,10 +167,19 @@ export function wireTurnEmitter(emitter: TurnEmitter, deps: TurnEmitterDeps): vo
     });
     emitter.on(
         "compact-end",
-        (r: { summary: string; tokensBefore: number; tokensAfter?: number; aborted?: boolean }) => {
+        (r: {
+            summary: string;
+            cutAt: number;
+            tokensBefore: number;
+            handoff?: string;
+            aborted?: boolean;
+            error?: string;
+        }) => {
             if (r.aborted) history.addSystem("compact aborted");
+            else if (r.error) history.addSystem(`compact failed: ${r.error} — continuing uncompacted`);
             else if (r.summary) history.addCompactionSummary(r.summary, r.tokensBefore);
-            if (typeof r.tokensAfter === "number") state.latestContextTokens = r.tokensAfter;
+            // The last reported size measured the context this just replaced.
+            if (r.cutAt > 0 || r.handoff) state.latestContextTokens = 0;
             refreshStatusLine();
             tui.requestRender();
         },

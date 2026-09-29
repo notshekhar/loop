@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { compactCut, compactedContextEntries } from "../src/agent/compact";
+import { collectFileLists, compactedContextEntries, findCutPoint } from "../src/agent/compact";
 import { Session } from "../src/sessions";
 import type { Entry } from "../src/types";
 import { useTempSessionDb } from "./helpers/temp-db";
@@ -101,33 +101,79 @@ describe("compactedContextEntries", () => {
     });
 });
 
-describe("compactCut", () => {
-    const roles = (rs: string[]) => rs.map((role) => ({ role }));
+describe("findCutPoint", () => {
+    // Each message weighs `tokens` on the chars/4 scale the estimate uses.
+    const m = (role: string, tokens: number) => ({ role, content: "x".repeat(tokens * 4) });
 
-    test("plain numeric cut when the window starts on a user message", () => {
-        expect(compactCut(roles(["user", "assistant", "user", "assistant"]), 0, 2)).toBe(2);
+    test("keeps the most recent messages up to the token budget", () => {
+        const messages = [m("user", 100), m("assistant", 100), m("user", 100), m("assistant", 100)];
+        expect(findCutPoint(messages, 0, 200)).toBe(2);
+    });
+
+    test("a budget reached mid-message keeps that whole message", () => {
+        const messages = [m("user", 100), m("assistant", 100), m("user", 100), m("assistant", 100)];
+        expect(findCutPoint(messages, 0, 150)).toBe(2);
+    });
+
+    test("may open the window on an assistant message inside a request", () => {
+        const messages = [m("user", 10), m("assistant", 500), m("assistant", 100), m("user", 10), m("assistant", 90)];
+        expect(findCutPoint(messages, 0, 200)).toBe(2);
     });
 
     test("walks back over tool results so the window keeps the tool-call pair", () => {
-        // cut would land on the tool result at index 3 — orphaning it from the
-        // assistant tool-call at index 2.
-        const messages = roles(["user", "assistant", "assistant", "tool", "assistant", "user"]);
-        expect(compactCut(messages, 0, 3)).toBe(2);
+        // 150 tokens back lands on the tool result at index 3 — orphaning it
+        // from the assistant tool-call at index 2.
+        const messages = [
+            m("user", 100),
+            m("assistant", 100),
+            m("assistant", 100),
+            m("tool", 100),
+            m("assistant", 100),
+        ];
+        expect(findCutPoint(messages, 0, 150)).toBe(2);
     });
 
     test("walks back over consecutive tool messages", () => {
-        const messages = roles(["user", "assistant", "tool", "tool", "assistant"]);
-        expect(compactCut(messages, 0, 2)).toBe(1);
+        const messages = [m("user", 10), m("assistant", 10), m("tool", 10), m("tool", 10), m("assistant", 10)];
+        expect(findCutPoint(messages, 0, 15)).toBe(1);
     });
 
     test("never walks below the previous cut", () => {
-        // numeric cut lands exactly on previousCut, which is a tool message —
-        // the walk-back must stop there rather than dig into compacted history.
-        const messages = roles(["user", "assistant", "tool", "tool", "assistant"]);
-        expect(compactCut(messages, 3, 2)).toBe(3);
+        const messages = [m("user", 10), m("assistant", 10), m("tool", 10), m("tool", 10), m("assistant", 10)];
+        expect(findCutPoint(messages, 3, 15)).toBe(3);
     });
 
-    test("keeps everything when history is shorter than keep", () => {
-        expect(compactCut(roles(["user", "assistant"]), 0, 4)).toBe(0);
+    test("keeps everything when the history is under budget", () => {
+        expect(findCutPoint([m("user", 10), m("assistant", 10)], 0, 20_000)).toBe(0);
+    });
+
+    test("a zero budget keeps nothing", () => {
+        expect(findCutPoint([m("user", 10), m("assistant", 10)], 0, 0)).toBe(2);
+    });
+});
+
+describe("collectFileLists", () => {
+    const call = (toolName: string, path: string) => ({
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "c", toolName, input: { path } }],
+    });
+
+    test("files read and changed come from the tool calls; a changed file is not also listed as read", () => {
+        const files = collectFileLists([
+            call("read", "src/a.ts"),
+            call("read", "src/b.ts"),
+            call("edit", "src/b.ts"),
+            call("write", "src/c.ts"),
+            call("read", "loop://docs"),
+        ]);
+        expect(files).toEqual({ readFiles: ["src/a.ts"], modifiedFiles: ["src/b.ts", "src/c.ts"] });
+    });
+
+    test("carries the previous compaction's lists forward", () => {
+        const files = collectFileLists([call("read", "src/new.ts")], {
+            readFiles: ["src/old.ts"],
+            modifiedFiles: ["src/changed.ts"],
+        });
+        expect(files).toEqual({ readFiles: ["src/new.ts", "src/old.ts"], modifiedFiles: ["src/changed.ts"] });
     });
 });

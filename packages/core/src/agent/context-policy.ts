@@ -29,7 +29,12 @@ export interface ContextDecisionInput {
     overheadTokens: number;
     /** Where the model's own compaction line sits. */
     thresholdTokens: number;
-    reason: "threshold" | "explicit";
+    /**
+     * "mid-turn": crossed between two steps of one turn. The branch then ends
+     * on tool results no model has read yet, not on the user's new message.
+     * "overflow": the provider refused a request as too big for its window.
+     */
+    reason: "threshold" | "mid-turn" | "overflow" | "explicit";
 }
 
 export interface ContextPolicy {

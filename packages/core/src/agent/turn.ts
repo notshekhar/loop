@@ -52,7 +52,7 @@ import { loadWorkspaceContext } from "./context";
 import { loadMemoryContext } from "./memory";
 import { formatSkillsForPrompt, loadProjectSkills, type Skill } from "./skills";
 import { extractImagesFromInput, filterAttachmentsByModalities } from "./images";
-import { CostTracker, stampUsageCost } from "./cost";
+import { CostTracker, contextTokensFromUsage, stampUsageCost } from "./cost";
 import { runCompact } from "./compact";
 import {
     clearContextBoundary,
@@ -76,6 +76,7 @@ import {
     abortableDelay,
     DEFAULT_MAX_STREAM_RESUMES,
     describeRetry,
+    isContextOverflowError,
     isRetryableStreamError,
     resumeDelayMs,
 } from "./retry";
@@ -632,6 +633,88 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
     // above reads the transcript.
     const contextOverheadTokens = estimateOverheadTokens(system, toolsForTurn);
     const threshold = getSetting("autoCompactThreshold") ?? 0.8;
+
+    /**
+     * The context crossed the threshold: let the context policy choose between
+     * a rollover and a summary, and carry it out. Shared by the check before
+     * the first step and the one between steps (see `compactionDue` below).
+     *
+     * A failed summary is reported and survived rather than thrown — the
+     * request may well still fit, and if it doesn't the provider says so in
+     * plainer words than a dead turn would.
+     */
+    const compactOverThreshold = async (
+        usedTokens: number,
+        contextWindow: number,
+        reason: "threshold" | "mid-turn" | "overflow",
+    ): Promise<"compacted" | "declined" | "aborted"> => {
+        const decision = await decideContextAction({
+            session,
+            modelId,
+            cwd,
+            usedTokens,
+            contextWindow,
+            overheadTokens: contextOverheadTokens,
+            thresholdTokens: Math.floor(contextWindow * threshold),
+            reason,
+        });
+        if (decision.kind === "none") return "declined";
+        if (decision.kind === "rollover") {
+            // No model call, so no spend and nothing to abort — the entry is
+            // the whole operation. Emitted through the same events as a
+            // compaction so every surface keeps one code path.
+            emitter.emit("compact-start", { reason: "auto", mode: "rollover" });
+            await runHooks(
+                "PreCompact",
+                "auto",
+                { session_id: session.id, transcript_path: session.path, trigger: "rollover" },
+                cwd,
+            );
+            const tokensAfter = Math.ceil(decision.handoff.length / 4);
+            await session.append({
+                type: "compact",
+                ts: Date.now(),
+                summary: "",
+                handoff: decision.handoff,
+                rollover: true,
+                cutAt: decision.cutAt,
+                tokensBefore: usedTokens,
+                tokensAfter,
+            });
+            emitter.emit("compact-end", {
+                summary: "",
+                handoff: decision.handoff,
+                mode: "rollover",
+                cutAt: decision.cutAt,
+                tokensBefore: usedTokens,
+                tokensAfter,
+            });
+            return "compacted";
+        }
+        emitter.emit("compact-start", { reason: "auto" });
+        // PreCompact is informational for watchers — block is ignored.
+        await runHooks(
+            "PreCompact",
+            "auto",
+            { session_id: session.id, transcript_path: session.path, trigger: "auto" },
+            cwd,
+        );
+        try {
+            const result = await runCompact({ session, modelId, abortSignal, tracker, cwd, contextWindow });
+            emitter.emit("compact-end", result);
+            return result.cutAt > 0 ? "compacted" : "declined";
+        } catch (err) {
+            const aborted = abortSignal?.aborted === true;
+            emitter.emit("compact-end", {
+                summary: "",
+                cutAt: 0,
+                tokensBefore: usedTokens,
+                ...(aborted ? { aborted: true } : { error: err instanceof Error ? err.message : String(err) }),
+            });
+            return aborted ? "aborted" : "declined";
+        }
+    };
+
     if (modelInfo) {
         const tokens = estimateContextTokens(session, contextOverheadTokens);
         // Usage is only knowable here — the estimate needs the overhead of the
@@ -645,76 +728,14 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
             rolloverAt,
             supported: rolloverAt - contextOverheadTokens >= MIN_USABLE_TOKENS,
         });
-        if (tokens > modelInfo.contextWindow * threshold) {
-            const decision = await decideContextAction({
-                session,
-                modelId,
-                cwd,
-                usedTokens: tokens,
-                contextWindow: modelInfo.contextWindow,
-                overheadTokens: contextOverheadTokens,
-                thresholdTokens: Math.floor(modelInfo.contextWindow * threshold),
-                reason: "threshold",
-            });
-            if (decision.kind === "rollover") {
-                // No model call, so no spend and nothing to abort — the entry is
-                // the whole operation. Emitted through the same events as a
-                // compaction so every surface keeps one code path.
-                emitter.emit("compact-start", { reason: "auto", mode: "rollover" });
-                await runHooks(
-                    "PreCompact",
-                    "auto",
-                    { session_id: session.id, transcript_path: session.path, trigger: "rollover" },
-                    cwd,
-                );
-                const before = tokens;
-                await session.append({
-                    type: "compact",
-                    ts: Date.now(),
-                    summary: "",
-                    handoff: decision.handoff,
-                    rollover: true,
-                    cutAt: decision.cutAt,
-                    tokensBefore: before,
-                    tokensAfter: Math.ceil(decision.handoff.length / 4),
-                });
-                emitter.emit("compact-end", {
-                    summary: "",
-                    handoff: decision.handoff,
-                    mode: "rollover",
-                    cutAt: decision.cutAt,
-                    tokensBefore: before,
-                    tokensAfter: Math.ceil(decision.handoff.length / 4),
-                });
-            } else if (decision.kind === "summarize") {
-            emitter.emit("compact-start", { reason: "auto" });
-            // PreCompact is informational for watchers — block is ignored.
-            await runHooks(
-                "PreCompact",
-                "auto",
-                { session_id: session.id, transcript_path: session.path, trigger: "auto" },
-                cwd,
-            );
-            try {
-                const result = await runCompact({ session, modelId, abortSignal, tracker, cwd });
-                emitter.emit("compact-end", result);
-            } catch (err) {
-                if (abortSignal?.aborted) {
-                    emitter.emit("compact-end", {
-                        summary: "",
-                        cutAt: 0,
-                        tokensBefore: 0,
-                        tokensAfter: 0,
-                        aborted: true,
-                    });
-                    // Every other early return emits finish — without it a
-                    // finish-keyed consumer (an RPC client) waits forever.
-                    emitter.emit("finish", { usage: undefined });
-                    return;
-                }
-                throw err;
-            }
-            }
+        if (
+            tokens > modelInfo.contextWindow * threshold &&
+            (await compactOverThreshold(tokens, modelInfo.contextWindow, "threshold")) === "aborted"
+        ) {
+            // Every other early return emits finish — without it a
+            // finish-keyed consumer (an RPC client) waits forever.
+            emitter.emit("finish", { usage: undefined });
+            return;
         }
     }
 
@@ -927,6 +948,42 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
         return persistChain;
     };
     /**
+     * Mid-turn compaction. The check before the first step runs once, so a
+     * long tool-heavy turn could climb from 30% to past the window without
+     * being looked at again. After every step that leads to another (it made
+     * tool calls), measure what the NEXT request will carry — this step's
+     * context per the provider, plus the tool results it produced — and over
+     * the threshold, stop the stream at this clean boundary. The attempt loop
+     * then compacts and reopens it, the same way a resume does.
+     *
+     * One declined or failed attempt switches it off for the rest of the turn:
+     * a compaction that frees nothing would otherwise fire after every step.
+     */
+    let compactionDueAt: number | undefined;
+    // Overflow recovery (see the attempt loop): once per turn, like pi's
+    // compact-and-retry — a second refusal right after means the kept window
+    // alone is too big, and retrying again would only pay for the same error.
+    let overflowRecovered = false;
+    /** A failure the attempt loop may still recover from, so not reported yet. */
+    const recoverable = (err: unknown) =>
+        isRetryableStreamError(err) || (!overflowRecovered && isContextOverflowError(err));
+    let midTurnCompaction = modelInfo !== undefined;
+    const compactionDue = ({
+        steps,
+    }: {
+        steps: ReadonlyArray<{ usage?: UsageBlock; toolCalls: ReadonlyArray<unknown>; toolResults: ReadonlyArray<{ output?: unknown }> }>;
+    }): boolean => {
+        const step = steps.at(-1);
+        if (!midTurnCompaction || !modelInfo || !step || step.toolCalls.length === 0) return false;
+        const fromUsage = contextTokensFromUsage(step.usage);
+        const context = fromUsage > 0 ? fromUsage : estimateContextTokens(session, contextOverheadTokens);
+        const next = context + Math.ceil(JSON.stringify(step.toolResults.map((r) => r.output)).length / 4);
+        if (next <= modelInfo.contextWindow * threshold) return false;
+        compactionDueAt = next;
+        return true;
+    };
+
+    /**
      * Open a stream over `attemptMessages`, with `remainingSteps` of the
      * turn's step budget left. Called once normally, and again per resume — a
      * resumed stream is a fresh call over the conversation the finished steps
@@ -951,8 +1008,8 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
             // (stub deliveries keep the loop alive — see planDeliveredThisStep).
             stopWhen:
                 PLAN_TOOL_NAME in toolsForTurn
-                    ? [isStepCount(remainingSteps), planDeliveredThisStep]
-                    : isStepCount(remainingSteps),
+                    ? [isStepCount(remainingSteps), planDeliveredThisStep, compactionDue]
+                    : [isStepCount(remainingSteps), compactionDue],
             abortSignal,
             // v7 portable reasoning effort for first-party providers (off → "none").
             // Undefined for community providers / non-reasoning models, which use
@@ -1016,6 +1073,9 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
     // emitted only if we end up giving up, so a resumed turn never tells its
     // consumers the turn ended and then keeps going.
     let pendingFinish: { usage?: UsageBlock } | undefined;
+    // Likewise a `finish` from a stream stopped for mid-turn compaction: the
+    // turn goes on after it, unless there turns out to be no step left.
+    let compactionFinish: { usage?: UsageBlock } | undefined;
 
     const maybeYield = createYieldGate();
     // A turn may reopen its stream when a transient provider failure kills it
@@ -1141,6 +1201,10 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
                             pendingFinish = { usage: u };
                             break;
                         }
+                        if (compactionDueAt !== undefined) {
+                            compactionFinish = { usage: u };
+                            break;
+                        }
                         sawFinish = true;
                         emitter.emit("finish", { usage: u, lastStepUsage });
                         break;
@@ -1148,11 +1212,12 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
                     case "error": {
                         const msg = String((part as { error?: unknown }).error ?? "");
                         if (/^(reasoning|text) part .* not found$/.test(msg)) break;
-                        // Hold a transient failure back: the stream is about to end
-                        // either way, and if the resume succeeds the user never
-                        // needed to see it. Anything else is reported immediately,
-                        // exactly as before.
-                        if (isRetryableStreamError(part.error)) streamError = part.error;
+                        // Hold back a failure the attempt loop can recover from — a
+                        // transient one (resume) or a request too big for the window
+                        // (compact and retry): the stream is about to end either way,
+                        // and if recovery works the user never needed to see it.
+                        // Anything else is reported immediately, exactly as before.
+                        if (recoverable(part.error)) streamError = part.error;
                         else emitter.emit("error", part.error);
                         break;
                     }
@@ -1166,9 +1231,61 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
             // instead of arriving as an error part — same decision either way.
             if (isAbortError(err) || abortSignal?.aborted) {
                 // fall through: abort is handled below, never retried
-            } else if (isRetryableStreamError(err)) {
+            } else if (recoverable(err)) {
                 streamError = err;
             } else throw err;
+        }
+
+        // ---- overflow recovery -----------------------------------------------
+        // The provider refused the request as too big for its window: the
+        // estimate ran low, or one tool result was enormous. Compact what the
+        // finished steps left and retry — only when nothing of the failed step
+        // has streamed, the same rule a resume follows, or it would repeat.
+        const tailStreamed = textSinceStep !== "" || reasoningSinceStep !== "";
+        if (
+            streamError !== undefined &&
+            !overflowRecovered &&
+            isContextOverflowError(streamError) &&
+            !abortSignal?.aborted &&
+            !tailStreamed
+        ) {
+            overflowRecovered = true;
+            const refused = streamError;
+            await persistChain;
+            const used = estimateContextTokens(session, contextOverheadTokens);
+            const outcome = await compactOverThreshold(used, modelInfo?.contextWindow ?? used, "overflow");
+            if (outcome === "aborted") break streamAttempts;
+            if (outcome === "compacted") {
+                streamError = undefined;
+                pendingFinish = undefined;
+                attemptMessages = buildMessages();
+                continue streamAttempts;
+            }
+            // Nothing freed: report the refusal exactly as it came.
+            streamError = refused;
+        }
+
+        // ---- mid-turn compaction ---------------------------------------------
+        // The stream stopped itself at a finished step, so everything it did
+        // is persisted once the chain drains, and a fresh stream over the
+        // compacted session continues the turn. Not a resume: no backoff, and
+        // it spends nothing from the resume allowance.
+        if (compactionDueAt !== undefined) {
+            const used = compactionDueAt;
+            compactionDueAt = undefined;
+            if (modelInfo && streamError === undefined && !abortSignal?.aborted && stepsDone < maxSteps) {
+                compactionFinish = undefined;
+                await persistChain;
+                const outcome = await compactOverThreshold(used, modelInfo.contextWindow, "mid-turn");
+                if (outcome === "aborted") break streamAttempts;
+                if (outcome === "declined") midTurnCompaction = false;
+                attemptMessages = buildMessages();
+                continue streamAttempts;
+            }
+            if (compactionFinish && !sawFinish) {
+                sawFinish = true;
+                emitter.emit("finish", { usage: compactionFinish.usage, lastStepUsage });
+            }
         }
 
         // ---- resume decision -------------------------------------------------

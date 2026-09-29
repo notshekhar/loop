@@ -39,6 +39,8 @@ export interface TurnEvents {
         tokensBefore: number;
         tokensAfter?: number;
         aborted?: boolean;
+        /** The summary failed; the turn carries on uncompacted. */
+        error?: string;
         handoff?: string;
         mode?: "summary" | "rollover";
     };

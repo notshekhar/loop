@@ -40,7 +40,7 @@ loop version
 
 **A session vanished.** Sessions are scoped to the directory you started loop in. `cd` back to the project and run `/resume`, or `loop sessions` to list what's there.
 
-**Context is full.** `/compact` summarizes the conversation and reclaims room. `/context` shows what's actually loaded — often it's a large file read early on, and `/tree` lets you branch back to before that happened.
+**Context is full.** loop compacts on its own when the context crosses `autoCompactThreshold` (80% by default) — between steps as well as between turns — and keeps the last ~20k tokens word for word. `/compact` does it now; `/compact focus on the API changes` steers what the summary keeps. `/context` shows what's actually loaded — often it's a large file read early on, and `/tree` lets you branch back to before that happened.
 
 **You want an earlier state back.** `/tree` navigates the whole session; selecting an earlier point branches there and offers to summarize the abandoned branch back into context.
 

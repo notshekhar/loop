@@ -150,6 +150,22 @@ describe("CostTracker.seedFromSession", () => {
         expect(s.outputTokens).toBe(22);
     });
 
+    // A compaction replaces the context the last usage measured: a session
+    // resumed right after one must not report its pre-compaction size.
+    test("ctx meter reports nothing measured when a compaction follows the last assistant turn", () => {
+        const entries: Entry[] = [
+            { type: "message", role: "user", content: "q", ts: 0 },
+            { type: "message", role: "assistant", content: "a", ts: 0, usage: usage(170_000, 1_000) },
+            { type: "compact", summary: "S", cutAt: 2, ts: 0, tokensBefore: 171_000, tokensAfter: 2_000 },
+        ];
+        const session = new Session(
+            { id: "t", createdAt: 0, cwd: "/tmp", provider: "xai", model: "xai/grok-build-0.1" },
+            "/tmp/fake.jsonl",
+            entries,
+        );
+        expect(new CostTracker().seedFromSession(session).ctxTokens).toBe(0);
+    });
+
     // The ctx meter tracks the MAIN conversation. A transcript that ends on a
     // subagent entry (aborted mid-task) must not adopt the subagent's context
     // size — its context window is separate from the parent's.

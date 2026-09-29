@@ -33,7 +33,7 @@ import { loadProjectSkills } from "./skills";
 import { isTrusted } from "./trust";
 import { buildBackgroundShellsNote, buildSubagentNote, buildSystemPrompt, buildTodoNote } from "./system-prompt";
 import { applySystemPrompt } from "./turn-middleware";
-import { latestCompactEntry } from "./compact";
+import { compactionBlockText, latestCompactEntry } from "./compact";
 
 export interface ContextCategory {
     key:
@@ -225,7 +225,7 @@ export async function buildContextReport(opts: {
     let compactTokens = 0;
     if (session) {
         const compact = latestCompactEntry(session);
-        if (compact) compactTokens = chars4(compact.summary.length + 200);
+        if (compact) compactTokens = chars4(compactionBlockText(compact).length);
         let messageIndex = 0;
         for (const e of session.getBranch()) {
             if (e.type === "message") {

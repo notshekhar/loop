@@ -88,6 +88,31 @@ describe("buildContextReport", () => {
         expect(a.categories.some((c) => c.key === "compactSummary")).toBe(false);
     });
 
+    test("a rollover's handoff is sized as the block the model reads, not as an empty summary", async () => {
+        const cwd = emptyDir();
+        const handoff = "carried inputs ".repeat(2_000); // ~30k chars
+        const session = sessionWith(
+            [
+                { type: "message", role: "user", content: "old", ts },
+                { type: "message", role: "assistant", content: "old reply", ts },
+                {
+                    type: "compact",
+                    summary: "",
+                    handoff,
+                    rollover: true,
+                    cutAt: 2,
+                    ts,
+                    tokensBefore: 10,
+                    tokensAfter: 10,
+                },
+            ],
+            cwd,
+        );
+        const report = await buildContextReport({ session, modelId: MODEL, cwd });
+        const block = report.categories.find((c) => c.key === "compactSummary");
+        expect(block!.tokens).toBeGreaterThan(handoff.length / 4);
+    });
+
     test("unknown model reports a zero context window without crashing", async () => {
         const cwd = emptyDir();
         const report = await buildContextReport({ session: null, modelId: "nope/does-not-exist", cwd });

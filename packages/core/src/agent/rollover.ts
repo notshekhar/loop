@@ -13,6 +13,7 @@
  * purpose — if it mattered it is in a file, in the todos, or in agent memory.
  */
 import type { Entry } from "../types";
+import { toolOutputText } from "./compact";
 import { isTodosPayload, formatTodoList, hasActiveTodos, type TodoItem } from "../tools/todo";
 
 /** Absolute ceiling; the live budget usually cuts well below this. */
@@ -33,6 +34,7 @@ interface ToolCallPart {
     toolName?: string;
     input?: unknown;
     args?: unknown;
+    output?: unknown;
 }
 
 function parts(content: unknown): ToolCallPart[] {
@@ -104,8 +106,7 @@ function unconsumedToolBatch(current: readonly Entry[]): string[] {
         if (e.role !== "tool") continue;
         for (const p of parts(e.content)) {
             if (p.type !== "tool-result") continue;
-            const body = typeof p.input === "string" ? p.input : JSON.stringify(p.input ?? "");
-            out.unshift(`${p.toolName ?? "tool"}: ${excerpt(body, 600)}`);
+            out.unshift(`${p.toolName ?? "tool"}: ${excerpt(toolOutputText(p.output), 600)}`);
         }
     }
     return sawAssistantText ? [] : out;

@@ -1343,7 +1343,7 @@ async function testMcpPanel(): Promise<void> {
 
 
 /** A reply the fixture model streams back, in Anthropic's event stream. */
-function streamedReply(text: string): Response {
+function streamedReply(text: string, inputTokens = 20): Response {
     const sse = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     const body =
         sse("message_start", {
@@ -1356,7 +1356,7 @@ function streamedReply(text: string): Response {
                 content: [],
                 stop_reason: null,
                 stop_sequence: null,
-                usage: { input_tokens: 20, output_tokens: 0 },
+                usage: { input_tokens: inputTokens, output_tokens: 0 },
             },
         }) +
         sse("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }) +
@@ -1376,13 +1376,13 @@ function streamedReply(text: string): Response {
  * `respond()`, with one prompt already sent. A turn STREAMS, so a successful
  * fixture has to speak Anthropic's event stream (see streamedReply).
  */
-async function withFixtureModel(respond: () => Response, body: (s: Session) => Promise<void>): Promise<void> {
+async function withFixtureModel(
+    respond: (request: { stream?: boolean }) => Response,
+    body: (s: Session) => Promise<void>,
+): Promise<void> {
     const server = Bun.serve({
         port: 0,
-        fetch: async (req) => {
-            await req.arrayBuffer();
-            return respond();
-        },
+        fetch: async (req) => respond((await req.json().catch(() => ({}))) as { stream?: boolean }),
     });
     try {
         const settings = JSON.stringify({ theme: "night", defaultModel: "custom:fixture/fixture" });
@@ -1437,6 +1437,59 @@ async function testTurnFailed(): Promise<void> {
         const failed = s.screenRows().findIndex((r) => r.includes("Turn failed in"));
         const asked = s.screenRows().findIndex((r) => r.includes("does validation run before the write?"));
         check(asked >= 0 && failed > asked, "under the prompt it failed on", s.screenRows());
+    });
+}
+
+/**
+ * /context after a compaction shows the context that is left, not the one
+ * that was just replaced. It used to keep the last reported size: the status
+ * bar and /context both still said 87% after /compact had cut the history
+ * down to a summary, until the next reply happened to correct them.
+ */
+async function testContextAfterCompact(): Promise<void> {
+    const respond = (request: { stream?: boolean }) =>
+        request.stream
+            ? streamedReply("Checked it. The validation runs before the write.", 87_000)
+            : Response.json({
+                  id: "msg_summary",
+                  type: "message",
+                  role: "assistant",
+                  model: "fixture",
+                  content: [{ type: "text", text: "## Goal\nCheck validation order." }],
+                  stop_reason: "end_turn",
+                  stop_sequence: null,
+                  usage: { input_tokens: 400, output_tokens: 30 },
+              });
+    await withFixtureModel(respond, async (s) => {
+        /** The rows of the most recent /context block. */
+        const lastReport = () => {
+            const rows = s.screenRows();
+            const at = rows.findLastIndex((r) => r.includes("Context usage"));
+            return at >= 0 ? rows.slice(at) : [];
+        };
+        await s.send("/context\r", 2.0);
+        check(
+            lastReport().some((r) => r.includes("87k/100k tokens (87%)")),
+            "before: /context shows the reported 87%",
+            lastReport(),
+        );
+        check(
+            s.screenRows().some((r) => r.includes("(87.0%)")),
+            "before: the status bar shows 87%",
+            s.screenRows(),
+        );
+
+        await s.send("/compact\r", 3.0);
+        await s.send("/context\r", 2.0);
+        const after = lastReport();
+        check(after.length > 0, "after: /context renders", s.screenRows());
+        check(!after.some((r) => r.includes("(87%)")), "after: /context no longer claims 87%", after);
+        check(
+            !after.some((r) => r.includes("last provider-reported")),
+            "after: and does not call its estimate provider-reported",
+            after,
+        );
+        check(!s.screenRows().some((r) => r.includes("(87.0%)")), "after: the status bar drops 87%", s.screenRows());
     });
 }
 
@@ -1529,6 +1582,7 @@ async function testClickSelectsAnEntry(): Promise<void> {
 }
 
 const SCENARIOS: Record<string, () => Promise<void>> = {
+    "context-after-compact": testContextAfterCompact,
     handoff: testHandoff,
     recipes: testRecipes,
     boot: testBoot,

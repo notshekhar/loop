@@ -11,7 +11,8 @@ export interface CommandContext {
     setModel(modelId: string): Promise<void> | void;
     setProvider(p?: string): Promise<void> | void;
     newSession(): Promise<void>;
-    manualCompact(): Promise<void>;
+    /** `focus` steers what the summary keeps (`/compact <focus>`). */
+    manualCompact(focus?: string): Promise<void>;
     setThinking(level?: string): Promise<void> | void;
     showCost(): void;
     /** /context — context-window usage breakdown (grid + categories). */
@@ -211,9 +212,9 @@ export async function registerBuiltins(reg: CommandRegistry, opts: { cwd?: strin
         },
         {
             name: "compact",
-            description: "Manually compact the session context",
-            handler: async (ctx) => {
-                await ctx.manualCompact();
+            description: "Compact the session context now (/compact <focus> steers the summary)",
+            handler: async (ctx, args) => {
+                await ctx.manualCompact(args);
             },
         },
         {

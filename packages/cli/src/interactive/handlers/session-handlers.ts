@@ -159,7 +159,7 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
             tui.invalidate();
             tui.requestRender(true);
         },
-        async manualCompact() {
+        async manualCompact(focus?: string) {
             if (!state.session) {
                 history.addSystem("nothing to compact");
                 tui.requestRender();
@@ -184,13 +184,17 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
                 const result = await runCompact({
                     session: state.session,
                     modelId: state.modelId,
-                    keepTurns: 0,
+                    manual: true,
+                    ...(focus?.trim() ? { focus: focus.trim() } : {}),
                     abortSignal: state.abort.signal,
                     tracker: deps.tracker,
                     cwd: state.cwd,
                 });
                 if (result.summary) {
                     history.addCompactionSummary(result.summary, result.tokensBefore);
+                    // The last reported size measured the context this replaced.
+                    state.latestContextTokens = 0;
+                    refreshStatusLine();
                 } else {
                     history.addSystem("nothing to compact");
                 }

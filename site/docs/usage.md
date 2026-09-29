@@ -33,7 +33,7 @@ Prints the final response to stdout and exits. No UI, pipeable, safe in scripts.
 | `/name <text>`         | Name it, so it's findable later                   |
 | `/export`, `/import`   | Transcript out, transcript in                     |
 | `/share`               | Shareable transcript                              |
-| `/compact`             | Summarize the conversation to reclaim context     |
+| `/compact [focus]`     | Summarize the conversation to reclaim context     |
 | `/context`             | What's currently loaded and how much room is left |
 | `/shells`              | Background shells: run, read, kill                |
 

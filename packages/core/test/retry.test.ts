@@ -10,6 +10,7 @@ import { APICallError } from "ai";
 import {
     abortableDelay,
     describeRetry,
+    isContextOverflowError,
     isRetryableStreamError,
     RESUME_MAX_DELAY_MS,
     resumeDelayMs,
@@ -159,5 +160,39 @@ describe("describeRetry", () => {
         const long = describeRetry(new Error("x".repeat(500)));
         expect(long.length).toBeLessThanOrEqual(120);
         expect(describeRetry("a\n\nb")).toBe("a b");
+    });
+});
+
+describe("a request refused for its size", () => {
+    test("a 413 from a gateway, whatever its wording", () => {
+        expect(isContextOverflowError(apiError(413))).toBe(true);
+    });
+
+    test("a 400 whose message or body names the context", () => {
+        for (const message of [
+            "This model's maximum context length is 131072 tokens",
+            "prompt is too long: 210000 tokens > 200000 maximum",
+            "Request body too large",
+            "Please reduce the length of the messages or completion.",
+        ]) {
+            expect({ message, overflow: isContextOverflowError(new Error(message)) }).toEqual({
+                message,
+                overflow: true,
+            });
+        }
+        const withBody = new APICallError({
+            message: "Bad Request",
+            url: "https://example.test",
+            requestBodyValues: {},
+            statusCode: 400,
+            responseBody: '{"error":{"code":"context_length_exceeded"}}',
+        });
+        expect(isContextOverflowError(withBody)).toBe(true);
+    });
+
+    test("other failures are not mistaken for it", () => {
+        expect(isContextOverflowError(apiError(401))).toBe(false);
+        expect(isContextOverflowError(apiError(529, { isRetryable: true }))).toBe(false);
+        expect(isContextOverflowError(new Error("invalid api key"))).toBe(false);
     });
 });

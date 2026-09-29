@@ -84,7 +84,7 @@ export function sumUsage(a: UsageBlock | undefined, b: UsageBlock): UsageBlock {
 }
 
 /** Context size implied by a usage block — provider total when present, else the sum. */
-function ctxFromUsage(u: UsageBlock | undefined): number {
+export function contextTokensFromUsage(u: UsageBlock | undefined): number {
     if (!u) return 0;
     if (typeof u.totalTokens === "number" && u.totalTokens > 0) return u.totalTokens;
     return (u.inputTokens ?? 0) + (u.outputTokens ?? 0) + (u.cachedInputTokens ?? 0);
@@ -317,6 +317,10 @@ export class CostTracker {
             if (e.type === "message" && e.role === "assistant" && e.usage) {
                 usages.push({ usage: e.usage, model: e.model ?? session.info.model });
                 lastAssistantUsage = e.usage;
+            } else if (e.type === "compact") {
+                // The compaction replaced the context that usage measured;
+                // nothing has measured the new one until the next reply.
+                lastAssistantUsage = undefined;
             } else if (e.type === "subagent" && e.usage) {
                 usages.push({ usage: e.usage, model: e.model ?? session.info.model });
             }
@@ -325,8 +329,9 @@ export class CostTracker {
         // Ctx meter tracks the MAIN conversation: a subagent's usage counts
         // toward cost, but its context is separate — if the transcript ends on
         // a subagent entry (e.g. aborted mid-task), the meter must not adopt
-        // that subagent's context size.
-        return { ctxTokens: ctxFromUsage(lastAssistantUsage) };
+        // that subagent's context size. 0 means nothing measured it — the
+        // caller estimates instead.
+        return { ctxTokens: contextTokensFromUsage(lastAssistantUsage) };
     }
 
     seedFromEntries(
@@ -344,7 +349,7 @@ export class CostTracker {
             if (usage.estimated) this.estimated = true;
             last = usage;
         }
-        return { ctxTokens: ctxFromUsage(last) };
+        return { ctxTokens: contextTokensFromUsage(last) };
     }
 
     sessionBreakdown(): CostBreakdown {

@@ -12,7 +12,7 @@ export {
     type AgentCallConfig,
     type StepBilling,
 } from "./model-call";
-export { CostTracker, stampUsageCost, type AddContext } from "./cost";
+export { CostTracker, contextTokensFromUsage, stampUsageCost, type AddContext } from "./cost";
 export { buildSteakGrid, type SteakGrid, type SteakOptions, type SteakStats } from "./steak";
 export { runCompact, CompactAbortedError } from "./compact";
 export { runRecap, isRecapPayload, RECAP_KIND, type RecapPayload } from "./recap";

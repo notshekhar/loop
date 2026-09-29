@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.20.13] - 2026-09-29
+
+### Fixed
+
+- **Auto-compaction fires inside a long turn, not only before it.** The threshold was checked once, before a turn's first step. A turn that kept reading files and running commands could climb from 30% to past the window without anything looking again — the status bar reading 87% and nothing happening until you sent another message. The check now also runs after every step that leads to another: it measures what the next request will carry (the size the provider just reported, plus the tool results that step produced), and over the threshold it stops at that step, compacts, and carries on. It is not a retry and spends nothing from the retry allowance, and a compaction that frees nothing is not tried again for the rest of the turn.
+- **`/compact` no longer fails on a big session with "body too big".** The summarizer was sent the entire history as one prompt, serialized as raw JSON — every tool output in full, reasoning, provider-signed thinking blobs, base64 images — so at the very moment compaction was needed most, a gateway refused the request for its size. The summarizer now reads what was said and done, without the weight that never helps a summary: no reasoning, no provider metadata, no media bytes, and the head and tail of each tool result instead of all of it. Each request is capped at 70% of the model's window (at most 800k characters), a history larger than that is summarized in chunks that each fold into the summary so far, and a request still refused for its size is retried with smaller chunks.
+- **A request the provider refuses as too big is compacted and retried.** An estimate that ran low, or one enormous tool result, used to end the turn with the provider's error. The turn now compacts and retries once, and you never see the refusal; a second refusal straight after is reported, since the recent window alone is then too big.
+- **A failed compaction no longer kills the turn.** It is reported — `compact failed: … — continuing uncompacted` — and the turn carries on, since the request may still fit.
+- **`/context` and the status bar stop claiming the size you just compacted away.** A manual `/compact` never updated the context meter, and a session resumed right after a compaction seeded it from the reply before it — so both kept showing the old 87% while the history underneath was a summary. After a compaction the meter shows an estimate until the next reply reports the real size, and `/context` only calls its headline provider-reported when it is.
+- **Relay's handoff carries the tool output it promises.** The tool results no model had read yet were read from the wrong field and always carried as an empty string. A relay rollover also now sizes correctly in `/context`, where its handoff counted as about 50 tokens.
+
+### Changed
+
+- **Compaction keeps the last ~20k tokens word for word.** It kept the last four messages — often a single tool call and its result — whatever their size. It now walks back through the conversation until about 20k tokens are kept (a quarter of the window on small models), and the kept window opens on a user or assistant message, never on a tool result whose call would be summarized away. A request too big to keep whole is cut inside it, and the summary is told that request is still in progress.
+- **The summary is a structured checkpoint.** It used to be "short bullets". It now follows pi's format — Goal, Constraints & Preferences, Progress (Done / In Progress / Blocked), Key Decisions, Next Steps, Critical Context — plus one section from Claude Code's: **every message you typed, verbatim**, because a summary that paraphrases what was asked is how the work drifts after a compaction. A later compaction folds the new messages into the existing summary instead of summarizing from scratch, and a summary cut off at the output limit is refused rather than kept as the session's only memory of what came before.
+- **The summary lists the files the session read and changed** — taken from the read, edit and write calls themselves, not from the model's memory, and carried across compactions.
+- **`/compact <focus>` steers the summary** — `/compact focus on the API changes`. Over RPC, `session.compact` takes a `focus` too. An explicit `/compact` keeps the recent window like an automatic one does, and summarizes everything only when there is nothing older to cut.
+
 ## [0.20.12] - 2026-09-23
 
 ### Changed
