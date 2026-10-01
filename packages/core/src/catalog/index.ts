@@ -5,7 +5,15 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { GENERATED_MODELS } from "./generated/models";
 import { FALLBACK_MODELS, KIMI_CODE_MODELS, XAI_FALLBACK_MODELS, fallbackModelsForSdk } from "./fallbacks";
 import { isVercelChatModel } from "./vercel";
-import { getApiKey, getAccessToken, listAuthorizedProviders, listCustomProviders, saveCustomProvider } from "../auth";
+import {
+    getApiKey,
+    getAccessToken,
+    listAuthorizedProviders,
+    listCustomProviders,
+    resolveOAuthCreds,
+    saveCustomProvider,
+} from "../auth";
+import { listChatgptPlanModels, type ChatgptPlanModel } from "../providers/chatgpt-plan";
 import {
     bedrockShortModelId,
     fetchCustomProviderModels,
@@ -41,6 +49,18 @@ const GATEWAY_FLOOR: MetadataFloor = {
     modalities: ["text"],
 };
 const BEDROCK_FLOOR: MetadataFloor = { ...GATEWAY_FLOOR, contextWindow: 128_000, maxOutput: 8_192 };
+// Everything the ChatGPT plan lists is a current reasoning model; the vendor
+// catalog refines context/modalities when it knows the slug.
+const CHATGPT_FLOOR: MetadataFloor = {
+    ...GATEWAY_FLOOR,
+    contextWindow: 400_000,
+    maxOutput: 128_000,
+    reasoning: true,
+    modalities: ["text", "image"],
+};
+// Billed to the ChatGPT plan, so no per-token cost — even when the vendor
+// catalog knows the API price for the same slug.
+const PLAN_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 };
 
 const cacheStore = new CachedStore(
     `${PRODUCT_NAME}-agent-catalog`,
@@ -293,6 +313,60 @@ export async function refreshBedrockCatalog(): Promise<BedrockModelSummary[] | n
     return models;
 }
 
+// ChatGPT plan models are per account (plan tier, workspace policy), so they
+// come from the signed-in account's own /v1/models — cached like Bedrock and
+// keyed by the issued client id so switching accounts never shows stale ones.
+// Bump when what a cached list contains changes, so old caches refetch.
+const CHATGPT_CACHE_REV = 2;
+
+interface ChatgptModelCache {
+    rev?: number;
+    clientId: string;
+    ts: number;
+    models: ChatgptPlanModel[];
+}
+
+let chatgptRefreshInFlight: Promise<ChatgptPlanModel[] | null> | null = null;
+
+async function refreshChatgptModels(clientId: string): Promise<ChatgptPlanModel[] | null> {
+    if (chatgptRefreshInFlight) return chatgptRefreshInFlight;
+    chatgptRefreshInFlight = (async () => {
+        const creds = await resolveOAuthCreds("openai-chatgpt");
+        const models = creds ? await listChatgptPlanModels(creds.access) : null;
+        // A failed listing keeps the previous good list rather than wiping it.
+        if (models)
+            cacheStore.set("chatgptModels", {
+                rev: CHATGPT_CACHE_REV,
+                clientId,
+                ts: Date.now(),
+                models,
+            } satisfies ChatgptModelCache);
+        return models;
+    })();
+    try {
+        return await chatgptRefreshInFlight;
+    } finally {
+        chatgptRefreshInFlight = null;
+    }
+}
+
+async function chatgptModels(refresh: boolean): Promise<ChatgptPlanModel[]> {
+    const creds = await resolveOAuthCreds("openai-chatgpt");
+    const clientId = creds?.clientId;
+    if (typeof clientId !== "string") return [];
+    const cached = cacheStore.get("chatgptModels") as ChatgptModelCache | undefined;
+    const usable = cached?.clientId === clientId && cached.rev === CHATGPT_CACHE_REV ? cached : undefined;
+    if (refresh || !usable) return (await refreshChatgptModels(clientId)) ?? usable?.models ?? [];
+    if (Date.now() - usable.ts > TTL_MS) {
+        void refreshChatgptModels(clientId)
+            .then(() => {
+                mergedCache = null;
+            })
+            .catch(() => {});
+    }
+    return usable.models;
+}
+
 async function bedrockModelSummaries(refresh: boolean): Promise<BedrockModelSummary[]> {
     if (!hasAwsCredentialSources()) return [];
     const cached = cacheStore.get("bedrockModels") as BedrockModelSummary[] | undefined;
@@ -510,10 +584,8 @@ export async function getCatalog(opts: { refresh?: boolean } = {}): Promise<Reco
     // Gate non-public providers by auth presence.
     const authed = new Set(listAuthorizedProviders());
     const hasCopilot = authed.has("github-copilot");
-    const hasChatgpt = authed.has("openai-chatgpt");
     for (const m of Object.values(out)) {
         if (m.provider === "github-copilot") m.available = hasCopilot;
-        if (m.provider === "openai-chatgpt") m.available = hasChatgpt;
     }
 
     // A Kimi Code subscription key can only call the plan's own models on its
@@ -607,6 +679,25 @@ export async function getCatalog(opts: { refresh?: boolean } = {}): Promise<Reco
             "bedrock" as ProviderId,
             [{ name: s.name }, vendorCatalog.resolve(bedrockShortModelId(s.id))],
             BEDROCK_FLOOR,
+        );
+    }
+
+    // ChatGPT plan: only what the signed-in account's catalog lists.
+    for (const m of await chatgptModels(opts.refresh ?? false)) {
+        const id = `openai-chatgpt/${m.slug}`;
+        out[id] = buildModelInfo(
+            id,
+            "openai-chatgpt" as ProviderId,
+            [
+                {
+                    name: `ChatGPT · ${m.displayName}`,
+                    cost: PLAN_COST,
+                    ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}),
+                    ...(m.modalities ? { modalities: m.modalities } : {}),
+                },
+                vendorCatalog.resolve(m.slug),
+            ],
+            CHATGPT_FLOOR,
         );
     }
 

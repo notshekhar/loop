@@ -502,30 +502,10 @@ const GITHUB_COPILOT: ModelInfo[] = [
     ),
 ];
 
-// ChatGPT subscription via the Codex backend (subscription-billed, cost 0).
-// Models are account-dependent; these are the current Codex-accessible ones
-// (gpt-5.5 is the default for ChatGPT-authenticated sessions). The catalog is
-// only a seed — pick whatever your subscription actually exposes.
-// Note: ChatGPT-account auth rejects the API-key-only `*-codex` slugs ("model
-// is not supported when using Codex with a ChatGPT account"), so we seed the
-// base reasoning models. gpt-5.5 is the default for ChatGPT-authenticated
-// sessions.
-const OPENAI_CHATGPT: ModelInfo[] = [
-    m("openai-chatgpt", "gpt-5.5", "ChatGPT · GPT-5.5", 1_000_000, 128_000, { input: 0, output: 0 }, true, [
-        "text",
-        "image",
-    ]),
-    m("openai-chatgpt", "gpt-5.4", "ChatGPT · GPT-5.4", 1_000_000, 128_000, { input: 0, output: 0 }, true, [
-        "text",
-        "image",
-    ]),
-];
-
 export const FALLBACK_MODELS: ModelInfo[] = [
     ...XAI,
     ...ANTHROPIC,
     ...OPENAI,
-    ...OPENAI_CHATGPT,
     ...GOOGLE,
     ...OPENROUTER,
     ...DEEPSEEK,

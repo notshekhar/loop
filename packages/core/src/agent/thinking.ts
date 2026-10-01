@@ -188,7 +188,9 @@ export function buildReasoningParams(
     return {
         reasoning: reasoningEffort(provider, level, modelShortId),
         providerOptions: buildProviderOptions(provider, level, {
-            forceReasoning: knownReasoningModel && isVendorPrefixed(modelShortId),
+            // ChatGPT plan slugs come from the account's own catalog, so the
+            // SDK's gpt-N prefix guess can't be trusted to recognize them.
+            forceReasoning: knownReasoningModel && (isVendorPrefixed(modelShortId) || provider === "openai-chatgpt"),
         }),
     };
 }
@@ -229,6 +231,7 @@ export function buildProviderOptions(
     const on = level !== "off";
     switch (provider) {
         case "openai":
+        case "openai-chatgpt":
         case "github-copilot":
             // Effort comes from the native `reasoning` param; this only adds the
             // human-readable summary stream. Skip when reasoning is off.

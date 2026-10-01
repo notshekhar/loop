@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.20.14] - 2026-10-01
+
+### Changed
+
+- **Sign in with ChatGPT is the real thing now.** The old ChatGPT login borrowed the Codex CLI's OAuth client, pretended to be Codex, and called `chatgpt.com/backend-api/codex` — an unofficial endpoint OpenAI's documentation now explicitly says not to use. It is replaced by OpenAI's official [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source) for open-source local apps: `/login openai` → **Continue with ChatGPT**, approve loop once in the browser, and requests go to the public Responses API billed to your ChatGPT plan. ChatGPT registers loop as its own app for your account, so it shows up in ChatGPT → Settings → Usage, where you can give it a weekly limit or disconnect it. Signing in again reuses that connection; **Use a different ChatGPT account** adds another account or workspace.
+- **The model list is your account's own.** ChatGPT models are read from your plan's catalog instead of two hardcoded entries — `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`/`terra`/`luna` and `gpt-5.5` on a current plan — with each model's real context window. The catalog hides newer models from a client that doesn't state a version, which is why they appeared in Codex and not here; loop now asks for the full list.
+
+### Fixed
+
+- **Signing out of ChatGPT ends the session on OpenAI's side** as well as locally, and `loop logout` waits for that before exiting.
+- **Refreshing a ChatGPT session can no longer sign you out.** Its refresh tokens rotate, and presenting a spent one revokes the whole session — which two subagents refreshing at once, or a second loop window refreshing from a stale copy, would have done. Concurrent refreshes now share one request, and loop re-reads its credentials file before refreshing.
+- **Plan errors say what to do.** Hitting loop's usage limit reports it and links to ChatGPT's usage settings instead of surfacing a raw 429; an unsupported request names the parameter.
+
+Sessions signed in with the old login are not valid on the new route — loop says so and asks you to run `/login openai` again.
+
 ## [0.20.13] - 2026-09-29
 
 ### Fixed

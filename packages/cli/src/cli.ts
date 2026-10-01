@@ -64,7 +64,7 @@ async function main(): Promise<void> {
             await (await commands()).cmdLogin(args.positional[0]);
             return;
         case "logout":
-            (await commands()).cmdLogout(args.positional[0] as ProviderId | undefined);
+            await (await commands()).cmdLogout(args.positional[0] as ProviderId | undefined);
             return;
         case "sessions":
             await (await commands()).cmdSessions(args);

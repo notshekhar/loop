@@ -220,8 +220,8 @@ export async function cmdLogin(provider?: string): Promise<void> {
     console.log(`${p} API key saved.`);
 }
 
-export function cmdLogout(target?: ProviderId): void {
-    logout(target);
+export async function cmdLogout(target?: ProviderId): Promise<void> {
+    await logout(target);
     console.log(target ? `Logged out of ${target}.` : "Logged out of all providers.");
 }
 

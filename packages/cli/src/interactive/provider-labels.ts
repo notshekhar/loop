@@ -5,9 +5,9 @@ export function providerLabel(id: string): string {
         case "anthropic":
             return "Anthropic — API key";
         case "openai":
-            return "OpenAI — ChatGPT subscription (OAuth) or API key";
+            return "OpenAI — Continue with ChatGPT (plan) or API key";
         case "openai-chatgpt":
-            return "ChatGPT (Codex) — OAuth subscription";
+            return "ChatGPT — using your ChatGPT plan";
         case "google":
             return "Google — API key";
         case "openrouter":

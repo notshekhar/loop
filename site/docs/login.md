@@ -32,13 +32,17 @@ loop login xai
 
 Choose **OAuth subscription**. A browser opens, you approve, and you're done. Requests bill to your SuperGrok plan. Grok is loop's default model (`xai/grok-build-0.1`), so this is the shortest path to a working setup.
 
-### ChatGPT (Codex)
+### ChatGPT
 
 ```
 loop login openai
 ```
 
-Choose **Sign in with ChatGPT**. Browser sign-in, billed to your ChatGPT plan. The other option on that menu is a pay-as-you-go `OPENAI_API_KEY`.
+Choose **Continue with ChatGPT**. The first time, ChatGPT asks you to approve loop for your account. After that, requests use your ChatGPT plan through OpenAI's official [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source). The model list is whatever your plan offers.
+
+Usage counts against your plan's limits. You can set a weekly limit for loop or disconnect it under ChatGPT → Settings → Usage. Signing out (`loop logout openai-chatgpt`) also ends the session on OpenAI's side. Signing in again reuses the same connection; pick **Use a different ChatGPT account** to add another account or workspace.
+
+The other option on that menu is a pay-as-you-go `OPENAI_API_KEY`.
 
 ### GitHub Copilot
 

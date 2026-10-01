@@ -16,7 +16,7 @@ import {
     normalizeCustomAuth,
     type CustomAuthConfig,
 } from "../auth/custom-auth";
-import { accountIdFromIdToken, CODEX_BASE_URL, OPENAI_CHATGPT_HEADERS } from "../auth/oauth/openai-chatgpt";
+import { CHATGPT_PLAN_BASE_URL, chatgptPlanFetch, chatgptPlanMiddleware } from "./chatgpt-plan";
 import type { CustomProviderConfig, ProviderId } from "../types";
 import { getExtensionHost, type ProviderPlugin } from "../extensions";
 import { anthropicShapeFetch } from "./anthropic-shape";
@@ -60,73 +60,6 @@ function copilotAuthFetch(): typeof fetch {
         headers.set("X-Initiator", "user");
         headers.set("Openai-Intent", "conversation-edits");
         return fetch(input, { ...(init as RequestInit), headers });
-    });
-}
-
-/**
- * Auth + request shaping for the ChatGPT/Codex backend. Beyond the bearer
- * token it needs the `chatgpt-account-id` header, and the backend only accepts
- * stateless Responses calls — so we force `store:false` and ask for encrypted
- * reasoning so multi-step turns keep their reasoning context. The system prompt
- * (loop's instructions) is left intact; set LOOP_CODEX_INSTRUCTIONS to override it
- * if the backend rejects a request for non-Codex instructions.
- */
-/** Responses API message content is a string or an array of text parts. */
-function messageContentToText(content: unknown): string {
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-        return content
-            .map((p) => (p && typeof p === "object" && "text" in p ? String((p as { text: unknown }).text) : ""))
-            .join("");
-    }
-    return "";
-}
-
-function openaiChatgptAuthFetch(): typeof fetch {
-    const overrideInstructions = brandEnv("CODEX_INSTRUCTIONS");
-    return withPreconnect(async (input, init) => {
-        const creds = await resolveOAuthCreds("openai-chatgpt");
-        if (!creds) throw new Error("No ChatGPT credentials. Run: /login openai-chatgpt");
-        const accountId = (creds.accountId as string | undefined) ?? accountIdFromIdToken(creds.idToken as string);
-
-        const headers = new Headers(init?.headers);
-        headers.delete("x-api-key");
-        headers.set("authorization", `Bearer ${creds.access}`);
-        if (accountId) headers.set("chatgpt-account-id", accountId);
-        for (const [k, v] of Object.entries(OPENAI_CHATGPT_HEADERS)) headers.set(k, v);
-
-        let body = init?.body;
-        if (typeof body === "string") {
-            try {
-                const json = JSON.parse(body) as Record<string, unknown>;
-                json.store = false; // backend only accepts stateless calls
-                const include = new Set<string>(Array.isArray(json.include) ? (json.include as string[]) : []);
-                include.add("reasoning.encrypted_content"); // required when store:false
-                json.include = [...include];
-                // The Codex backend rejects requests without a top-level
-                // `instructions` ("Instructions are required"). The SDK encodes
-                // loop's system prompt as a developer message in `input`, so lift
-                // that out into `instructions` (removing the duplicate) unless an
-                // override is supplied.
-                if (!json.instructions) {
-                    if (overrideInstructions) {
-                        json.instructions = overrideInstructions;
-                    } else if (Array.isArray(json.input)) {
-                        const input = json.input as Array<{ role?: string; content?: unknown }>;
-                        const idx = input.findIndex((m) => m?.role === "developer" || m?.role === "system");
-                        if (idx >= 0) {
-                            json.instructions = messageContentToText(input[idx].content);
-                            input.splice(idx, 1);
-                        }
-                    }
-                    if (!json.instructions) json.instructions = "You are a helpful coding assistant.";
-                }
-                body = JSON.stringify(json);
-            } catch {
-                // not JSON (shouldn't happen for the Responses API) — leave as-is
-            }
-        }
-        return fetch(input, { ...(init as RequestInit), headers, body });
     });
 }
 
@@ -637,16 +570,31 @@ export async function getModel(fullId: string): Promise<LanguageModel> {
             return createOpenAI({ apiKey: "placeholder", baseURL, fetch: copilotAuthFetch() })(model);
         }
         case "openai-chatgpt": {
-            // ChatGPT subscription via the Codex backend. It speaks the Responses
-            // API (POST <baseURL>/responses), so use the SDK's .responses() model.
-            const creds = await resolveOAuthCreds("openai-chatgpt");
-            if (!creds) throw new Error("No ChatGPT credentials. Run: /login openai-chatgpt");
-            const { createOpenAI } = await import("@ai-sdk/openai");
-            return createOpenAI({
-                apiKey: "placeholder",
-                baseURL: CODEX_BASE_URL,
-                fetch: openaiChatgptAuthFetch(),
-            }).responses(model);
+            // Sign in with ChatGPT: the public Responses API, billed to the
+            // user's ChatGPT plan. The middleware fits each call to the plan
+            // route's rules; see chatgpt-plan.ts.
+            const token = async () => {
+                const creds = await resolveOAuthCreds("openai-chatgpt");
+                if (!creds) throw new Error("ChatGPT session expired or missing. Sign in again: /login openai");
+                // Sessions from the old Codex-client login carry no issued client id
+                // and are not valid on the plan route.
+                if (typeof creds.clientId !== "string")
+                    throw new Error("ChatGPT sign-in has changed — sign in again: /login openai");
+                return creds.access;
+            };
+            await token(); // fail fast, before the first request
+            const [{ createOpenAI }, { wrapLanguageModel }] = await Promise.all([
+                import("@ai-sdk/openai"),
+                import("ai"),
+            ]);
+            return wrapLanguageModel({
+                model: createOpenAI({
+                    apiKey: "placeholder",
+                    baseURL: CHATGPT_PLAN_BASE_URL,
+                    fetch: withPreconnect(chatgptPlanFetch(token)),
+                }).responses(model),
+                middleware: chatgptPlanMiddleware,
+            });
         }
         case "ollama": {
             // Local daemon — no auth. createOllama wants the /api root.

@@ -17,6 +17,7 @@ import type {
 export { XaiOAuthError, XaiErrorCode } from "./errors";
 export { normalizeCustomAuth, describeCustomAuth, resolveCustomCredential, clearHelperCache } from "./custom-auth";
 export { discoverOAuthEndpoints, type OAuthEndpoints } from "./oauth/custom";
+export { listChatgptRegistrations, CHATGPT_MANAGE_USAGE_URL, type ChatgptRegistration } from "./oauth/openai-chatgpt";
 export { authStore, settingsStore, datasourcesStore, refreshConfigStores, migrateLegacyConfig } from "./storage";
 // Moved to the projects table; re-exported here so callers keep their imports.
 export { getProjectModel, setProjectModel, getProjectProviderModel } from "../sessions/projects";
@@ -133,41 +134,63 @@ export async function resolveAuthToken(provider: ProviderId): Promise<string | n
 
 /**
  * Like resolveAuthToken but returns the whole credentials object (refreshed +
- * persisted). Needed by providers that send more than a bearer token — e.g.
- * ChatGPT/Codex also needs the account id from the stored creds.
+ * persisted). Needed by callers that read more than the bearer token — e.g.
+ * the ChatGPT plan catalog keys its cache by the issued client id.
  */
 export async function resolveOAuthCreds(provider: ProviderId): Promise<GenericOAuthCredentials | null> {
-    const providers = readProviders();
-    const entry = providers[provider];
+    let entry = readProviders()[provider];
     if (entry?.mode !== "oauth" || !("creds" in entry)) return null;
     const impl = getOAuthProvider(provider);
     if (!impl) return null;
-    let creds = entry.creds;
-    if (Date.now() >= creds.expires) {
-        try {
-            creds = await impl.refreshToken(creds);
-            providers[provider] = { mode: "oauth", provider, creds };
-            writeProviders(providers);
-        } catch {
-            return null;
-        }
+    if (Date.now() < entry.creds.expires) return entry.creds;
+
+    // Another loop process may already have refreshed — and with rotating
+    // refresh tokens, refreshing again from our stale copy would present a
+    // spent token and get the whole session revoked. Re-read the file first.
+    authStore.refresh();
+    entry = readProviders()[provider];
+    if (entry?.mode !== "oauth" || !("creds" in entry)) return null;
+    if (Date.now() < entry.creds.expires) return entry.creds;
+    try {
+        const creds = await impl.refreshToken(entry.creds);
+        const providers = readProviders();
+        providers[provider] = { mode: "oauth", provider, creds };
+        writeProviders(providers);
+        return creds;
+    } catch {
+        return null;
     }
-    return creds;
 }
 
-export function logout(provider?: ProviderId): void {
+/** Best-effort server-side revocation; a failure never blocks signing out locally. */
+async function revokeRemote(entry: AuthEntry | undefined): Promise<void> {
+    if (entry?.mode !== "oauth" || !("creds" in entry)) return;
+    await getOAuthProvider(entry.provider)
+        ?.revoke?.(entry.creds)
+        .catch(() => {});
+}
+
+/**
+ * Remove stored credentials. Local removal is immediate; the returned promise
+ * settles once any server-side revocation has been attempted (never rejects),
+ * so a short-lived CLI can await it before exiting.
+ */
+export function logout(provider?: ProviderId): Promise<void> {
     if (!provider) {
+        const revoking = Object.values(readProviders()).map(revokeRemote);
         writeProviders({});
         authStore.set("active", null);
-        return;
+        return Promise.all(revoking).then(() => {});
     }
     const providers = readProviders();
+    const revoking = revokeRemote(providers[provider]);
     delete providers[provider];
     writeProviders(providers);
     if (getActiveProvider() === provider) {
         const remaining = Object.keys(providers) as ProviderId[];
         authStore.set("active", remaining[0] ?? null);
     }
+    return revoking;
 }
 
 export function getAuthMode(provider: ProviderId): "apikey" | "oauth" | "missing" {

@@ -3,6 +3,8 @@ import {
     bedrockRegion,
     envName,
     bustCatalogCache,
+    CHATGPT_MANAGE_USAGE_URL,
+    listChatgptRegistrations,
     deleteCustomProvider,
     discoverOAuthEndpoints,
     fetchCustomProviderModels,
@@ -406,8 +408,8 @@ async function loginOpenAI(deps: LoginDeps): Promise<StepResult> {
         [
             {
                 value: "oauth",
-                label: "Sign in with ChatGPT (subscription · Codex)",
-                description: "OAuth, opens browser — billed to your ChatGPT plan",
+                label: "Continue with ChatGPT",
+                description: "Sign in in the browser — usage comes from your ChatGPT plan",
             },
             { value: "apikey", label: "Use API key", description: "Paste your OPENAI_API_KEY (pay-as-you-go)" },
         ],
@@ -420,13 +422,37 @@ async function loginOpenAI(deps: LoginDeps): Promise<StepResult> {
 
 async function loginChatgpt(deps: LoginDeps): Promise<StepResult> {
     const { tui, history, promptOnce } = deps;
-    history.addSystem("ChatGPT (Codex): opening browser for sign-in…");
+    // A saved registration is reused by default so the same ChatGPT client (and
+    // its usage limits) carries over; a different account registers anew.
+    let freshRegistration = false;
+    const saved = listChatgptRegistrations()[0];
+    if (saved) {
+        const pick = await deps.selectOnce(
+            [
+                {
+                    value: "saved",
+                    label: `Continue as ${saved.email ?? "your saved ChatGPT account"}`,
+                    description: "Reuse this account's existing connection",
+                },
+                {
+                    value: "new",
+                    label: "Use a different ChatGPT account",
+                    description: "Connect another account or workspace",
+                },
+            ],
+            "ChatGPT — account (Esc to go back)",
+        );
+        if (!pick) return "back";
+        freshRegistration = pick.value === "new";
+    }
+    history.addSystem("ChatGPT: opening browser for sign-in…");
     tui.requestRender();
     try {
         await loginOAuth("openai-chatgpt", {
+            freshRegistration,
             onAuth: ({ url, instructions }) => presentAuth(deps, "ChatGPT", url, instructions),
             onPrompt: async ({ message }) => {
-                history.addSystem(message);
+                history.addSystem(dim(message));
                 tui.requestRender();
                 return promptOnce("");
             },
@@ -437,10 +463,10 @@ async function loginChatgpt(deps: LoginDeps): Promise<StepResult> {
         });
         setActiveProvider("openai-chatgpt");
         bustCatalogCache();
-        history.addSystem(ok("ChatGPT (Codex) connected."));
-        history.addSystem(dim("Personal/local use only — usage is billed to your ChatGPT subscription."));
+        history.addSystem(ok("Connected — using your ChatGPT plan."));
+        history.addSystem(dim(`Set loop's usage limit or disconnect it any time: ${CHATGPT_MANAGE_USAGE_URL}`));
     } catch (err) {
-        history.addError(`ChatGPT login failed: ${(err as Error).message}`);
+        history.addError(`ChatGPT sign-in failed: ${(err as Error).message}`);
     }
     tui.requestRender();
     return "done";
