@@ -8,7 +8,7 @@ import {
 } from "@loop/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
 import {

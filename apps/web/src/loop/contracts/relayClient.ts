@@ -50,7 +50,7 @@ export const RelayClientInstallFailureReasonSchema = Schema.Literals([
   "validation_failed",
   "write_failed",
 ]);
-export class RelayClientInstallFailedError extends Schema.TaggedErrorClass<RelayClientInstallFailedError>()(
+export class RelayClientInstallFailedError extends Schema.TaggedError<RelayClientInstallFailedError>()(
   "RelayClientInstallFailedError",
   {
     reason: RelayClientInstallFailureReasonSchema,

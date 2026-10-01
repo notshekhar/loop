@@ -9,7 +9,7 @@
  * upstream's server lived in the transport — replacing this one file leaves
  * the rest of the UI untouched, streams, acks and interrupts included.
  *
- * The client/server wiring is inlined from `effect/unstable/rpc/RpcTest.ts`
+ * The client/server wiring is inlined from `effect/rpc/RpcTest.ts`
  * (the `let client` closure is what breaks the server↔client cycle) rather
  * than imported, because that module is documented as a test harness.
  */
@@ -19,8 +19,8 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import * as RpcServer from "effect/unstable/rpc/RpcServer";
+import * as RpcClient from "effect/rpc/RpcClient";
+import * as RpcServer from "effect/rpc/RpcServer";
 
 import { makeHandlers } from "../../handlers/index.ts";
 import type { WsRpcProtocolClient } from "./protocol.ts";

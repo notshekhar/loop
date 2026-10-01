@@ -2,7 +2,7 @@ import { relayClerkTokenOptions } from "@loop/shared/relayAuth";
 import { normalizeSecureRelayUrl } from "@loop/shared/relayUrl";
 import * as Schema from "effect/Schema";
 
-export class CloudPublicConfigMissingError extends Schema.TaggedErrorClass<CloudPublicConfigMissingError>()(
+export class CloudPublicConfigMissingError extends Schema.TaggedError<CloudPublicConfigMissingError>()(
   "CloudPublicConfigMissingError",
   {
     key: Schema.Literal("LOOP_CLERK_JWT_TEMPLATE"),

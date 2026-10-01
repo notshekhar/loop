@@ -4,7 +4,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { parseScopedThreadKey, scopedThreadKey } from "@loop/runtime/environment";
 import type { ScopedThreadRef } from "@loop/contracts";
 import * as Schema from "effect/Schema";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import {
   applyPreviewServerEvent,
@@ -13,7 +13,7 @@ import {
 } from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
 
-class PreviewSessionThreadKeyParseError extends Schema.TaggedErrorClass<PreviewSessionThreadKeyParseError>()(
+class PreviewSessionThreadKeyParseError extends Schema.TaggedError<PreviewSessionThreadKeyParseError>()(
   "PreviewSessionThreadKeyParseError",
   { threadKey: Schema.String },
 ) {

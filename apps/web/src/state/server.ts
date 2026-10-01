@@ -11,7 +11,7 @@ import { createServerEnvironmentAtoms } from "@loop/runtime/state/server";
 import { createEnvironmentServerConfigsAtom } from "@loop/runtime/state/shell";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@loop/shared/keybindings";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";

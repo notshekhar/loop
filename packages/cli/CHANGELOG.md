@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.20.15] - 2026-10-01
+
+### Changed
+
+- **The desktop app runs on Effect 4.0.0.** Its interface was built on a pre-release beta of Effect 4 (`4.0.0-beta.103`); it now uses the stable release, along with `@effect/atom-react`, `@effect/platform-node` and `@effect/vitest`. The modules that lived under `effect/unstable/*` are now stable imports, and the renamed schema APIs are followed throughout. Nothing changes in how the app behaves.
+- **The `loop.json` project-file schema stays strict.** Effect 4.0.0 generates JSON Schemas that accept unknown fields by default, which would have quietly stopped editors from flagging a misspelled key in `loop.json`. The published schema still rejects them.
+- **Two inherited Effect patches are gone.** The patch to `effect` carried an MCP server route and RPC client hooks that loop never used; only the `@effect/vitest` patch that points it at the bundled test runner remains.
+
 ## [0.20.14] - 2026-10-01
 
 ### Changed

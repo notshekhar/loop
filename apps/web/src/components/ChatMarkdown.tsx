@@ -15,7 +15,7 @@ import {
   type AtomCommandResult,
 } from "@loop/runtime/state/runtime";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import React, {
   Children,
   Suspense,

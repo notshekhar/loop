@@ -17,7 +17,10 @@ export const LoopProjectFileFromJson = fromLenientJson(LoopProjectFile);
  * editors get LSP support via a `$schema` reference.
  */
 export function buildLoopProjectFileJsonSchema(): Record<string, unknown> {
-  const document = Schema.toJsonSchemaDocument(LoopProjectFile);
+  const document = Schema.toJsonSchemaDocument(LoopProjectFile, {
+    // effect 4.0.0 defaults to open objects; the published schema stays closed.
+    onExcessProperty: "error",
+  });
   const jsonSchema: Record<string, unknown> = {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     $id: LOOP_PROJECT_FILE_SCHEMA_URL,

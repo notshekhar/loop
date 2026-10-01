@@ -5,7 +5,7 @@ import { type MouseEvent, useCallback } from "react";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { readLocalApi } from "../localApi";
 
-export class PullRequestLinkOpenError extends Schema.TaggedErrorClass<PullRequestLinkOpenError>()(
+export class PullRequestLinkOpenError extends Schema.TaggedError<PullRequestLinkOpenError>()(
   "PullRequestLinkOpenError",
   {
     targetOrigin: Schema.NullOr(Schema.String),

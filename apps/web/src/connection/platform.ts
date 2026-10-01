@@ -41,7 +41,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 
 import { APP_BASE_NAME } from "../branding";
 import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";

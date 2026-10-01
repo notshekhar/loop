@@ -2,7 +2,7 @@ import { Connection } from "@loop/runtime/connection";
 import { shellSnapshotLoaderLayer } from "@loop/runtime/state/shell";
 import { threadSnapshotLoaderLayer } from "@loop/runtime/state/threads";
 import * as Layer from "effect/Layer";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { runtimeContextLayer } from "../lib/runtime";
 import {

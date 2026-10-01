@@ -164,7 +164,10 @@ export const formatSchemaError = (cause: Cause.Cause<Schema.SchemaError>) => {
  */
 const decodeJsonString = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-const parseLenientJsonGetter = SchemaGetter.onSome((input: string) => {
+// `onSome` was removed in effect 4.0.0; skip `None` by hand.
+const parseLenientJsonGetter = SchemaGetter.transformOptionalEffect((oe: Option.Option<string>) => {
+  if (Option.isNone(oe)) return Effect.succeedNone;
+  const input = oe.value;
   // Strip single-line comments - alternation preserves quoted strings.
   let stripped = input.replace(
     /("(?:[^"\\]|\\.)*")|\/\/[^\n]*/g,

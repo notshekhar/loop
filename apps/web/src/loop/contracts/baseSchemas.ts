@@ -6,7 +6,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 export const TrimmedString = Schema.String.pipe(
   Schema.decodeTo(
     Schema.String,
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (value) => Effect.succeed(value.trim()),
       encode: (value) => Effect.succeed(value.trim()),
     }),
@@ -49,7 +49,9 @@ export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Elem
  * Construct a branded identifier. Enforces non-empty trimmed strings
  */
 const makeEntityId = <Brand extends string>(brand: Brand) => {
-  return TrimmedNonEmptyString.pipe(Schema.brand(brand));
+  // effect 4.0.0 checks brand keys are single literals, which a generic `Brand`
+  // can never prove; every caller passes a literal, so assert it here.
+  return TrimmedNonEmptyString.pipe(Schema.brand<Brand>(brand as Parameters<typeof Schema.brand<Brand>>[0]));
 };
 
 export const ThreadId = makeEntityId("ThreadId");

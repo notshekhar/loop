@@ -21,7 +21,7 @@ import {
 } from "@loop/contracts";
 import { resolvePreviewViewport } from "@loop/shared/previewViewport";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import {
   applyPreviewServerSnapshot,
