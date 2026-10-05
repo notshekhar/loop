@@ -46,7 +46,6 @@
  * `claude` label even though the events stream keeps `_source: "loop"`. The
  * status chip, the notifications and the cards themselves are unaffected.
  */
-import { spawn } from "node:child_process";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -143,7 +142,7 @@ export interface CmuxReporter {
     ): Promise<CmuxPermissionDecision | CmuxExitPlanDecision | null>;
     /** Ask cmux to answer the ask tool's questions; null when it doesn't. */
     requestQuestions(questions: CmuxQuestion[], signal?: AbortSignal): Promise<string[] | null>;
-    /** Drop the resume binding and flush pending telemetry. Bounded-time. */
+    /** Clear the status chip and flush pending telemetry. Bounded-time. */
     release(): Promise<void>;
 }
 
@@ -158,8 +157,6 @@ export interface CmuxReporterOptions {
     env?: NodeJS.ProcessEnv;
     connectTimeoutMs?: number;
     decisionWaitSeconds?: number;
-    /** Off in tests: writing a resume binding shells out to the cmux CLI. */
-    bindResume?: boolean;
 }
 
 /** An inert reporter — what everything outside cmux gets. */
@@ -206,7 +203,6 @@ export function attachCmuxReporter(bus: AgentStatusBus | null, opts: CmuxReporte
 
     const connectTimeoutMs = opts.connectTimeoutMs ?? 2_000;
     const waitSeconds = opts.decisionWaitSeconds ?? DECISION_WAIT_SECONDS;
-    const bindResume = opts.bindResume ?? true;
 
     let seq = 0;
     const nextRequestId = (kind: string): string => `${SOURCE}-${kind}-${Date.now()}-${++seq}`;
@@ -476,10 +472,6 @@ export function attachCmuxReporter(bus: AgentStatusBus | null, opts: CmuxReporte
 
     const onHookEvent = (payload: HookPayload): void => {
         try {
-            // Every event is also a chance to notice the session changed
-            // (/new, /resume, a fork) — which is when cmux's resume binding
-            // has to be rewritten to point at the session that is live now.
-            bindSession();
             if (sessionId() === undefined) {
                 if (pending.length < MAX_PENDING) pending.push(payload);
                 return;
@@ -495,88 +487,7 @@ export function attachCmuxReporter(bus: AgentStatusBus | null, opts: CmuxReporte
         }
     };
 
-    // ---- session restore --------------------------------------------------
-
-    /** Flags worth keeping when cmux restarts this pane: they decide WHICH
-     * agent comes back. Prompts, session selectors and anything secret-shaped
-     * are dropped — a restore must resume the session, not start a task. */
-    const KEEP_WITH_VALUE = new Set(["--model", "--provider", "--cwd"]);
-
-    function resumeArgv(id: string): { command: string; args: string[] } | null {
-        const exe = process.execPath;
-        const raw = process.argv.slice(1);
-        const extra: string[] = ["--session", id];
-        for (let i = 0; i < raw.length; i++) {
-            const arg = raw[i];
-            if (KEEP_WITH_VALUE.has(arg) && i + 1 < raw.length) {
-                extra.push(arg, raw[i + 1]);
-                i++;
-                continue;
-            }
-            if ([...KEEP_WITH_VALUE].some((flag) => arg.startsWith(`${flag}=`))) extra.push(arg);
-        }
-        // Under `bun <entry>` the entry script has to lead, and inside a
-        // compiled binary it must NOT (its entry is a virtual bunfs path that
-        // reads as a command word) — the same split the gateway daemons make.
-        const underBun = /^bun/i.test(exe.split("/").pop() ?? "");
-        if (underBun) {
-            const entry = Bun.main ?? process.argv[1];
-            if (!entry) return null;
-            return { command: exe, args: [entry, ...extra] };
-        }
-        return { command: exe, args: extra };
-    }
-
-    const cmuxBin = (): string => env.CMUX_BUNDLED_CLI_PATH || "cmux";
-
-    /** Public-CLI resume bindings are stored for inspection and manual
-     * restore; cmux only re-runs one automatically after the user approves it
-     * (Settings > Terminal > Resume Commands). That gate is cmux's to keep. */
-    function runCmux(args: string[]): void {
-        if (!bindResume) return;
-        try {
-            const child = spawn(cmuxBin(), args, { stdio: "ignore", detached: false });
-            child.on("error", () => {});
-            child.unref?.();
-        } catch {
-            // No cmux binary on PATH — the socket half still works.
-        }
-    }
-
-    const target = (): string[] =>
-        workspaceId ? ["--workspace", workspaceId, "--surface", surfaceId!] : ["--surface", surfaceId!];
-
-    let boundSessionId: string | undefined;
-    function bindSession(): void {
-        const s = opts.getSession();
-        if (!s || s.id === boundSessionId) return;
-        boundSessionId = s.id;
-        const argv = resumeArgv(s.id);
-        if (!argv) return;
-        runCmux([
-            "--json",
-            "surface",
-            "resume",
-            "set",
-            ...target(),
-            "--name",
-            SOURCE,
-            "--kind",
-            SOURCE,
-            "--checkpoint-id",
-            s.id,
-            "--source",
-            "agent-hook",
-            "--cwd",
-            opts.cwd(),
-            "--",
-            argv.command,
-            ...argv.args,
-        ]);
-    }
-
     hookBus.on("event", onHookEvent);
-    bindSession();
 
     // The visible half: the sidebar chip follows the same working / blocked /
     // idle bus the herdr reporter reads, and a prompt the agent is stuck on
@@ -661,20 +572,6 @@ export function attachCmuxReporter(bus: AgentStatusBus | null, opts: CmuxReporte
             hookBus.off("event", onHookEvent);
             // Leave no stale chip behind: the pane is a plain terminal again.
             v1(`clear_status ${STATUS_KEY} ${paneTarget}`);
-            const id = boundSessionId;
-            if (id) {
-                runCmux([
-                    "--json",
-                    "surface",
-                    "resume",
-                    "clear",
-                    ...target(),
-                    "--checkpoint-id",
-                    id,
-                    "--source",
-                    "agent-hook",
-                ]);
-            }
             // Let the queue land the SessionEnd row that exit just pushed.
             return new Promise((resolve) => {
                 enqueue(async () => resolve());

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.20.16] - 2026-10-05
+
+### Changed
+
+- **The cmux integration no longer starts any processes.** At startup and on exit, loop ran the `cmux` command-line tool to register a resume command for the pane. That resume binding is gone, so everything loop sends cmux (the sidebar status, Feed entries and approval cards) now goes over cmux's socket only.
+
 ## [0.20.15] - 2026-10-01
 
 ### Changed

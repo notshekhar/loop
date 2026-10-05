@@ -25,8 +25,6 @@ socket directly, with no install step and no generated hook files:
   `result: {status: "resolved", decision: {...}}` and is applied to the prompt
   showing in the terminal. The on-screen prompt and the cmux card race — first
   answer wins, the other is withdrawn — so a Feed timeout costs nothing.
-- **Resume.** `cmux surface resume set --kind loop --checkpoint-id <session>
--- loop --session <session>`, cleared on exit.
 
 ## What it cannot do, and what would fix it
 

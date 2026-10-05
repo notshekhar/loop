@@ -12,7 +12,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { hookBus, type HookPayload } from "@notshekhar/loop-core";
 import { createAgentStatusBus } from "../src/interactive/agent-status";
@@ -21,25 +21,16 @@ import { attachCmuxReporter, type CmuxReporter, type CmuxSessionRef } from "../s
 
 const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Poll instead of sleeping: the resume binding is a subprocess, and how long
- * a fork takes is not something a test should be asserting on. */
+/** Poll instead of sleeping: socket round-trips land when they land. */
 async function until<T>(read: () => T | undefined, deadlineMs = 5_000): Promise<T> {
     const end = Date.now() + deadlineMs;
     for (;;) {
         const value = read();
         if (value !== undefined) return value;
-        if (Date.now() > end) throw new Error("timed out waiting for the cmux CLI to be called");
+        if (Date.now() > end) throw new Error("timed out waiting for cmux");
         await tick(25);
     }
 }
-
-/** The recorded argv, once the fake cmux binary has written the line we want. */
-const argvOnce = (log: string, marker: string) =>
-    until(() => {
-        if (!existsSync(log)) return undefined;
-        const lines = readFileSync(log, "utf8").trim().split("\n");
-        return lines.includes(marker) ? lines : undefined;
-    });
 
 type Frame = { id: string; method: string; params: { event: Record<string, unknown>; wait_timeout_seconds: number } };
 
@@ -127,7 +118,6 @@ describe("cmux reporter", () => {
             getSession: () => ({ id: "abc123", path: "/tmp/abc123.jsonl" }),
             cwd: () => "/repo",
             env: cmuxEnv(socketPath),
-            bindResume: false, // no shelling out to the cmux CLI in tests
             decisionWaitSeconds: 2,
             connectTimeoutMs: 100,
         });
@@ -187,7 +177,6 @@ describe("cmux reporter", () => {
             getSession: () => session,
             cwd: () => "/repo",
             env: cmuxEnv(socketPath),
-            bindResume: false,
         });
 
         hookBus.emit("event", hook("SessionStart"));
@@ -215,7 +204,6 @@ describe("cmux reporter", () => {
             getSession: () => ({ id: "abc123", path: null }),
             cwd: () => "/repo/widgets",
             env: cmuxEnv(socketPath),
-            bindResume: false,
         });
 
         bus.setWorking();
@@ -269,7 +257,6 @@ describe("cmux reporter", () => {
             getSession: () => ({ id: "abc123", path: null }),
             cwd: () => "/repo",
             env: cmuxEnv(socketPath),
-            bindResume: false,
         });
 
         // Newlines end a V1 command and `|` ends a notification field: an
@@ -399,56 +386,10 @@ describe("cmux reporter", () => {
             getSession: () => ({ id: "abc123", path: null }),
             cwd: () => "/repo",
             env: cmuxEnv(socketPath),
-            bindResume: false,
             decisionWaitSeconds: 0.05,
             connectTimeoutMs: 10,
         });
         expect(await reporter.requestApproval({ kind: "bash", toolName: "bash", body: "ls" })).toBeNull();
-    });
-
-    test("registers a resume command for the live session", async () => {
-        dir = mkdtempSync(join(tmpdir(), "cmux-test-"));
-        const socketPath = join(dir, "cmux.sock");
-        const server = fakeCmux(socketPath);
-        stopServer = server.stop;
-        // A cmux CLI that only records how it was called.
-        const log = join(dir, "argv.log");
-        const bin = join(dir, "cmux");
-        writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$@" >> ${log}\n`);
-        chmodSync(bin, 0o755);
-
-        reporter = attachCmuxReporter(null, {
-            getSession: () => ({ id: "abc123", path: null }),
-            cwd: () => "/repo",
-            env: { ...cmuxEnv(socketPath), CMUX_BUNDLED_CLI_PATH: bin },
-            decisionWaitSeconds: 1,
-        });
-
-        const argv = await argvOnce(log, "set");
-        expect(argv.slice(0, 4)).toEqual(["--json", "surface", "resume", "set"]);
-        expect(argv).toContain("--checkpoint-id");
-        expect(argv[argv.indexOf("--checkpoint-id") + 1]).toBe("abc123");
-        expect(argv.slice(argv.indexOf("--workspace"), argv.indexOf("--workspace") + 4)).toEqual([
-            "--workspace",
-            "workspace-1",
-            "--surface",
-            "surface-1",
-        ]);
-        // The command cmux would run to bring this session back.
-        const argvTail = argv.slice(argv.indexOf("--") + 1);
-        expect(argvTail).toContain("--session");
-        expect(argvTail[argvTail.indexOf("--session") + 1]).toBe("abc123");
-
-        // Exiting drops the binding: the session is not coming back.
-        await reporter.release();
-        reporter = undefined;
-        const after = await argvOnce(log, "clear");
-        expect(after.slice(after.indexOf("clear") - 3, after.indexOf("clear") + 1)).toEqual([
-            "--json",
-            "surface",
-            "resume",
-            "clear",
-        ]);
     });
 
     test("inert outside cmux: no socket traffic, no subscription", () => {
@@ -483,7 +424,6 @@ describe("cmux reporter", () => {
             getSession: () => ({ id: "abc123", path: null }),
             cwd: () => "/repo",
             env: cmuxEnv(socketPath),
-            bindResume: false,
             decisionWaitSeconds: 1,
             connectTimeoutMs: 20,
         });

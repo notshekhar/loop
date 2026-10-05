@@ -923,8 +923,8 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         void closeAllPools();
         // SessionEnd hooks + herdr/cmux release: give them a moment, then exit
         // regardless. Release hands the pane back to herdr's own detection so
-        // the sidebar doesn't keep showing a stale loop state, and drops the
-        // cmux resume binding for a session that is not coming back.
+        // the sidebar doesn't keep showing a stale loop state, and clears the
+        // cmux status chip.
         void Promise.race([
             Promise.allSettled([
                 runHooks(
