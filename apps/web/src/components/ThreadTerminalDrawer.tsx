@@ -482,6 +482,17 @@ export function TerminalViewport({
     let setupCleanups: Array<() => void> = [];
 
     const setup = async (): Promise<(() => void) | null> => {
+      // Declared before the surface exists: replaying a reattached session's
+      // buffer (resetAndWrite, below) fires a selection change, which lands in
+      // handleSelectionChange → here while the rest of setup is still running.
+      // Declared after, that was a TDZ throw on every reopened terminal.
+      const clearSelectionAction = () => {
+        selectionActionRequestIdRef.current += 1;
+        if (selectionActionTimerRef.current !== null) {
+          window.clearTimeout(selectionActionTimerRef.current);
+          selectionActionTimerRef.current = null;
+        }
+      };
       const terminalOptions: TerminalSurfaceOptions = {
         theme: terminalThemeFromApp(mount),
         onData: (data) => handleData(data),
@@ -513,13 +524,6 @@ export function TerminalViewport({
       synchronizeTerminalStatus(terminal, latestSession.status);
       if (autoFocus) window.requestAnimationFrame(() => terminal.focus());
 
-      const clearSelectionAction = () => {
-        selectionActionRequestIdRef.current += 1;
-        if (selectionActionTimerRef.current !== null) {
-          window.clearTimeout(selectionActionTimerRef.current);
-          selectionActionTimerRef.current = null;
-        }
-      };
       setupCleanups.push(clearSelectionAction);
 
       const readSelectionAction = (): {

@@ -17,8 +17,9 @@
  * MessagePort would remove even that hop; it is deliberately not done here,
  * because it changes the preload's contract and this change does not.
  */
-import { createHostHandlers } from "./hostHandlers.js";
-import { HOST_CHANNELS, type FromHost, type HostCallbackResponse, type ToHost } from "./hostProtocol.js";
+import * as pty from "node-pty";
+import { createHostHandlers, HOST_CHANNELS, type PtyProcess, type PtySpawner } from "@notshekhar/loop-core/workspace";
+import type { FromHost, HostCallbackResponse, ToHost } from "./hostProtocol.js";
 
 /**
  * `parentPort` is present only under `utilityProcess.fork`.
@@ -66,7 +67,18 @@ const pendingCallbacks = new Map<
  */
 let directPort: DirectPort | null = null;
 
+/** node-pty: this process runs under Electron's Node, where its callbacks fire. */
+const spawnPty: PtySpawner = (input) =>
+  pty.spawn(input.shell, [...input.args], {
+    name: "xterm-256color",
+    cols: input.cols,
+    rows: input.rows,
+    cwd: input.cwd,
+    env: input.env,
+  }) as unknown as PtyProcess;
+
 const { handlers, terminals } = createHostHandlers({
+  spawnPty,
   notify: (channel, payload) => {
     if (channel === HOST_CHANNELS.terminal && directPort) {
       directPort.postMessage(payload);

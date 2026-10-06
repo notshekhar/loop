@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildPage } from "../web/build-page";
+import { webAppPackPlugin } from "./build-web-app";
 
 const pkg = JSON.parse(readFileSync(join(import.meta.dir, "package.json"), "utf8")) as {
     dependencies?: Record<string, string>;
@@ -22,18 +22,19 @@ const externals = [
     "bun:ffi",
 ];
 
-// Bake the web UI into dist so npm installs and compiled binaries serve the
-// page without the web workspace on disk (source runs bundle it on the fly).
-const webUiHtml = await buildPage();
+// serve's UI (apps/web, the desktop app's React app) ships packed beside the
+// bundle, so an npm install serves it without the workspace on disk.
+const outdir = join(import.meta.dir, "dist");
+const webApp = await webAppPackPlugin("dist", outdir);
 
 const result = await Bun.build({
     entrypoints: [join(import.meta.dir, "src/index.ts")],
-    outdir: join(import.meta.dir, "dist"),
+    outdir,
     target: "node",
     format: "esm",
     minify: { whitespace: true, identifiers: false, syntax: true },
     external: externals,
-    define: { __WEB_UI_HTML__: JSON.stringify(webUiHtml) },
+    plugins: [webApp],
 });
 
 if (!result.success) {

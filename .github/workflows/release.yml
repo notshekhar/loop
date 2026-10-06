@@ -120,7 +120,7 @@ jobs:
                   v="${{ needs.prepare.outputs.ver }}"
                   bun -e "
                     const fs = require('fs');
-                    for (const p of ['packages/core/package.json','packages/tui/package.json','packages/cli/package.json','packages/web/package.json']) {
+                    for (const p of ['packages/core/package.json','packages/tui/package.json','packages/cli/package.json']) {
                       const j = JSON.parse(fs.readFileSync(p,'utf8'));
                       j.version = '$v';
                       fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
@@ -129,6 +129,8 @@ jobs:
 
             - run: bun install --frozen-lockfile
             - run: bun run gen:catalog
+            # serve's UI: core's build and the binary both pack apps/web's build.
+            - run: bun run --filter @loop/web build
             - run: bun packages/core/build.ts
             - run: bun packages/tui/build.ts
             # Retry the compile: fetching the cross-target Bun runtime is
@@ -228,7 +230,7 @@ jobs:
                   v="${{ needs.prepare.outputs.ver }}"
                   bun -e "
                     const fs = require('fs');
-                    for (const p of ['packages/core/package.json','packages/tui/package.json','packages/cli/package.json','packages/web/package.json']) {
+                    for (const p of ['packages/core/package.json','packages/tui/package.json','packages/cli/package.json']) {
                       const j = JSON.parse(fs.readFileSync(p,'utf8'));
                       j.version = '$v';
                       fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
@@ -237,6 +239,8 @@ jobs:
 
             - run: bun install --frozen-lockfile
             - run: bun run gen:catalog
+            # First: core's build and the bundled binary pack this as serve's UI.
+            - run: bun run --filter @loop/web build
             - run: bun packages/core/build.ts
             - run: bun packages/tui/build.ts
 
@@ -245,9 +249,8 @@ jobs:
             - name: Build bundled loop binary
               run: bun packages/cli/build-bin.ts ${{ matrix.cli }}
 
-            - name: Build renderer + desktop bundle
+            - name: Build desktop bundle
               run: |
-                  bun run --filter @loop/web build
                   cd apps/desktop && bun build.ts
 
             - name: Package

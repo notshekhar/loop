@@ -16,7 +16,11 @@ export type BuiltinProviderId =
     | "zenmux"
     | "vercel"
     | "bedrock"
-    | "ollama";
+    | "ollama"
+    // Native agents: zero-login, detected from the machine's own CLIs. Not in
+    // BUILTIN_PROVIDER_IDS — they never appear in /login (see providers/native-agents).
+    | "claude-code"
+    | "cursor-agent";
 export type ProviderId = BuiltinProviderId | (string & {});
 
 // Note: "openai-chatgpt" is intentionally NOT listed — it's not a standalone

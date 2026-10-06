@@ -504,6 +504,17 @@ export class RpcServer {
         return this.methodHandlers;
     }
 
+    /**
+     * Run one method in-process, exactly as a client's request would run.
+     * For whatever hosts this server and needs core from the side — serve's
+     * workspace asking for a commit message, the way the desktop's host asks
+     * main. Nobody is subscribed through it, so it is for answers, not events.
+     */
+    async call(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+        await this.ready;
+        return this.dispatch({ jsonrpc: "2.0", id: 0, method, params }, { send() {} });
+    }
+
     private async dispatch(req: RpcRequest, transport: Transport): Promise<unknown> {
         const handler = this.handlers[req.method];
         if (!handler) throw new Error(`Method not found: ${req.method}`);
@@ -1197,6 +1208,9 @@ export class RpcServer {
                     events: [...TURN_EVENT_NAMES, "session-running"],
                     defaults: {
                         model: getSetting("defaultModel") ?? null,
+                        // Which provider runs it, so a client can name the
+                        // model's provider without guessing from the id.
+                        provider: providerOfModel(String(getSetting("defaultModel") ?? "")) ?? null,
                         cwd: process.cwd(),
                         // The level a turn runs at when `session.send` omits
                         // `thinking` — runTurn's own fallback. A GUI effort

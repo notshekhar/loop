@@ -5138,6 +5138,18 @@ function ChatViewContent(props: ChatViewProps) {
     resetLocalDispatch();
   };
 
+  /**
+   * Escape mid-turn, the terminal's way: stop what is running and send the
+   * next queued message, keeping the rest queued behind it. Only the Stop
+   * button discards the queue — Esc used to share its path, and every queued
+   * message vanished with the turn it was waiting on.
+   */
+  const onEscapeInterrupt = () => {
+    const next = queuedTurnsForThisThread[0];
+    if (next) sendQueuedTurnEarly(next.id);
+    else void onInterrupt();
+  };
+
   const onInterrupt = async () => {
     if (!activeThread) return;
     // Stopping discards whatever was queued behind this turn — it was queued
@@ -6078,6 +6090,7 @@ function ChatViewContent(props: ChatViewProps) {
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}
                             onInterrupt={onInterrupt}
+                            onEscapeInterrupt={onEscapeInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
                             onRespondToApproval={onRespondToApproval}
                             onSelectActivePendingUserInputOption={

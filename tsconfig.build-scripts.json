@@ -9,7 +9,7 @@
         "scripts/*.ts",
         "packages/*/build.ts",
         "packages/cli/build-bin.ts",
-        "packages/web/build-page.ts",
+        "packages/core/build-web-app.ts",
         "apps/desktop/build.ts"
     ],
     "//exclude": "apps/desktop/package-app.ts is left out: it has two pre-existing errors (electron-packager's platform/arch unions) that predate this file and are not what it is here to catch."

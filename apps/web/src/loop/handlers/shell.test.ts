@@ -2,12 +2,16 @@ import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import { rememberAddedProject } from "./addedProjects.ts";
+import type { LoopServerInfo } from "./serverConfig.ts";
 import { buildShellSnapshot, type LoopSessionRow } from "./shell.ts";
 
 const globals = globalThis as { window?: Window & typeof globalThis };
 
-/** Answers `session.list` with the given rows through the desktop bridge. */
-async function snapshotOf(rows: readonly Partial<LoopSessionRow>[]) {
+/**
+ * Answers `session.list` with the given rows through the desktop bridge, and
+ * `server.info` with `info` when one is given (an older loop rejects it).
+ */
+async function snapshotOf(rows: readonly Partial<LoopSessionRow>[], info?: LoopServerInfo) {
   const hadWindow = globals.window !== undefined;
   globals.window ??= globals as unknown as Window & typeof globalThis;
   const previous = window.loop;
@@ -15,7 +19,9 @@ async function snapshotOf(rows: readonly Partial<LoopSessionRow>[]) {
     call: (method) =>
       method === "session.list"
         ? Promise.resolve(rows)
-        : Promise.reject(new Error(`unexpected ${method}`)),
+        : method === "server.info" && info
+          ? Promise.resolve(info)
+          : Promise.reject(new Error(`unexpected ${method}`)),
     onEvent: () => () => {},
     anchorCwd: () => Promise.resolve(undefined),
   };
@@ -110,6 +116,26 @@ describe("the shell snapshot", () => {
     expect(snapshot.projects.filter((project) => project.workspaceRoot === "/w/claimed")).toEqual([
       expect.objectContaining({ id: "/w/claimed" }),
     ]);
+  });
+
+  it("gives every project loop's configured default model", async () => {
+    // A null here sent every new thread to the first provider in the list —
+    // a fresh install ran xai/composer-2.5 whatever defaultModel said.
+    rememberAddedProject("added-1", "/w/added");
+    const snapshot = await snapshotOf([row({ id: "a", cwd: "/w/one" })], {
+      defaults: { model: "custom:fixture/fixture", provider: "custom:fixture" },
+    });
+    const defaults = snapshot.projects.map((project) => project.defaultModelSelection);
+    expect(defaults.length).toBeGreaterThanOrEqual(2);
+    for (const selection of defaults) {
+      expect(selection?.model).toBe("custom:fixture/fixture");
+      expect(selection?.instanceId).toBeTruthy();
+    }
+  });
+
+  it("leaves the project default unset on a loop that does not report one", async () => {
+    const snapshot = await snapshotOf([row({ id: "a", cwd: "/w/one" })]);
+    expect(snapshot.projects[0]?.defaultModelSelection).toBeNull();
   });
 
   it("orders threads newest first", async () => {

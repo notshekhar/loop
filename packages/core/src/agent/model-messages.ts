@@ -4,6 +4,7 @@
  */
 import type { ModelMessage, SystemModelMessage } from "ai";
 import type { Session } from "../sessions";
+import { flattenNativeAgentParts, hasNativeAgentParts } from "../providers/native-agents/history";
 import { compactedContextEntries, compactionBlockText, latestCompactEntry } from "./compact";
 
 // Per-entry size cache for the chars/4 context heuristic. Session entries
@@ -150,9 +151,10 @@ export function toModelMessages(session: Session): ModelMessage[] {
             // stripped; the SDK round-trips its own response messages. An
             // interrupted turn gets a trailing text note so the model knows the
             // answer was cut off.
-            const content = m.interrupted
-                ? [...(m.content as unknown[]), { type: "text", text: INTERRUPT_NOTE }]
-                : m.content;
+            // A native agent's (Claude Code / Cursor) tool calls already ran
+            // inside it; no other model can answer them, so they travel as text.
+            const parts = hasNativeAgentParts(m.content) ? flattenNativeAgentParts(m.content as unknown[]) : m.content;
+            const content = m.interrupted ? [...(parts as unknown[]), { type: "text", text: INTERRUPT_NOTE }] : parts;
             out.push({ role: m.role as "user" | "assistant", content } as ModelMessage);
         } else if (m.interrupted) {
             // Interrupted before any reasoning/text streamed (empty content) —

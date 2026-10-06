@@ -21,6 +21,8 @@ import {
     isKimiSubscriptionKey,
     listBedrockModels,
     listOllamaModels,
+    probeClaudeCode,
+    probeCursor,
     showOllamaModel,
     type BedrockModelSummary,
 } from "../providers";
@@ -61,6 +63,16 @@ const CHATGPT_FLOOR: MetadataFloor = {
 // Billed to the ChatGPT plan, so no per-token cost — even when the vendor
 // catalog knows the API price for the same slug.
 const PLAN_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 };
+// Native agents (Claude Code, Cursor) bill to the user's own subscription or
+// key inside the CLI, and manage their own context — so $0 here, and a window
+// generous enough that loop's meter is informational rather than a trigger.
+const NATIVE_AGENT_FLOOR: MetadataFloor = {
+    ...GATEWAY_FLOOR,
+    contextWindow: 200_000,
+    maxOutput: 64_000,
+    reasoning: true,
+    modalities: ["text", "image"],
+};
 
 const cacheStore = new CachedStore(
     `${PRODUCT_NAME}-agent-catalog`,
@@ -701,6 +713,43 @@ export async function getCatalog(opts: { refresh?: boolean } = {}): Promise<Reco
         );
     }
 
+    // Native agents: zero-login like ollama — present only when the CLI is
+    // installed AND signed in on this machine. Probed results are cached on
+    // disk (native-agents.json) and refreshed in the background.
+    const [claude, cursor] = await Promise.all([
+        probeClaudeCode({ refresh: opts.refresh }).catch(() => null),
+        probeCursor({ refresh: opts.refresh }).catch(() => null),
+    ]);
+    if (claude?.loggedIn) {
+        for (const m of claude.models) {
+            const id = `claude-code/${m.value}`;
+            out[id] = buildModelInfo(
+                id,
+                "claude-code" as ProviderId,
+                [
+                    { name: `Claude Code · ${m.displayName}`, cost: PLAN_COST },
+                    m.resolvedModel ? vendorCatalog.resolve(m.resolvedModel) : undefined,
+                ],
+                NATIVE_AGENT_FLOOR,
+            );
+            // Haiku-class models without adaptive thinking or effort still
+            // think with a budget, so every Claude Code model takes a level.
+            out[id].reasoning = true;
+        }
+    }
+    if (cursor?.loggedIn) {
+        for (const f of cursor.families) {
+            const id = `cursor-agent/${f.id}`;
+            const vendor = vendorCatalog.resolve(f.id.replace(/-fast$/, ""));
+            out[id] = buildModelInfo(
+                id,
+                "cursor-agent" as ProviderId,
+                [{ name: `Cursor · ${f.name}`, cost: PLAN_COST, reasoning: f.reasoning }, vendor],
+                { ...NATIVE_AGENT_FLOOR, reasoning: false },
+            );
+        }
+    }
+
     const overrides = readUserOverrides();
     for (const [id, patch] of Object.entries(overrides)) {
         out[id] = { ...(out[id] ?? ({} as ModelInfo)), ...patch, id } as ModelInfo;
@@ -736,7 +785,8 @@ export function getModelSync(id: string): ModelInfo | undefined {
  *
  * Being logged in is not the same as being usable, and three whole classes of
  * provider have no auth entry at all: ollama (a detected local daemon),
- * bedrock (AWS credentials from the environment), and custom gateways (stored
+ * bedrock (AWS credentials from the environment), the native agents
+ * (claude-code / cursor-agent: a signed-in CLI on this machine), and custom gateways (stored
  * under `customProviders`, keyed `custom:<name>`). Filtering a picker by
  * `listAuthorizedProviders()` silently hides all of them — which is exactly
  * what the Telegram and web model pickers were doing. Lives here, beside the
@@ -747,7 +797,7 @@ export async function listUsableProviders(): Promise<ProviderId[]> {
 
     // Zero-login providers announce themselves by landing in the catalog at
     // all: ollama once its daemon answers, bedrock once AWS creds resolve.
-    const ZERO_LOGIN = new Set<string>(["ollama", "bedrock"]);
+    const ZERO_LOGIN = new Set<string>(["ollama", "bedrock", "claude-code", "cursor-agent"]);
     const catalog = await getCatalog();
     for (const model of Object.values(catalog)) {
         if (model.available && ZERO_LOGIN.has(model.provider) && !providers.includes(model.provider)) {

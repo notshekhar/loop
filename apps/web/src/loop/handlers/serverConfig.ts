@@ -43,6 +43,8 @@ export interface LoopServerInfo {
   readonly defaults?: {
     /** loop's configured `defaultModel`, or null when unset. */
     readonly model?: string | null;
+    /** The provider of `model` (loops older than this omit it). */
+    readonly provider?: string | null;
     /** The folder the `loop rpc` process was started in. */
     readonly cwd?: string;
     /** loop's `thinkingLevel` setting — the level a turn runs at when

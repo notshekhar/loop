@@ -21,7 +21,9 @@ import {
     type ProviderId,
     type ThinkingLevel,
     CONFIG_DIR_NAME,
+    isNativeAgentProvider,
 } from "@notshekhar/loop-core";
+import { providerLabel } from "../provider-labels";
 import type { AppDeps } from "../deps";
 import type { AppState } from "../state";
 import { listUsableProviders } from "../provider-availability";
@@ -70,7 +72,9 @@ export function createModelHandlers(state: AppState, deps: AppDeps): ModelHandle
                 const items: SelectItem[] = usable.map((id) => ({
                     value: id,
                     label: id,
-                    description: id === getActiveProvider() ? "(active)" : "",
+                    // Native agents have no /login entry, so say where they come from.
+                    description:
+                        id === getActiveProvider() ? "(active)" : isNativeAgentProvider(id) ? providerLabel(id) : "",
                 }));
                 const pick = await searchOnce(items, "Provider (type to filter)");
                 if (!pick) return;

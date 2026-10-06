@@ -27,6 +27,7 @@ import { clientThreadIdFor } from "./dispatch.ts";
 import { onLiveTurnChange } from "./liveTurn.ts";
 import { toInstanceId } from "./ids.ts";
 import { loopCall } from "../transport.ts";
+import type { LoopServerInfo } from "./serverConfig.ts";
 
 /** A row of loop's `session.list`; see packages/core/src/sessions/manager.ts. */
 export interface LoopSessionRow {
@@ -76,11 +77,21 @@ function threadTitle(row: LoopSessionRow): string {
  * shipping every archived session to draw a list that excludes them.
  */
 export const buildShellSnapshot = Effect.fnUntraced(function* (archived = false) {
-  const rows = yield* Effect.promise(() =>
-    loopCall<readonly LoopSessionRow[]>("session.list", archived ? { archived: true } : {}).catch(
-      () => [] as readonly LoopSessionRow[],
-    ),
+  const [rows, info] = yield* Effect.promise(() =>
+    Promise.all([
+      loopCall<readonly LoopSessionRow[]>("session.list", archived ? { archived: true } : {}).catch(
+        () => [] as readonly LoopSessionRow[],
+      ),
+      loopCall<LoopServerInfo>("server.info").catch(() => ({}) as LoopServerInfo),
+    ]),
   );
+  // A project's default model is loop's own `defaultModel`. loop keeps no
+  // per-project model the UI could report, and a null here sent every new
+  // thread to the first provider in the list instead of the configured one.
+  const projectDefaultModel =
+    info.defaults?.model && info.defaults.provider
+      ? { instanceId: toInstanceId(info.defaults.provider), model: info.defaults.model }
+      : null;
 
   // One unusable row must not cost the whole sidebar. `ProjectId` is a
   // non-empty string and `projects` is a plain array (not a
@@ -117,7 +128,7 @@ export const buildShellSnapshot = Effect.fnUntraced(function* (archived = false)
         id: cwd,
         title: folderName(cwd),
         workspaceRoot: cwd,
-        defaultModelSelection: null,
+        defaultModelSelection: projectDefaultModel,
         scripts: [],
         createdAt: iso(times.created),
         updatedAt: iso(times.updated),
@@ -128,7 +139,7 @@ export const buildShellSnapshot = Effect.fnUntraced(function* (archived = false)
         id: project.id,
         title: folderName(project.folder),
         workspaceRoot: project.folder,
-        defaultModelSelection: null,
+        defaultModelSelection: projectDefaultModel,
         scripts: [],
         createdAt: iso(project.addedAt),
         updatedAt: iso(project.addedAt),

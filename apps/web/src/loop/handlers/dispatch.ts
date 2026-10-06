@@ -18,12 +18,12 @@ import * as Effect from "effect/Effect";
 import { forgetAddedProject, rememberAddedProject } from "./addedProjects.ts";
 import { fromInstanceId } from "./ids.ts";
 import {
+  abandonLiveTurn,
   beginLiveTurn,
   clearLiveAsk,
   notifyThreadChanged,
   onLiveTurnChange,
   readLiveTurn,
-  restoreLiveTurn,
 } from "./liveTurn.ts";
 import { useQueuedTurnsStore, type QueuedTurn } from "../../queuedTurnsStore.ts";
 import { loopCall, loopFilesystem } from "../transport.ts";
@@ -480,13 +480,12 @@ async function sendTurn(
   // `session.send` is still in flight, and an event that arrives before the
   // buffer exists would be dropped. Both are therefore written speculatively,
   // and both are put back below if loop turns the send down.
-  const displacedTurn = readLiveTurn(sessionId);
   const displacedMessage = lastUserMessage.get(sessionId);
   lastUserMessage.set(sessionId, {
     messageId: message.messageId,
     text: message.text,
   });
-  beginLiveTurn(sessionId);
+  const speculativeTurn = beginLiveTurn(sessionId);
   // `model` carries the provider (`xai/composer-2.5`) — loop has no separate
   // provider parameter, and runTurn resolves it from the id, so this is also
   // how a provider switch reaches loop.
@@ -514,7 +513,7 @@ async function sendTurn(
     // the reply on screen would blank out and pick up mid-sentence.
     if (displacedMessage === undefined) lastUserMessage.delete(sessionId);
     else lastUserMessage.set(sessionId, displacedMessage);
-    restoreLiveTurn(sessionId, displacedTurn);
+    abandonLiveTurn(sessionId, speculativeTurn);
     throw error;
   }
 }

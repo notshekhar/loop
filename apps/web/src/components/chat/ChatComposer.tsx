@@ -493,6 +493,11 @@ export interface ChatComposerProps {
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
   onInterrupt: () => void;
+  /**
+   * Escape on an empty composer mid-turn — the terminal's Esc: stop the turn
+   * and send what is queued next. Falls back to `onInterrupt` when omitted.
+   */
+  onEscapeInterrupt?: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
@@ -581,6 +586,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerElementContextsRef,
     onSend,
     onInterrupt,
+    onEscapeInterrupt,
     onImplementPlanInNewThread,
     onRespondToApproval,
     onSelectActivePendingUserInputOption,
@@ -1091,10 +1097,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const isComposerApprovalState = activePendingApproval !== null;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
-  const hasComposerHeader =
-    isComposerApprovalState ||
-    pendingUserInputs.length > 0 ||
-    (showPlanFollowUpPrompt && activeProposedPlan !== null);
   const showCollapsedMobilePromptRow =
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
 
@@ -1880,7 +1882,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       submitComposer();
       return true;
     }
-    void onInterrupt();
+    if (onEscapeInterrupt) onEscapeInterrupt();
+    else void onInterrupt();
     return true;
   };
 
@@ -2917,8 +2920,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           <div
             ref={setComposerMenuAnchor}
             className={cn(
-              "relative px-3 pb-2 sm:px-3.5",
-              hasComposerHeader ? "pt-2" : "pt-2.5",
+              // Even top and bottom, so a single line — and the send key
+              // beside it — sits in the middle of the box.
+              "relative px-3 py-2 sm:px-3.5",
               isComposerCollapsedMobile && "hidden",
             )}
           >
@@ -3134,7 +3138,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   data-chat-composer-primary-actions-compact={
                     isComposerPrimaryActionsCompact ? "true" : "false"
                   }
-                  className="flex shrink-0 flex-nowrap items-center justify-end gap-2 pb-px"
+                  // Tucked into the box's corner: the box's padding keeps
+                  // the text off the edge, but the send key reads better
+                  // sitting closer to it.
+                  className="-mr-1.5 flex shrink-0 flex-nowrap items-center justify-end gap-2 pb-px"
                 >
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}

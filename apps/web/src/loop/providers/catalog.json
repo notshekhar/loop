@@ -38,6 +38,19 @@
       ]
     },
     {
+      "id": "openai-chatgpt",
+      "label": "ChatGPT",
+      "tagline": "GPT models on your ChatGPT plan, through the Codex backend.",
+      "icon": "openai",
+      "login": [
+        {
+          "method": "oauth",
+          "label": "Sign in with ChatGPT",
+          "hint": "Opens a browser. Turns are billed to your ChatGPT subscription through the Codex backend — personal use only."
+        }
+      ]
+    },
+    {
       "id": "xai",
       "label": "xAI",
       "tagline": "Grok models — SuperGrok subscription or a platform key.",
@@ -224,6 +237,34 @@
           "method": "detect",
           "label": "Check local daemon",
           "hint": "Needs `ollama serve` running with at least one model pulled. Set LOOP_OLLAMA_BASE_URL to point elsewhere."
+        }
+      ]
+    },
+    {
+      "id": "claude-code",
+      "label": "Claude Code",
+      "tagline": "Your installed Claude Code, on its own sign-in — loop stores nothing.",
+      "icon": "claude-code",
+      "keysUrl": "https://docs.claude.com/en/docs/claude-code/setup",
+      "login": [
+        {
+          "method": "detect",
+          "label": "Detect Claude Code",
+          "hint": "Needs the `claude` CLI on this machine, signed in (`claude auth login`). Set LOOP_CLAUDE_CODE_BIN to use a specific binary."
+        }
+      ]
+    },
+    {
+      "id": "cursor-agent",
+      "label": "Cursor",
+      "tagline": "Your installed Cursor agent CLI, on its own sign-in — loop stores nothing.",
+      "icon": "cursor-agent",
+      "keysUrl": "https://cursor.com/cli",
+      "login": [
+        {
+          "method": "detect",
+          "label": "Detect Cursor CLI",
+          "hint": "Needs `cursor-agent` on this machine, signed in (`cursor-agent login`) or with CURSOR_API_KEY set. Set LOOP_CURSOR_AGENT_BIN to use a specific binary."
         }
       ]
     }

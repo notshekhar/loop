@@ -351,6 +351,9 @@ function touch(
  */
 function closeTurn(turn: LiveTurn): void {
   turn.running = false;
+  // An ended turn writes nothing more: whatever arrives next is another turn.
+  const text = turn.texts[turn.texts.length - 1];
+  if (text) text.open = false;
   // A turn cannot end still waiting on an answer.
   delete turn.ask;
   // Close anything still open, or a thinking block that was interrupted
@@ -424,7 +427,30 @@ export function applyLoopEvent(sessionId: string, part: LoopTurnPart): void {
   apply(sessionId, part);
 }
 
+/**
+ * Events that are the turn itself writing — as opposed to what trails a turn
+ * after it ends (recap, usage, the running flag). One of these reaching a
+ * turn that has already ended belongs to the NEXT turn.
+ */
+const TURN_CONTENT_EVENTS: ReadonlySet<string> = new Set([
+  "text-delta",
+  "reasoning-start",
+  "reasoning-delta",
+  "tool-input-start",
+  "tool-call",
+  "hook-message",
+  "compact-start",
+]);
+
 function apply(sessionId: string, part: LoopTurnPart): void {
+  // A turn this client did not dispatch has no `beginLiveTurn` — one replayed
+  // from the server's ring after a reload, one started by a queue drain or
+  // another client. Folding its events into the ended turn before it merged
+  // consecutive replies into one paragraph that never matched the transcript,
+  // so it outlived every turn in it.
+  if (TURN_CONTENT_EVENTS.has(part.type) && turns.get(sessionId)?.running === false) {
+    turns.set(sessionId, emptyTurn());
+  }
   const data = part.data as Record<string, unknown> | string | undefined;
   switch (part.type) {
     case "text-delta":
@@ -491,6 +517,16 @@ function apply(sessionId: string, part: LoopTurnPart): void {
       touch(sessionId, (turn) => {
         const record = data as { toolCallId?: string; toolName?: string; input?: unknown };
         if (!record?.toolCallId) return;
+        // A call can arrive without its `tool-input-start` (a provider that
+        // reports finished calls only). Opening its row must still end the
+        // text and thinking before it, exactly as the start event would —
+        // otherwise the next sentence streams into the paragraph above it.
+        if (!turn.tools.some((existing) => existing.id === record.toolCallId)) {
+          const open = turn.thinking[turn.thinking.length - 1];
+          if (open && open.endedAt === undefined) open.endedAt = Date.now();
+          const text = turn.texts[turn.texts.length - 1];
+          if (text) text.open = false;
+        }
         const tool = toolFor(turn, record.toolCallId);
         if (record.toolName) tool.name = record.toolName;
         // A hook has already rewritten this call's arguments, and the rewrite
@@ -862,11 +898,41 @@ export function confirmLiveTurnRunning(sessionId: string): void {
   turn.lastEventAt = Date.now();
 }
 
-/** Start a fresh live turn — called when a turn is dispatched. */
-export function beginLiveTurn(sessionId: string): void {
+/** For each speculative turn a send opened: the turn it displaced. */
+const displacedBy = new WeakMap<LiveTurn, LiveTurn | undefined>();
+/** Speculative turns whose send loop refused — never worth restoring. */
+const abandoned = new WeakSet<LiveTurn>();
+
+/**
+ * Start a fresh live turn — called when a turn is dispatched, before the
+ * call, so a delta that beats the reply has somewhere to land. Returns the
+ * turn so a refused send can take back exactly this one (abandonLiveTurn).
+ */
+export function beginLiveTurn(sessionId: string): LiveTurn {
   ensureSubscribed();
-  turns.set(sessionId, emptyTurn());
+  const created = emptyTurn();
+  displacedBy.set(created, turns.get(sessionId));
+  turns.set(sessionId, created);
   for (const listener of listeners) listener(sessionId, true);
+  return created;
+}
+
+/**
+ * Undo a `beginLiveTurn` whose send loop refused.
+ *
+ * Only while that turn still holds the slot. Queued messages put several
+ * sends in flight at once — a drain, a retry, Esc's send-now — and a refused
+ * one that blindly restored what IT displaced would overwrite the turn a newer
+ * accepted send had just opened: that turn's reply then streamed into the
+ * previous turn's open paragraph, and the merged text never matched the
+ * transcript, so it stayed on screen after every turn had ended.
+ */
+export function abandonLiveTurn(sessionId: string, turn: LiveTurn): void {
+  abandoned.add(turn);
+  if (turns.get(sessionId) !== turn) return;
+  let back = displacedBy.get(turn);
+  while (back !== undefined && abandoned.has(back)) back = displacedBy.get(back);
+  restoreLiveTurn(sessionId, back);
 }
 
 /** The live turn for a session, if one has been seen. */

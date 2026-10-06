@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  abandonLiveTurn,
   adoptRunningTurn,
   applyLoopEvent,
   beginLiveTurn,
@@ -330,6 +331,84 @@ describe("adopting a turn this client did not start", () => {
     expect(readLiveTurn(id)?.running).toBe(false);
     adoptRunningTurn(id);
     expect(readLiveTurn(id)?.running).toBe(true);
+    clearLiveTurn(id);
+  });
+});
+
+describe("a tool call with no tool-input-start", () => {
+  it("still splits the text around it, in stream order", () => {
+    // Native agents (Cursor) report a call only once it has run. Before the
+    // fix, the sentence after the tool streamed into the run above it, and the
+    // tool only moved into place once the turn was persisted.
+    const id = session();
+    beginLiveTurn(id);
+    applyLoopEvent(id, { type: "text-delta", data: "Reading the note." });
+    applyLoopEvent(id, {
+      type: "tool-call",
+      data: { toolCallId: "c1", toolName: "read", input: { path: "note.txt" } },
+    });
+    applyLoopEvent(id, { type: "text-delta", data: "The word is banana." });
+    const turn = readLiveTurn(id);
+    expect(turn?.texts.map((run) => run.text)).toEqual(["Reading the note.", "The word is banana."]);
+    const [before, after] = turn?.texts ?? [];
+    const tool = turn?.tools[0];
+    expect(before!.seq < tool!.seq && tool!.seq < after!.seq).toBe(true);
+    clearLiveTurn(id);
+  });
+});
+
+describe("overlapping sends from the queue", () => {
+  it("a refused send never overwrites the turn a newer send opened", () => {
+    // MEASURED: QB's drain began first (displacing the finished essay turn),
+    // Esc's send-now for QA began next and was accepted, then QB was refused.
+    // Restoring what QB displaced put the essay back, and QA's reply streamed
+    // onto the end of the essay.
+    const id = session();
+    beginLiveTurn(id);
+    applyLoopEvent(id, { type: "text-delta", data: "Essay text" });
+    const qb = beginLiveTurn(id);
+    const qa = beginLiveTurn(id);
+    abandonLiveTurn(id, qb); // refused, but QA owns the slot now
+    applyLoopEvent(id, { type: "text-delta", data: "PINEAPPLE" });
+    expect(readLiveTurn(id)).toBe(qa);
+    expect(liveTurnText(readLiveTurn(id)!)).toBe("PINEAPPLE");
+    clearLiveTurn(id);
+  });
+
+  it("rolls back past other refused sends to the real turn", () => {
+    const id = session();
+    const running = beginLiveTurn(id);
+    applyLoopEvent(id, { type: "text-delta", data: "still going" });
+    const first = beginLiveTurn(id);
+    const second = beginLiveTurn(id);
+    abandonLiveTurn(id, first); // not current: no-op, marked abandoned
+    abandonLiveTurn(id, second); // current: restores past `first` to `running`
+    expect(readLiveTurn(id)).toBe(running);
+    clearLiveTurn(id);
+  });
+});
+
+describe("consecutive turns with no beginLiveTurn between them", () => {
+  it("starts a new turn instead of extending the ended one", () => {
+    // A replay after reload, or a turn a queue drain started: events arrive
+    // back to back with only `finish` between them.
+    const id = session();
+    beginLiveTurn(id);
+    applyLoopEvent(id, { type: "text-delta", data: "The essay, cut off" });
+    applyLoopEvent(id, { type: "finish", data: {} });
+    applyLoopEvent(id, { type: "text-delta", data: "KIWI" });
+    expect(liveTurnText(readLiveTurn(id)!)).toBe("KIWI");
+    expect(readLiveTurn(id)?.running).toBe(true);
+    clearLiveTurn(id);
+  });
+
+  it("still lets a recap attach to the turn that just ended", () => {
+    const id = session();
+    beginLiveTurn(id);
+    applyLoopEvent(id, { type: "text-delta", data: "Done." });
+    applyLoopEvent(id, { type: "finish", data: {} });
+    applyLoopEvent(id, { type: "data-recap", data: { text: "Summary" } });
+    expect(liveTurnText(readLiveTurn(id)!)).toBe("Done.");
     clearLiveTurn(id);
   });
 });

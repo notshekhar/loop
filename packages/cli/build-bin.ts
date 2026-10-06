@@ -8,14 +8,11 @@
 import { readFileSync, mkdirSync, existsSync, rmSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
-import { buildPage } from "../web/build-page";
+import { webAppPackPlugin } from "../core/build-web-app";
 
 const pkg = JSON.parse(readFileSync(join(import.meta.dir, "package.json"), "utf8")) as { version: string };
 // Embedded so the standalone binary can serve /changelog without a file on disk.
 const changelog = readFileSync(join(import.meta.dir, "CHANGELOG.md"), "utf8");
-// Same for the web UI: the binary has no packages/web on disk, so the page
-// must be baked in here (core/build.ts does the same for the npm dist).
-const webUiHtml = await buildPage();
 
 const VALID_TARGETS = new Set([
     "bun-darwin-arm64",
@@ -73,6 +70,9 @@ mkdirSync(stageDir, { recursive: true });
 
 console.log(`▶ building ${binPath} (v${pkg.version}) [target ${compileTarget}]`);
 
+// serve's UI (apps/web), embedded in the binary; read only when serve starts.
+const webApp = await webAppPackPlugin("compile", join(import.meta.dir, "dist", "web-app"));
+
 // Use the Bun.build API rather than shelling out to `bun build --compile`: the
 // embedded CHANGELOG is passed as an in-process `define`, not a command-line
 // argument. As a CLI arg it grows the command line past Windows' ~32 KB
@@ -86,8 +86,8 @@ const result = await Bun.build({
     define: {
         __APP_VERSION__: JSON.stringify(pkg.version),
         __APP_CHANGELOG__: JSON.stringify(changelog),
-        __WEB_UI_HTML__: JSON.stringify(webUiHtml),
     },
+    plugins: [webApp],
 });
 if (!result.success) {
     for (const log of result.logs) console.error(log);

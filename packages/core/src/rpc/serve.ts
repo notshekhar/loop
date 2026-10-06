@@ -14,56 +14,49 @@
  */
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { networkInterfaces } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { RpcServer } from "./server";
+import { loadWebApp, serveWebApp, webAppMissing } from "./serve-web-app";
+import { createServeWorkspace, WORKSPACE_EVENT, WORKSPACE_PREFIX } from "./serve-workspace";
 import { getStoredServeToken, storeServeToken } from "./serve-token-store";
 
-/** Injected by packages/core/build.ts: the prebuilt single-file page from
- * @notshekhar/loop-web. Release artifacts (npm dist, compiled binaries) ship
- * with it baked in; running from source leaves it undefined. */
-declare const __WEB_UI_HTML__: string | undefined;
+/** The cookie a token page load leaves, so the app's own asset and socket
+ * requests are authorised without the token in every URL. */
+const TOKEN_COOKIE = "loop_serve";
 
-/** The single-file page: baked in at build time, or — running from source
- * (dev, tests) — bundled on the fly so web edits show up on reload without a
- * prebuild step. Memoized: one bundle per process. */
-let webUiHtmlPromise: Promise<string> | null = null;
-function getWebUiHtml(): Promise<string> {
-    if (!webUiHtmlPromise) {
-        webUiHtmlPromise =
-            typeof __WEB_UI_HTML__ === "string" ? Promise.resolve(__WEB_UI_HTML__) : buildWebUiFromSource();
+function cookieToken(req: Request): string | null {
+    const header = req.headers.get("cookie");
+    if (!header) return null;
+    for (const part of header.split(";")) {
+        const [name, ...rest] = part.trim().split("=");
+        if (name === TOKEN_COOKIE) return decodeURIComponent(rest.join("="));
     }
-    return webUiHtmlPromise;
+    return null;
 }
 
-async function buildWebUiFromSource(): Promise<string> {
-    let entry: string;
+/**
+ * JSON renders a Uint8Array as one key per byte; a file asset (an image the
+ * desktop reads straight into a blob) becomes `{ $bytes: <base64> }` instead.
+ */
+function bytesAsBase64(_key: string, value: unknown): unknown {
+    return value instanceof Uint8Array ? { $bytes: Buffer.from(value).toString("base64") } : value;
+}
+
+/** A `workspace.*` request, or null for anything the RpcServer should get. */
+function parseWorkspaceRequest(
+    frame: string,
+): { id: number | string; method: string; params: Record<string, unknown> } | null {
+    // Cheap reject first: nearly every frame is a session call.
+    if (!frame.includes(`"${WORKSPACE_PREFIX}`)) return null;
     try {
-        entry = fileURLToPath(import.meta.resolve("@notshekhar/loop-web/app"));
-    } catch (err: any) {
-        throw new Error(
-            `web UI is not embedded and @notshekhar/loop-web/app could not be resolved` +
-                ` (${err?.message ?? err}). Compiled binaries must bake __WEB_UI_HTML__ at build time.`,
-        );
+        const msg = JSON.parse(frame) as { id?: number | string; method?: unknown; params?: unknown };
+        if (typeof msg.method !== "string" || !msg.method.startsWith(WORKSPACE_PREFIX) || msg.id === undefined) {
+            return null;
+        }
+        const params = msg.params && typeof msg.params === "object" ? (msg.params as Record<string, unknown>) : {};
+        return { id: msg.id, method: msg.method, params };
+    } catch {
+        return null;
     }
-    const srcDir = dirname(entry);
-    const result = await Bun.build({
-        entrypoints: [entry],
-        target: "browser",
-        format: "iife",
-        minify: true,
-    });
-    if (!result.success) {
-        throw new Error(`web UI bundle failed: ${result.logs.map((l) => l.message).join("; ")}`);
-    }
-    const [template, styles, script] = await Promise.all([
-        Bun.file(join(srcDir, "index.html")).text(),
-        Bun.file(join(srcDir, "styles.css")).text(),
-        result.outputs[0]!.text(),
-    ]);
-    return template
-        .replace("<!-- styles injected by build.ts -->", () => `<style>${styles}</style>`)
-        .replace("<!-- script injected by build.ts -->", () => `<script>${script}</script>`);
 }
 
 /** Keypad-spellable default: 5667 = "loop". */
@@ -80,7 +73,8 @@ export function getOrCreateServeToken(): string {
 }
 
 export function isLoopbackHost(host: string): boolean {
-    return host === "127.0.0.1" || host === "::1" || host === "localhost";
+    // An IPv4 peer on a dual-stack socket reports itself IPv4-mapped.
+    return host === "127.0.0.1" || host === "::1" || host === "localhost" || host === "::ffff:127.0.0.1";
 }
 
 /** Non-internal IPv4 addresses of this machine — the LAN faces of a serve
@@ -94,10 +88,6 @@ export function lanAddresses(): string[] {
     }
     return out;
 }
-
-/** The SPA is served for `/` and every session deep link — `/session/<id>`
- * reloads must land on the app, which then opens that session client-side. */
-const SESSION_PATH = /^\/session\/[A-Za-z0-9]+$/;
 
 /** Constant-time compare via digests — no length or prefix leak. */
 function tokenMatches(candidate: string | null, token: string): boolean {
@@ -123,18 +113,47 @@ export interface ServeHandle {
 }
 
 interface WsData {
+    /** Whether this connection may open terminals (see startWebServer). */
+    terminal: boolean;
     /** JSONL feed into the shared RpcServer; wired in open(). */
     feed: ((chunk: string) => void) | null;
     /** Unsubscribes this connection from every session on close. */
     close: (() => void) | null;
 }
 
-export function startWebServer(opts: { host?: string; port?: number } = {}): ServeHandle {
+export function startWebServer(
+    opts: {
+        host?: string;
+        port?: number;
+        webAppDir?: string | null;
+        /**
+         * Offer the terminal to clients on other machines too. Off by default:
+         * the token already means full control, but a shell is the one thing
+         * that turns a leaked URL into an interactive session, so reaching it
+         * across the network is a separate, deliberate choice.
+         */
+        remoteTerminal?: boolean;
+    } = {},
+): ServeHandle {
     const hostname = opts.host ?? "127.0.0.1";
+    // Loaded once, on the first page request: unpacking the embedded UI is
+    // work a serve nobody opens should not pay at startup.
+    let webApp: ReturnType<typeof loadWebApp> | null = null;
     const port = opts.port ?? SERVE_DEFAULT_PORT;
     const token = getOrCreateServeToken();
     // Reachable over the network, so artifact.* is refused — see RpcServer.remote.
     const rpc = new RpcServer({ remote: true });
+    // Every open socket: workspace events (terminal output, git progress) go
+    // to all of them, and each client picks out the terminals it shows.
+    const sockets = new Set<{ send(data: string): unknown }>();
+    const workspace = createServeWorkspace(rpc, (channel, payload) => {
+        const frame = JSON.stringify({ jsonrpc: "2.0", method: WORKSPACE_EVENT, params: { channel, payload } });
+        for (const ws of sockets) {
+            try {
+                ws.send(frame);
+            } catch {}
+        }
+    });
 
     const unauthorized = () =>
         new Response("Unauthorized: token required (start with `serve` and use the printed URL)", { status: 401 });
@@ -144,21 +163,25 @@ export function startWebServer(opts: { host?: string; port?: number } = {}): Ser
         port,
         async fetch(req, srv) {
             const url = new URL(req.url);
-            if (!tokenMatches(url.searchParams.get("token"), token)) return unauthorized();
+            const fromQuery = tokenMatches(url.searchParams.get("token"), token);
+            if (!fromQuery && !tokenMatches(cookieToken(req), token)) return unauthorized();
             if (url.pathname === "/ws") {
-                const data: WsData = { feed: null, close: null };
+                const local = isLoopbackHost(srv.requestIP(req)?.address ?? "");
+                const data: WsData = { terminal: local || opts.remoteTerminal === true, feed: null, close: null };
                 if (srv.upgrade(req, { data })) return undefined;
                 return new Response("WebSocket upgrade failed", { status: 400 });
             }
-            if (
-                (url.pathname === "/" || SESSION_PATH.test(url.pathname)) &&
-                (req.method === "GET" || req.method === "HEAD")
-            ) {
-                return new Response(await getWebUiHtml(), {
-                    headers: { "content-type": "text/html; charset=utf-8" },
-                });
+            if (req.method !== "GET" && req.method !== "HEAD") return new Response("Not found", { status: 404 });
+            const app = await (webApp ??= loadWebApp(opts.webAppDir));
+            if (!app) return webAppMissing();
+            const res = await serveWebApp(app, url.pathname);
+            // A page opened with the token keeps it as a cookie: HttpOnly (page
+            // script never sees it), SameSite=Strict (no other site can ride
+            // it), scoped to this origin.
+            if (fromQuery && res.headers.get("content-type")?.startsWith("text/html")) {
+                res.headers.append("set-cookie", `${TOKEN_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict`);
             }
-            return new Response("Not found", { status: 404 });
+            return res;
         },
         websocket: {
             open(ws) {
@@ -179,14 +202,37 @@ export function startWebServer(opts: { host?: string; port?: number } = {}): Ser
                 const attached = rpc.attach(transport);
                 ws.data.feed = attached.feed;
                 ws.data.close = attached.close;
+                sockets.add(ws);
             },
             message(ws, message) {
+                if (typeof message !== "string") return;
+                // workspace.* is answered here (it is the desktop's host table,
+                // not an RpcServer method); everything else is the RpcServer's.
+                const request = parseWorkspaceRequest(message);
+                if (request) {
+                    void workspace.call(request.method, request.params, ws.data.terminal).then(
+                        (result) =>
+                            ws.send(
+                                JSON.stringify({ jsonrpc: "2.0", id: request.id, result: result ?? null }, bytesAsBase64),
+                            ),
+                        (err: unknown) =>
+                            ws.send(
+                                JSON.stringify({
+                                    jsonrpc: "2.0",
+                                    id: request.id,
+                                    error: { code: -32603, message: err instanceof Error ? err.message : String(err) },
+                                }),
+                            ),
+                    );
+                    return;
+                }
                 // One JSON message per text frame; the JSONL feed just needs
                 // its newline delimiter appended.
                 const { feed } = ws.data;
-                if (typeof message === "string" && feed) feed(message + "\n");
+                if (feed) feed(message + "\n");
             },
             close(ws) {
+                sockets.delete(ws);
                 // Detach from every session so broadcasts stop going to a dead
                 // socket and `attached` counts stay honest.
                 if (ws.data.close) ws.data.close();
@@ -211,6 +257,7 @@ export function startWebServer(opts: { host?: string; port?: number } = {}): Ser
         // server is what kills the background shells its sessions started,
         // which nothing else in this process will do.
         stop: () => {
+            workspace.dispose();
             rpc.dispose();
             server.stop(true);
         },

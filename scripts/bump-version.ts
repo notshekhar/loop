@@ -1,6 +1,6 @@
 /**
  * Bump the loop version across the packages that ship as one unit — core, cli,
- * tui, web — in a single step, so they never drift. `sandbox` versions
+ * tui — in a single step, so they never drift. `sandbox` versions
  * independently and is left alone.
  *
  *   bun run bump patch          # 0.7.5 → 0.7.6
@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // In lockstep with the loop release version. `sandbox` is intentionally absent.
-const PACKAGES = ["core", "cli", "tui", "web"] as const;
+const PACKAGES = ["core", "cli", "tui"] as const;
 const ROOT = join(import.meta.dir, "..");
 const pkgPath = (name: string) => join(ROOT, "packages", name, "package.json");
 const VERSION_RE = /("version":\s*")[^"]+(")/;

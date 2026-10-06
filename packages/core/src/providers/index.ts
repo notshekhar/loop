@@ -21,7 +21,9 @@ import type { CustomProviderConfig, ProviderId } from "../types";
 import { getExtensionHost, type ProviderPlugin } from "../extensions";
 import { anthropicShapeFetch } from "./anthropic-shape";
 import { bedrockRegion } from "./bedrock";
+import { createClaudeCodeModel, createCursorModel } from "./native-agents";
 
+export * from "./native-agents";
 export {
     bedrockRegion,
     bedrockShortModelId,
@@ -596,6 +598,12 @@ export async function getModel(fullId: string): Promise<LanguageModel> {
                 middleware: chatgptPlanMiddleware,
             });
         }
+        case "claude-code":
+            // The user's own Claude Code install and login; see native-agents/claude-code.ts.
+            return createClaudeCodeModel(model);
+        case "cursor-agent":
+            // The user's own cursor-agent CLI and login; see native-agents/cursor.ts.
+            return createCursorModel(model);
         case "ollama": {
             // Local daemon — no auth. createOllama wants the /api root.
             const { createOllama } = await import("ollama-ai-provider-v2");

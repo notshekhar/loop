@@ -136,12 +136,12 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     return (
       <button
         type="button"
-        className="flex size-7 cursor-pointer items-center justify-center rounded-lg bg-foreground text-background transition-colors duration-150 hover:bg-foreground/85"
+        className="flex size-6 cursor-pointer items-center justify-center rounded-md bg-foreground text-background transition-colors duration-150 hover:bg-foreground/85"
         {...pointerFocusProps}
         onClick={onInterrupt}
         aria-label="Stop generation"
       >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+        <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
           <rect x="2" y="2" width="8" height="8" rx="1.5" />
         </svg>
       </button>
@@ -208,7 +208,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       className={cn(
         // A quiet return key while there is nothing to send, ink once there
         // is: the box should read as a command bar, not a big blue button.
-        "relative isolate flex size-7 items-center justify-center overflow-hidden rounded-lg transition-colors duration-150 enabled:cursor-pointer disabled:pointer-events-none disabled:bg-transparent disabled:text-muted-foreground/60",
+        "relative isolate flex size-6 items-center justify-center overflow-hidden rounded-md transition-colors duration-150 enabled:cursor-pointer disabled:pointer-events-none disabled:bg-transparent disabled:text-muted-foreground/60",
         stageBackdropVariant
           ? "bg-transparent text-primary-foreground enabled:hover:brightness-110"
           : "bg-foreground text-background hover:bg-foreground/85",
@@ -241,9 +241,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         </span>
       ) : null}
       {isConnecting || isSendBusy ? (
-        <Spinner className="size-3.5" aria-hidden="true" />
+        <Spinner className="size-3" aria-hidden="true" />
       ) : (
-        <CornerDownLeftIcon className="size-3.75" strokeWidth={2} aria-hidden="true" />
+        <CornerDownLeftIcon className="size-3.25" strokeWidth={2} aria-hidden="true" />
       )}
     </button>
   );

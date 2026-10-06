@@ -19,6 +19,8 @@
  * it is absent we are in a browser and take the socket path.
  */
 
+import { createWorkspaceBridges, type WorkspaceBridges } from "./workspaceBridges";
+
 export interface LoopEvent {
   readonly sessionId: string;
   readonly seq: number;
@@ -511,6 +513,7 @@ class LoopSocket {
   #nextId = 1;
   #pending = new Map<number, Pending>();
   #listeners = new Set<(event: LoopEvent) => void>();
+  #channelListeners = new Map<string, Set<(payload: unknown) => void>>();
   #stateListeners = new Set<(state: ConnectionState) => void>();
   #reconnectDelay = RECONNECT_MIN_MS;
   /** Calls made before the socket opens wait here rather than failing. */
@@ -540,6 +543,18 @@ class LoopSocket {
   onEvent(listener: (event: LoopEvent) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
+  }
+
+  /** A workspace channel (terminal output, git progress) from serve's host. */
+  onChannel(channel: string, listener: (payload: unknown) => void): () => void {
+    this.connect();
+    let listeners = this.#channelListeners.get(channel);
+    if (!listeners) {
+      listeners = new Set();
+      this.#channelListeners.set(channel, listeners);
+    }
+    listeners.add(listener);
+    return () => listeners.delete(listener);
   }
 
   onStateChange(listener: (state: ConnectionState) => void): () => void {
@@ -602,6 +617,11 @@ class LoopSocket {
     if (message.method === "session.event") {
       const event = message.params as LoopEvent;
       for (const listener of this.#listeners) listener(event);
+      return;
+    }
+    if (message.method === "workspace.event") {
+      const { channel, payload } = message.params as { channel: string; payload: unknown };
+      for (const listener of this.#channelListeners.get(channel) ?? []) listener(payload);
     }
   }
 
@@ -620,6 +640,20 @@ class LoopSocket {
 }
 
 const socket = new LoopSocket();
+
+/**
+ * The workspace over the socket: `loop serve` hosts the same handler table as
+ * the desktop's utility process, so a browser gets files, terminals and git
+ * too. Built on first use — a desktop shell never touches it.
+ */
+let socketWorkspace: WorkspaceBridges | null = null;
+function browserWorkspace(): WorkspaceBridges {
+  socketWorkspace ??= createWorkspaceBridges(
+    (name, params) => socket.call(`workspace.${name}`, params ?? {}),
+    (channel, listener) => socket.onChannel(channel, listener),
+  );
+  return socketWorkspace;
+}
 
 /** True when running inside the Electron shell rather than a browser. */
 export function isDesktopShell(): boolean {
@@ -681,33 +715,45 @@ export function onLoopConnectionChange(listener: (state: ConnectionState) => voi
 }
 
 /**
- * The filesystem bridge, or null in a browser.
+ * One workspace bridge: the preload's in the desktop shell, the socket's in a
+ * browser (where every one exists, because serve hosts the whole table).
+ */
+function workspaceBridge<K extends keyof WorkspaceBridges>(key: K): WorkspaceBridges[K] | null {
+  // The preload's bridges are the same interfaces, each optional.
+  if (isDesktopShell()) return (window.loop as Partial<WorkspaceBridges> | undefined)?.[key] ?? null;
+  return browserWorkspace()[key];
+}
+
+/**
+ * The filesystem bridge: Electron's preload in the desktop shell, serve's
+ * workspace over the socket in a browser. Null only for a desktop shell whose
+ * preload predates the capability.
  *
- * Returning null rather than a stub is deliberate: a caller has to decide what
- * "no filesystem here" means for its feature, and a stub that answers with an
+ * Null rather than a stub is deliberate: a caller has to decide what "no
+ * filesystem here" means for its feature, and a stub that answers with an
  * empty directory would make an unavailable capability look like an empty
  * project.
  */
 export function loopFilesystem(): LoopFilesystemBridge | null {
-  return (typeof window !== "undefined" ? window.loop?.fs : undefined) ?? null;
+  return workspaceBridge("fs");
 }
 
-/** The PTY bridge, or null in a browser. See loopFilesystem for the rationale. */
+/** The PTY bridge. See loopFilesystem for where it comes from. */
 export function loopPty(): LoopPtyBridge | null {
-  return (typeof window !== "undefined" ? window.loop?.pty : undefined) ?? null;
+  return workspaceBridge("pty");
 }
 
-/** The git bridge, or null in a browser. See loopFilesystem for the rationale. */
+/** The git bridge. See loopFilesystem for where it comes from. */
 export function loopGit(): LoopGitBridge | null {
-  return (typeof window !== "undefined" ? window.loop?.git : undefined) ?? null;
+  return workspaceBridge("git");
 }
 
 export function loopShell(): LoopShellBridge | null {
-  return (typeof window !== "undefined" ? window.loop?.shell : undefined) ?? null;
+  return workspaceBridge("shell");
 }
 
 export function loopSourceControl(): LoopSourceControlBridge | null {
-  return (typeof window !== "undefined" ? window.loop?.sourceControl : undefined) ?? null;
+  return workspaceBridge("sourceControl");
 }
 
 /** The host window, or null in a browser — a tab has no traffic lights. */

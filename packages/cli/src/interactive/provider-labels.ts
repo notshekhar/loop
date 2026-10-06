@@ -36,6 +36,10 @@ export function providerLabel(id: string): string {
             return "Amazon Bedrock — AWS credentials, auto-detected (aws CLI / env / SSO)";
         case "ollama":
             return "Ollama — local, no key (must be running)";
+        case "claude-code":
+            return "Claude Code — your installed CLI and its own login";
+        case "cursor-agent":
+            return "Cursor — your installed cursor-agent and its own login";
         default:
             return "";
     }

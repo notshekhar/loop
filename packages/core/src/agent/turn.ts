@@ -5,7 +5,7 @@
  */
 import { streamText, isStepCount, type ModelMessage } from "ai";
 import { toolInputDeltaEvent, toolInputStartEvent, type TurnEmitter } from "./events";
-import { getModel, parseModelId } from "../providers";
+import { getModel, isNativeAgentProvider, parseModelId, type NativeAgentTurnContext } from "../providers";
 import { getCatalog } from "../catalog";
 import { getSetting } from "../settings";
 import {
@@ -715,6 +715,11 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
         }
     };
 
+    // Native agents compact their own context inside their own session; a
+    // loop-side compaction would only rewrite what loop shows and force a
+    // re-seed, so loop's thresholds stay informational for them.
+    const ownsContext = isNativeAgentProvider(provider);
+
     if (modelInfo) {
         const tokens = estimateContextTokens(session, contextOverheadTokens);
         // Usage is only knowable here — the estimate needs the overhead of the
@@ -729,6 +734,7 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
             supported: rolloverAt - contextOverheadTokens >= MIN_USABLE_TOKENS,
         });
         if (
+            !ownsContext &&
             tokens > modelInfo.contextWindow * threshold &&
             (await compactOverThreshold(tokens, modelInfo.contextWindow, "threshold")) === "aborted"
         ) {
@@ -817,6 +823,21 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
             ...providerOptions,
             ollama: { ...existing, options: { ...existingOpts, num_ctx: numCtx } },
         };
+    }
+
+    // Native agents (Claude Code, Cursor) run their own loop: they need to
+    // know which loop session they continue (to resume their native session
+    // instead of replaying history), where to work, and how to ask for
+    // permission. Utility calls never carry this, which is how the provider
+    // tells a real turn from a title/recap request.
+    if (isNativeAgentProvider(provider)) {
+        const native: NativeAgentTurnContext = {
+            loopSessionId: session.id,
+            cwd,
+            planMode: isPlanModeActive(session.id),
+            approvals: getSetting("bashApprove") === true && getBashApprovalBridge() !== null,
+        };
+        providerOptions = { ...providerOptions, [provider]: { ...native } };
     }
 
     // Extension turn middleware may tweak provider options (thinking/caching).
@@ -967,7 +988,7 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
     /** A failure the attempt loop may still recover from, so not reported yet. */
     const recoverable = (err: unknown) =>
         isRetryableStreamError(err) || (!overflowRecovered && isContextOverflowError(err));
-    let midTurnCompaction = modelInfo !== undefined;
+    let midTurnCompaction = modelInfo !== undefined && !ownsContext;
     const compactionDue = ({
         steps,
     }: {

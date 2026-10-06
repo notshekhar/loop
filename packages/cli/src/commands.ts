@@ -125,7 +125,7 @@ Usage:
   ${PRODUCT_NAME} whoami              Show active provider + auth status
   ${PRODUCT_NAME} cost audit          Verify the cost ledger reconciles (self-audit)
   ${PRODUCT_NAME} rpc [--socket|stop] Start JSON-RPC server (stop: end the socket daemon)
-  ${PRODUCT_NAME} serve [--host|--port] Web UI + WebSocket RPC (opt-in via /settings; token-locked)
+  ${PRODUCT_NAME} serve [--host|--port|--terminal] Web UI + WebSocket RPC (opt-in via /settings; token-locked)
   ${PRODUCT_NAME} gateways [status|stop] Run remote chat gateway daemons (set up in /gateways)
   ${PRODUCT_NAME} mcp <cmd>           Manage MCP servers (add, list, remove, login…)
   ${PRODUCT_NAME} man                 Open the manual (--install writes it to the manpath)
@@ -322,7 +322,7 @@ export function cmdServe(args: Args): void {
     let token: string;
     let stop: () => void;
     try {
-        ({ url, hostname, networkUrls, port: boundPort, token, stop } = startWebServer({ host, port }));
+        ({ url, hostname, networkUrls, port: boundPort, token, stop } = startWebServer({ host, port, remoteTerminal: Boolean(args.flags.terminal) }));
     } catch (err) {
         console.error((err as Error).message);
         process.exitCode = 1;

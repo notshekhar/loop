@@ -41,7 +41,16 @@ import { parseCustomProviderDraft, type CustomProviderDraft } from "./custom-pro
 import { bustCatalogCache, refreshBedrockCatalog } from "../catalog";
 import { envName } from "../brand";
 import { getExtensionHost } from "../extensions";
-import { bedrockRegion, listOllamaModels, ollamaBaseURL, resolveAwsCredentials } from "../providers";
+import {
+    bedrockRegion,
+    listOllamaModels,
+    NATIVE_AGENT_PROVIDERS,
+    ollamaBaseURL,
+    peekNativeAgent,
+    probeClaudeCode,
+    probeCursor,
+    resolveAwsCredentials,
+} from "../providers";
 import { BUILTIN_PROVIDER_IDS, type CustomProviderConfig, type ProviderId } from "../types";
 
 /** How a provider can be signed in to, in the order a picker should offer them. */
@@ -64,7 +73,7 @@ const OAUTH_PROVIDERS: Record<string, ProviderId> = {
 };
 
 /** Providers with no credential to enter: the "login" is a probe. */
-const DETECT_PROVIDERS = new Set<ProviderId>(["bedrock", "ollama"]);
+const DETECT_PROVIDERS = new Set<ProviderId>(["bedrock", "ollama", ...NATIVE_AGENT_PROVIDERS]);
 
 /** The saved config behind a `custom:<name>` id, or undefined. */
 function customConfigFor(provider: string): CustomProviderConfig | undefined {
@@ -189,7 +198,20 @@ export function listProviderDescriptors(): ProviderDescriptor[] {
             }),
         );
 
-    return [...merged, ...customs, ...extensions];
+    // Native agents never had a login, so they are not BUILTIN_PROVIDER_IDS;
+    // they are listed so a settings screen can show (and re-check) whether
+    // the CLI is installed and signed in on this machine.
+    const natives = NATIVE_AGENT_PROVIDERS.map(
+        (id): ProviderDescriptor => ({
+            id,
+            kind: "builtin",
+            authorized: peekNativeAgent(id).loggedIn,
+            mode: "missing",
+            methods: ["detect"],
+        }),
+    );
+
+    return [...merged, ...natives, ...customs, ...extensions];
 }
 
 // ─── Interactive flows ────────────────────────────────────────────────────────
@@ -323,6 +345,36 @@ async function runOllamaDetect(flow: Flow): Promise<void> {
 }
 
 /**
+ * Claude Code / Cursor: nothing to sign in to here — the CLI's own login is
+ * the credential. Re-probe the machine and report what was found, with the
+ * exact command to run when something is missing.
+ */
+async function runNativeAgentDetect(flow: Flow): Promise<void> {
+    const claude = flow.provider === "claude-code";
+    const label = claude ? "Claude Code" : "Cursor";
+    emit(flow, { type: "progress", message: `Looking for ${label} on this machine…` });
+    if (claude) {
+        const probe = await probeClaudeCode({ refresh: true });
+        if (!probe) throw new Error("Claude Code is not installed. Install it (https://claude.com/claude-code), then run `claude auth login`.");
+        if (!probe.loggedIn) throw new Error("Claude Code is installed but not signed in. Run `claude auth login`, then check again.");
+        bustCatalogCache();
+        finish(flow, "done", {
+            type: "done",
+            message: `Claude Code connected${probe.email ? ` as ${probe.email}` : ""} — ${probe.models.length} models.`,
+        });
+        return;
+    }
+    const probe = await probeCursor({ refresh: true });
+    if (!probe) throw new Error("Cursor's CLI is not installed. Install it (https://cursor.com/cli), then run `cursor-agent login`.");
+    if (!probe.loggedIn) throw new Error("cursor-agent is installed but not signed in. Run `cursor-agent login` (or set CURSOR_API_KEY), then check again.");
+    bustCatalogCache();
+    finish(flow, "done", {
+        type: "done",
+        message: `Cursor connected${probe.account ? ` as ${probe.account}` : ""} — ${probe.families.length} models.`,
+    });
+}
+
+/**
  * A custom gateway's browser sign-in.
  *
  * Runs against a DRAFT when the client is still in the add-a-provider wizard
@@ -348,6 +400,7 @@ async function runFlow(flow: Flow, method: AuthMethod, custom?: CustomProviderDr
     if (method === "detect") {
         if (flow.provider === "bedrock") return runBedrockDetect(flow);
         if (flow.provider === "ollama") return runOllamaDetect(flow);
+        if (flow.provider === "claude-code" || flow.provider === "cursor-agent") return runNativeAgentDetect(flow);
         throw new Error(`${flow.provider} has nothing to detect`);
     }
     const target = OAUTH_PROVIDERS[flow.provider];

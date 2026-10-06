@@ -53,7 +53,11 @@ export function mergeEnvironmentThread(
     interactionMode: shell.interactionMode,
     branch: shell.branch,
     worktreePath: shell.worktreePath,
-    latestTurn: shell.latestTurn,
+    // loop's shell reports which sessions are running but not WHICH turn —
+    // only the detail (the live overlay) knows its id. Without it the view
+    // cannot tell the running turn's messages from settled ones, and stamps a
+    // copy button and timestamp on whatever text precedes a running tool.
+    latestTurn: shell.latestTurn ?? detail.latestTurn,
     createdAt: shell.createdAt,
     updatedAt: shell.updatedAt,
     archivedAt: shell.archivedAt,
@@ -61,7 +65,12 @@ export function mergeEnvironmentThread(
     settledAt: shell.settledAt,
     snoozedUntil: shell.snoozedUntil,
     snoozedAt: shell.snoozedAt,
-    session: shell.session,
+    session:
+      shell.session !== null &&
+      shell.session.activeTurnId === null &&
+      detail.session?.activeTurnId != null
+        ? { ...shell.session, activeTurnId: detail.session.activeTurnId }
+        : shell.session,
   };
 }
 

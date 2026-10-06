@@ -1,6 +1,6 @@
 {
   "name": "@notshekhar/loop-core",
-  "version": "0.21.0",
+  "version": "0.21.1",
   "description": "Core engine for loop — auth, providers, catalog, sessions, agent loop, tools, RPC.",
   "license": "MIT",
   "type": "module",
@@ -21,6 +21,9 @@
     "./embed": {
       "types": "./src/embed.d.ts",
       "import": "./src/rpc/server.ts"
+    },
+    "./workspace": {
+      "import": "./src/workspace/index.ts"
     },
     "./embed-scheduling": {
       "types": "./src/embed-scheduling.d.ts",
@@ -45,10 +48,10 @@
     "@ai-sdk/mcp": "^2.0.43",
     "@ai-sdk/mistral": "^4.0.39",
     "@ai-sdk/openai": "^4.0.56",
+    "@ai-sdk/provider": "4.0.10",
     "@ai-sdk/xai": "^4.0.53",
     "@aws-sdk/credential-providers": "^3.1101.0",
     "@notshekhar/loop-sandbox": "*",
-    "@notshekhar/loop-web": "*",
     "@openrouter/ai-sdk-provider": "^3.0.0",
     "@xterm/headless": "^6.0.0",
     "ai": "7.0.90",
@@ -63,5 +66,8 @@
   },
   "devDependencies": {
     "@types/configstore": "^6.0.2"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.291"
   }
 }

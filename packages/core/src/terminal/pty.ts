@@ -157,6 +157,8 @@ export interface PtyOptions {
 }
 
 export interface Pty {
+    /** The shell's pid, for whoever lists or signals it. */
+    readonly pid: number;
     write(data: string): void;
     resize(rows: number, cols: number): void;
     kill(): void;
@@ -272,6 +274,7 @@ export function spawnPty(options: PtyOptions): Pty {
     };
 
     return {
+        pid: child.pid,
         write(data: string) {
             if (exited) return;
             // Synchronous, so writes cannot reorder — the async fs.write path

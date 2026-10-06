@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.21.1] - 2026-10-07
+
+### Added
+
+- **Claude Code and Cursor as providers.** If the `claude` CLI or Cursor's `cursor-agent` CLI is installed and signed in on this machine, its models appear in `/provider` and the model pickers, with nothing to log in to in loop: each runs on its own CLI's sign-in. They work as themselves, with their own tools, prompts and context management, while loop keeps the conversation: every turn, tool call and reply is in loop's history, and you can switch to or from any other model mid-session. Thinking levels map onto what each model actually offers (Claude's effort levels, Cursor's per-model variants), plan mode carries over, and with bash approvals on, Claude Code asks through loop's own approval prompt. Both show with their own icons in the desktop app and the web UI, where Settings → Providers can re-check them.
+- **`loop serve` hosts the desktop app's interface.** The browser now gets the same UI as the desktop app instead of the old single page, terminals and git included. `--terminal` offers the terminal to other machines too; this machine always gets it.
+
+### Fixed
+
+- **Esc with messages queued sends the next one**, as in the terminal: the running turn stops and the first queued message goes out right away, with the rest still queued behind it. It used to discard the whole queue, the way Stop does.
+- **Queued messages each get their own reply** in the desktop app and the web UI, in order, instead of one reply merging into the next.
+- **Tools appear where they happened while a reply is streaming**, not below the text written after them.
+- **No copy button or timestamp under a message while its turn is still running.**
+- **Reopening a terminal in the desktop app no longer crashes it.**
+
 ## [0.21.0] - 2026-10-06
 
 ### Added

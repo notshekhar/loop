@@ -82,19 +82,6 @@ export type FromHost = HostResponse | HostNotification | HostCallback;
 /** The channel main uses to hand the renderer its end of that pipe. */
 export const TERMINAL_PORT_CHANNEL = "loop:terminalPort";
 
-/** Renderer channels the host emits on. Named here so both halves agree. */
-export const HOST_CHANNELS = {
-  terminal: "loop:terminal",
-  gitAction: "loop:gitAction",
-} as const;
-
-/**
- * Callbacks the host may ask main for.
- *
- * One today. It is a named constant rather than a bare string because the two
- * halves are bundled separately — a typo would be a runtime rejection in a code
- * path that only runs when someone commits without writing a message.
- */
-export const HOST_CALLBACKS = {
-  commitMessage: "core.commitMessage",
-} as const;
+// The channel and callback names are shared with every other host of the
+// workspace handlers (loop serve), so they live with the handlers in core.
+export { HOST_CALLBACKS, HOST_CHANNELS } from "@notshekhar/loop-core/workspace";

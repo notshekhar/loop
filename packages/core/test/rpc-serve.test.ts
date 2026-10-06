@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { useTempSessionDb } from "./helpers/temp-db";
@@ -236,7 +236,8 @@ describe("startWebServer", () => {
     beforeAll(() => {
         storedToken = undefined;
         // port 0 = OS-assigned free port; keeps parallel test runs collision-free.
-        handle = startWebServer({ port: 0 });
+        // No UI: these cover the token, the socket and the RPC surface.
+        handle = startWebServer({ port: 0, webAppDir: null });
         token = getOrCreateServeToken();
     });
     afterAll(() => {
@@ -250,33 +251,17 @@ describe("startWebServer", () => {
         expect(handle.networkUrls).toEqual([]);
     });
 
-    test("session deep links serve the app (reload lands on the SPA)", async () => {
-        const ok = await fetch(base() + `/session/abc123DEF?token=${token}`);
-        expect(ok.status).toBe(200);
-        expect(await ok.text()).toContain("<title>loop</title>");
-        // Token still required on deep links; malformed ids stay 404.
-        expect((await fetch(base() + "/session/abc123DEF")).status).toBe(401);
-        expect((await fetch(base() + `/session/abc-123!?token=${token}`)).status).toBe(404);
-        expect((await fetch(base() + `/session/?token=${token}`)).status).toBe(404);
+    test("with no UI built, pages say how to build it — still behind the token", async () => {
+        expect((await fetch(base() + "/")).status).toBe(401);
+        expect((await fetch(base() + "/?token=wrong")).status).toBe(401);
+        const res = await fetch(base() + `/?token=${token}`);
+        expect(res.status).toBe(503);
+        expect(await res.text()).toContain("bun run --filter @loop/web build");
     });
 
-    test("page requires the token", async () => {
-        const noToken = await fetch(base() + "/");
-        expect(noToken.status).toBe(401);
-        const badToken = await fetch(base() + "/?token=wrong");
-        expect(badToken.status).toBe(401);
-        const ok = await fetch(base() + `/?token=${token}`);
-        expect(ok.status).toBe(200);
-        expect(ok.headers.get("content-type")).toContain("text/html");
-        const html = await ok.text();
-        expect(html).toContain("<title>loop</title>");
-        // The page must never embed the token — it arrives via the URL.
-        expect(html).not.toContain(token);
-    });
-
-    test("unknown paths 404 (with token), and the WS upgrade rejects bad tokens", async () => {
-        expect((await fetch(base() + `/nope?token=${token}`)).status).toBe(404);
+    test("the WS upgrade rejects bad tokens", async () => {
         expect((await fetch(base() + "/ws?token=wrong")).status).toBe(401);
+        expect((await fetch(base() + "/ws")).status).toBe(401);
     });
 
     test("usage.steak, cost.stats, settings over WS", async () => {
@@ -445,5 +430,181 @@ describe("startWebServer", () => {
         expect(hist.result.name).toBe("my web session");
 
         ws.close();
+    });
+});
+
+/** A socket to a serve handle that answers calls by id and collects notifications. */
+async function openSocket(port: number, token: string) {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${token}`);
+    const waiting = new Map<number, (msg: Record<string, unknown>) => void>();
+    const notifications: Array<{ method: string; params: Record<string, unknown> }> = [];
+    ws.onmessage = (e) => {
+        const msg = JSON.parse(String(e.data)) as Record<string, unknown>;
+        if (typeof msg.id === "number" && waiting.has(msg.id)) {
+            waiting.get(msg.id)!(msg);
+            waiting.delete(msg.id);
+        } else if (typeof msg.method === "string") {
+            notifications.push(msg as { method: string; params: Record<string, unknown> });
+        }
+    };
+    await new Promise<void>((resolve, reject) => {
+        ws.onopen = () => resolve();
+        ws.onerror = () => reject(new Error("ws failed to open"));
+    });
+    let nextId = 1;
+    return {
+        notifications,
+        call(method: string, params: Record<string, unknown> = {}) {
+            const id = nextId++;
+            return new Promise<Record<string, unknown>>((resolve) => {
+                waiting.set(id, resolve);
+                ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+            });
+        },
+        close: () => ws.close(),
+    };
+}
+
+describe("serve hosts the desktop app", () => {
+    useTempSessionDb();
+
+    let handle: ServeHandle;
+    let token: string;
+    let appDir: string;
+    const base = () => `http://127.0.0.1:${handle.port}`;
+
+    beforeAll(() => {
+        storedToken = undefined;
+        appDir = mkdtempSync(join(tmpdir(), "loop-web-app-"));
+        mkdirSync(join(appDir, "assets"));
+        writeFileSync(join(appDir, "index.html"), "<!doctype html><title>desktop app</title>");
+        writeFileSync(join(appDir, "assets", "app-abc123.js"), "console.log('app')");
+        writeFileSync(join(appDir, "favicon.ico"), "ico");
+        handle = startWebServer({ port: 0, webAppDir: appDir });
+        token = getOrCreateServeToken();
+    });
+    afterAll(() => {
+        handle.stop();
+    });
+
+    test("the page never embeds the token — it arrives in the URL and leaves as a cookie", async () => {
+        const html = await (await fetch(base() + `/?token=${token}`)).text();
+        expect(html).not.toContain(token);
+    });
+
+    test("the token page load serves the app and leaves an HttpOnly cookie", async () => {
+        const res = await fetch(base() + `/?token=${token}`);
+        expect(res.status).toBe(200);
+        expect(await res.text()).toContain("<title>desktop app</title>");
+        const cookie = res.headers.get("set-cookie") ?? "";
+        expect(cookie).toContain(`loop_serve=${token}`);
+        expect(cookie).toContain("HttpOnly");
+        expect(cookie).toContain("SameSite=Strict");
+    });
+
+    test("assets need the token or the cookie, never neither", async () => {
+        expect((await fetch(base() + "/assets/app-abc123.js")).status).toBe(401);
+        const withCookie = await fetch(base() + "/assets/app-abc123.js", {
+            headers: { cookie: `loop_serve=${token}` },
+        });
+        expect(withCookie.status).toBe(200);
+        expect(withCookie.headers.get("content-type")).toContain("text/javascript");
+        // Hashed assets are immutable; the shell must always be revalidated.
+        expect(withCookie.headers.get("cache-control")).toContain("immutable");
+        const wrongCookie = await fetch(base() + "/assets/app-abc123.js", { headers: { cookie: "loop_serve=nope" } });
+        expect(wrongCookie.status).toBe(401);
+    });
+
+    test("routes get the app shell; missing assets and traversal 404", async () => {
+        const cookie = { headers: { cookie: `loop_serve=${token}` } };
+        const route = await fetch(base() + "/settings/general", cookie);
+        expect(route.status).toBe(200);
+        expect(await route.text()).toContain("<title>desktop app</title>");
+        expect(route.headers.get("cache-control")).toBe("no-cache");
+        expect((await fetch(base() + "/assets/missing.js", cookie)).status).toBe(404);
+        expect((await fetch(base() + "/%2e%2e/%2e%2e/etc/passwd.txt", cookie)).status).toBe(404);
+    });
+
+    test("the workspace answers over the socket: browse a folder", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "loop-ws-browse-"));
+        mkdirSync(join(dir, "alpha"));
+        mkdirSync(join(dir, "beta"));
+        const sock = await openSocket(handle.port, token);
+        const reply = (await sock.call("workspace.fs.browse", { partialPath: dir + "/", cwd: undefined })) as {
+            result: { entries: { name: string }[] } | null;
+        };
+        expect(reply.result?.entries.map((e) => e.name).sort()).toEqual(["alpha", "beta"]);
+        // The Files panel's pair: list a workspace, read a file in it.
+        writeFileSync(join(dir, "alpha", "note.md"), "# hello from the workspace");
+        const listed = (await sock.call("workspace.fs.list", { cwd: dir })) as {
+            result: { entries: { path: string; kind: string }[] };
+        };
+        expect(listed.result.entries.map((e) => e.path)).toContain("alpha/note.md");
+        const read = (await sock.call("workspace.fs.read", { cwd: dir, relativePath: "alpha/note.md" })) as {
+            result: { ok: boolean; contents: string };
+        };
+        expect(read.result).toMatchObject({ ok: true, contents: "# hello from the workspace" });
+        // Unknown workspace methods are an RPC error, not silence.
+        const missing = await sock.call("workspace.fs.nope");
+        expect((missing.error as { message: string }).message).toContain("Method not found");
+        sock.close();
+    });
+
+    test("a terminal opened from this machine streams its output as workspace events", async () => {
+        const sock = await openSocket(handle.port, token);
+        const opened = (await sock.call("workspace.pty.open", {
+            threadId: "t1",
+            terminalId: "term1",
+            cwd: tmpdir(),
+            cols: 80,
+            rows: 24,
+        })) as { result: { status: string; pid: number | null }; error?: unknown };
+        expect(opened.error).toBeUndefined();
+        expect(opened.result.pid).toBeGreaterThan(0);
+        await sock.call("workspace.pty.write", { threadId: "t1", terminalId: "term1", data: "echo served-$((40+2))\r" });
+        const output = () =>
+            sock.notifications
+                .filter((n) => n.method === "workspace.event" && n.params.channel === "loop:terminal")
+                .map((n) => (n.params.payload as { data?: string }).data ?? "")
+                .join("");
+        await until(() => output().includes("served-42"), "terminal output arrives", 500, 20);
+        await sock.call("workspace.pty.close", { threadId: "t1", terminalId: "term1" });
+        sock.close();
+    });
+});
+
+describe("serve workspace terminal gate", () => {
+    test("a client the terminal is not offered to is refused, not ignored", async () => {
+        const { createServeWorkspace } = await import("../src/rpc/serve-workspace");
+        const workspace = createServeWorkspace(new RpcServer(), () => {});
+        await expect(
+            workspace.call("workspace.pty.open", { threadId: "t", terminalId: "x", cwd: tmpdir() }, false),
+        ).rejects.toThrow("--terminal");
+        // Everything else is still answered for that client.
+        const dir = mkdtempSync(join(tmpdir(), "loop-ws-gate-"));
+        expect(await workspace.call("workspace.fs.browse", { partialPath: dir + "/" }, false)).not.toBeNull();
+        workspace.dispose();
+    });
+});
+
+describe("the packed web UI", () => {
+    test("pack → unpack round-trips every shipped file and leaves out source maps", async () => {
+        const { packWebApp, unpackWebApp } = await import("../src/rpc/web-app-pack");
+        const dir = mkdtempSync(join(tmpdir(), "loop-web-pack-"));
+        mkdirSync(join(dir, "assets", "fonts"), { recursive: true });
+        writeFileSync(join(dir, "index.html"), "<title>x</title>");
+        writeFileSync(join(dir, "assets", "app.js"), "app()");
+        writeFileSync(join(dir, "assets", "app.js.map"), "{}");
+        writeFileSync(join(dir, "assets", "fonts", "f.woff2"), new Uint8Array([0, 1, 2, 255]));
+        writeFileSync(join(dir, "mockServiceWorker.js"), "msw");
+        const files = unpackWebApp(packWebApp(dir));
+        expect([...files.keys()].sort()).toEqual(["/assets/app.js", "/assets/fonts/f.woff2", "/index.html"]);
+        expect(new TextDecoder().decode(files.get("/assets/app.js"))).toBe("app()");
+        expect([...files.get("/assets/fonts/f.woff2")!]).toEqual([0, 1, 2, 255]);
+    });
+
+    test("a folder that is not a web build is refused at build time", async () => {
+        const { packWebApp } = await import("../src/rpc/web-app-pack");
+        expect(() => packWebApp(mkdtempSync(join(tmpdir(), "loop-web-empty-")))).toThrow("index.html");
     });
 });

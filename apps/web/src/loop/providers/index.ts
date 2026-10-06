@@ -16,7 +16,7 @@
  * point of the split — adding a provider to loop must not require a UI change
  * to make it usable.
  */
-import type { Icon } from "../../components/Icons";
+import { ClaudeCodeIcon, CursorIcon, type Icon } from "../../components/Icons";
 import {
   AnthropicIcon,
   BedrockIcon,
@@ -77,6 +77,10 @@ const ICONS: Record<string, Icon> = {
   vercel: VercelIcon,
   "amazon-bedrock": BedrockIcon,
   ollama: OllamaIcon,
+  // Native agents: loop drives the user's own CLI, so the mark is the
+  // product's, not the model vendor's.
+  "claude-code": ClaudeCodeIcon,
+  "cursor-agent": CursorIcon,
 };
 
 interface CatalogEntry {

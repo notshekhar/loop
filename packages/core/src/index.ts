@@ -14,8 +14,14 @@ export {
     listBedrockModels,
     resolveAwsCredentials,
     fetchCustomProviderModels,
+    isNativeAgentProvider,
+    NATIVE_AGENT_PROVIDERS,
+    peekNativeAgent,
+    probeClaudeCode,
+    probeCursor,
     type BedrockModelSummary,
     type DiscoveredModel,
+    type NativeAgentProviderId,
 } from "./providers";
 export * from "./catalog";
 export * from "./sessions";

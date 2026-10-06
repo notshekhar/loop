@@ -23,7 +23,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { runStackedAction } from "../../../../desktop/src/gitActions.ts";
+import { runStackedAction } from "../../../../../packages/core/src/workspace/gitActions.ts";
 
 const run = promisify(execFile);
 const decode = Schema.decodeUnknownOption(GitActionProgressEvent);
