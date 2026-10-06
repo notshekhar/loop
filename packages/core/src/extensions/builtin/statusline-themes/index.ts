@@ -12,7 +12,7 @@
  * layout.
  */
 import type { ExtensionAPI } from "../../api";
-import { DEFAULT_LAYOUT, getLayout, LAYOUTS, type LayoutId } from "./layouts";
+import { DEFAULT_LAYOUT, getLayout, LAYOUTS, type LayoutId, track } from "./layouts";
 import { SystemSampler } from "./system";
 import { applyTheme, DEFAULT_THEME, getTheme, THEMES, type ThemeId } from "./themes";
 
@@ -34,7 +34,9 @@ export default {
         // stay live (they change with no user action, which otherwise wouldn't
         // trigger a render).
         const syncSampler = () => {
-            if (getLayout(layoutId()).needsVitals) sys.start(() => api.statusLine.refresh());
+            const layout = getLayout(layoutId());
+            if (layout.needsVitals) sys.start(() => api.statusLine.refresh());
+            else if (layout.ticks) sys.startClock(() => api.statusLine.refresh());
             else sys.stop();
         };
         syncSampler();
@@ -48,6 +50,8 @@ export default {
         // 1) Layout: replace the rendered rows with the active preset's output.
         //    "native" (render === null) returns void, leaving the built-in render.
         api.statusLine.transform((lines, ctx) => {
+            // Session clock and context history, for the layouts that show change over time.
+            track(ctx);
             const layout = getLayout(layoutId());
             if (!layout.render) return; // native — untouched
             try {

@@ -126,6 +126,7 @@ export {
     isFocusable,
     isViewportTUI,
     type OverlayAnchor,
+    type OverlayBounds,
     type OverlayHandle,
     type OverlayMargin,
     type OverlayOptions,
@@ -140,6 +141,7 @@ export {
     type ViewportTUI,
 } from "./tui";
 export { TuiAltScreen, type TuiAltScreenOptions } from "./tui-alt-screen";
+export type { WheelScrollLines } from "./wheel-scroll";
 export { TuiMainScreen, type TuiMainScreenRenderState } from "./tui-main-screen";
 // Utilities
 export {

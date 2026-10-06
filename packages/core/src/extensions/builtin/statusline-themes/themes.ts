@@ -18,7 +18,17 @@ export type ThemeId =
     | "heat"
     | "neon"
     | "gold"
-    | "cyber";
+    | "cyber"
+    | "dracula"
+    | "nord"
+    | "gruvbox"
+    | "catppuccin"
+    | "tokyo"
+    | "pastel"
+    | "aurora"
+    | "ice"
+    | "candy"
+    | "amber";
 
 type ThemeKind =
     | { kind: "off" } // leave the native colored render untouched
@@ -145,6 +155,127 @@ export const THEMES: Theme[] = [
         label: "cyber",
         description: "solid cyan (#00B8DC)",
         spec: { kind: "solid", color: { r: 0, g: 184, b: 220 } },
+    },
+    {
+        id: "dracula",
+        label: "dracula",
+        description: "purple → pink → cyan, the Dracula palette",
+        spec: {
+            kind: "gradient",
+            stops: [
+                { r: 189, g: 147, b: 249 },
+                { r: 255, g: 121, b: 198 },
+                { r: 139, g: 233, b: 253 },
+            ],
+        },
+    },
+    {
+        id: "nord",
+        label: "nord",
+        description: "frost blues, the Nord palette",
+        spec: {
+            kind: "gradient",
+            stops: [
+                { r: 94, g: 129, b: 172 },
+                { r: 129, g: 161, b: 193 },
+                { r: 136, g: 192, b: 208 },
+            ],
+        },
+    },
+    {
+        id: "gruvbox",
+        label: "gruvbox",
+        description: "warm retro yellow → orange → red, the Gruvbox palette",
+        spec: {
+            kind: "gradient",
+            stops: [
+                { r: 250, g: 189, b: 47 },
+                { r: 254, g: 128, b: 25 },
+                { r: 251, g: 73, b: 52 },
+            ],
+        },
+    },
+    {
+        id: "catppuccin",
+        label: "catppuccin",
+        description: "mauve → pink → peach, Catppuccin Mocha",
+        spec: {
+            kind: "gradient",
+            stops: [
+                { r: 203, g: 166, b: 247 },
+                { r: 245, g: 194, b: 231 },
+                { r: 250, g: 179, b: 135 },
+            ],
+        },
+    },
+    {
+        id: "tokyo",
+        label: "tokyo",
+        description: "blue → purple, Tokyo Night",
+        spec: {
+            kind: "gradient",
+            stops: [
+                { r: 122, g: 162, b: 247 },
+                { r: 187, g: 154, b: 247 },
+            ],
+        },
+    },
+    {
+        id: "pastel",
+        label: "pastel",
+        description: "soft pastel pink → lavender → mint",
+        spec: {
+            kind: "gradient",
+            stops: [
+                { r: 255, g: 179, b: 198 },
+                { r: 201, g: 182, b: 255 },
+                { r: 181, g: 242, b: 212 },
+            ],
+        },
+    },
+    {
+        id: "aurora",
+        label: "aurora",
+        description: "northern lights: green → teal → violet",
+        spec: {
+            kind: "gradient",
+            stops: [
+                { r: 57, g: 255, b: 136 },
+                { r: 0, g: 201, b: 201 },
+                { r: 157, g: 107, b: 255 },
+            ],
+        },
+    },
+    {
+        id: "ice",
+        label: "ice",
+        description: "white → pale blue, cold and quiet",
+        spec: {
+            kind: "gradient",
+            stops: [
+                { r: 240, g: 248, b: 255 },
+                { r: 156, g: 207, b: 255 },
+            ],
+        },
+    },
+    {
+        id: "candy",
+        label: "candy",
+        description: "hot pink → yellow → sky blue",
+        spec: {
+            kind: "gradient",
+            stops: [
+                { r: 255, g: 95, b: 162 },
+                { r: 255, g: 228, b: 94 },
+                { r: 94, g: 200, b: 255 },
+            ],
+        },
+    },
+    {
+        id: "amber",
+        label: "amber",
+        description: "solid amber, an old CRT terminal",
+        spec: { kind: "solid", color: { r: 255, g: 176, b: 0 } },
     },
 ];
 

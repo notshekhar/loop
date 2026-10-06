@@ -36,6 +36,7 @@ function cpuSample(): CpuSample {
 
 export class SystemSampler {
     private timer: ReturnType<typeof setInterval> | null = null;
+    private mode: "vitals" | "clock" | null = null;
     private prev: CpuSample | null = null;
     private snapshot: Vitals = {
         cpu: null,
@@ -48,7 +49,9 @@ export class SystemSampler {
      * each sample (e.g. to repaint the status line so the clock/CPU stay live).
      */
     start(onTick?: () => void, intervalMs = 1000): void {
-        if (this.timer) return;
+        if (this.mode === "vitals") return;
+        this.stop();
+        this.mode = "vitals";
         this.prev = cpuSample();
         this.tick(); // prime memory immediately
         this.timer = setInterval(() => {
@@ -59,9 +62,23 @@ export class SystemSampler {
         this.timer.unref?.();
     }
 
+    /**
+     * A repaint-only tick for layouts with a clock but no vitals: no OS reads,
+     * just `onTick` every `intervalMs`. Replaced by {@link start} if a vitals
+     * layout takes over.
+     */
+    startClock(onTick: () => void, intervalMs = 30_000): void {
+        if (this.mode === "clock") return;
+        this.stop();
+        this.mode = "clock";
+        this.timer = setInterval(onTick, intervalMs);
+        this.timer.unref?.();
+    }
+
     stop(): void {
         if (this.timer) clearInterval(this.timer);
         this.timer = null;
+        this.mode = null;
         this.prev = null;
     }
 

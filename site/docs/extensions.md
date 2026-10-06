@@ -19,7 +19,7 @@ loop disable <name>        # turn it back off
 | `caveman`           | Ultra-terse replies, same technical substance             |
 | `ponytail`          | "Lazy senior dev" — the smallest change that solves it    |
 | `wayfinder`         | Charts a big, foggy effort as a map of decision tickets   |
-| `statusline-themes` | Six status-line layouts and a colour picker               |
+| `statusline-themes` | Twenty status-line layouts and a colour picker            |
 
 ---
 
@@ -226,12 +226,37 @@ loop enable statusline-themes
 ```
 
 ```
-/statusline            # menu of layouts
-/statusline vitals     # native | compact | vitals | tokens | flex | powerline | minimal | bar
+/statusline            # menu of layouts, simplest first
+/statusline git        # or pick one by name
 /statuscolor           # colour menu
 ```
 
-`vitals` is a dashboard, `tokens` foregrounds context and cost, `powerline` uses separators, `minimal` gets out of the way. The choice persists per install.
+The layouts, from simplest to fanciest:
+
+| Layout      | Shows                                                     |
+| ----------- | --------------------------------------------------------- |
+| `native`    | The built-in two-row status line                          |
+| `plain`     | Model, thinking and context %, no colour                  |
+| `ascii`     | ASCII only, safe in any font or log                       |
+| `dot`       | A dot that goes green → yellow → red as the context fills |
+| `minimal`   | Agent, model, thinking, context %                         |
+| `emoji`     | An emoji per segment                                      |
+| `path`      | Shortened working directory first                         |
+| `git`       | Folder and branch, read from `.git` without running git   |
+| `compact`   | One row with a context bar                                |
+| `bar`       | A wide context bar                                        |
+| `split`     | Identity on the left, numbers on the right edge           |
+| `session`   | How long the session has run and its spend per hour       |
+| `spark`     | A sparkline of how the context has filled this session    |
+| `tokens`    | In, out, cached, cache-hit % and cost                     |
+| `meter`     | htop-style meters for context, CPU and memory             |
+| `vitals`    | The full dashboard, with clock, CPU and memory            |
+| `boxed`     | The status line in a rounded box                          |
+| `powerline` | Coloured blocks with arrow separators (Nerd Font)         |
+| `rounded`   | Powerline with rounded caps (Nerd Font)                   |
+| `flex`      | A three-row powerline dashboard (Nerd Font)               |
+
+`/statuscolor` recolours whichever layout is active — gradients like `ocean`, `sunset`, `aurora` and `candy`, editor palettes like `dracula`, `nord`, `gruvbox`, `catppuccin` and `tokyo`, or solids like `matrix` and `amber`. Both choices persist per install.
 
 ---
 

@@ -6,11 +6,34 @@
  * so the built-in two-row render is left untouched. Any active color theme then
  * recolors whatever the layout produced, so the two axes compose freely.
  */
+import { readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join as joinPath } from "node:path";
 import type { StatusLineContext } from "../../api";
 import { ansiLen, bg, barCells, bold, COLORS, dim, fg, heat, type RGB } from "./ansi";
 import type { Vitals } from "./system";
 
-export type LayoutId = "native" | "compact" | "vitals" | "tokens" | "flex" | "powerline" | "minimal" | "bar";
+export type LayoutId =
+    | "native"
+    | "plain"
+    | "ascii"
+    | "dot"
+    | "minimal"
+    | "emoji"
+    | "path"
+    | "git"
+    | "compact"
+    | "bar"
+    | "split"
+    | "session"
+    | "spark"
+    | "tokens"
+    | "meter"
+    | "vitals"
+    | "boxed"
+    | "powerline"
+    | "rounded"
+    | "flex";
 
 export interface Layout {
     id: LayoutId;
@@ -20,6 +43,8 @@ export interface Layout {
     sample: string;
     /** True if it reads CPU/mem — gates the background sampler. */
     needsVitals: boolean;
+    /** True if it shows a running clock and must repaint on its own once a minute. */
+    ticks?: boolean;
     /** Render the rows, or null to keep the native built-in render. */
     render: ((ctx: StatusLineContext, sys: Vitals) => string[] | null) | null;
 }
@@ -199,9 +224,123 @@ function powerline(segs: Array<{ text: string; bg: RGB }>, width = Infinity): st
     return out;
 }
 
+// ── live state the stateless layouts read ─────────────────────────────────────
+
+/**
+ * Session clock and context history. A transform only sees the current
+ * snapshot, so anything over time (elapsed, burn rate, the sparkline) is kept
+ * here, keyed by session so /new or /resume starts fresh.
+ */
+const live = {
+    sessionKey: undefined as string | null | undefined,
+    startedAt: Date.now(),
+    history: [] as number[],
+};
+const SPARK_POINTS = 24;
+
+export function track(ctx: StatusLineContext): void {
+    if (ctx.sessionId !== live.sessionKey) {
+        live.sessionKey = ctx.sessionId;
+        live.startedAt = Date.now();
+        live.history = [];
+    }
+    const r = ctxRatio(ctx);
+    if (live.history[live.history.length - 1] !== r) {
+        live.history.push(r);
+        if (live.history.length > SPARK_POINTS) live.history.shift();
+    }
+}
+
+function fmtElapsed(ms: number): string {
+    const m = Math.floor(ms / 60_000);
+    if (m < 1) return `${Math.floor(ms / 1000)}s`;
+    if (m < 60) return `${m}m`;
+    return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
+}
+
+/** Spend per hour so far — only meaningful once a minute has passed. */
+function burnRate(ctx: StatusLineContext): string | null {
+    const hours = (Date.now() - live.startedAt) / 3_600_000;
+    if (hours < 1 / 60 || ctx.cost.usd <= 0) return null;
+    return `$${(ctx.cost.usd / hours).toFixed(2)}/h`;
+}
+
+const SPARK = "▁▂▃▄▅▆▇█";
+/** Scaled to the session's peak, so the shape shows even while the context is small. */
+function sparkline(values: number[]): string {
+    const peak = Math.max(...values);
+    if (peak <= 0) return SPARK[0].repeat(values.length);
+    return values
+        .map((v) => SPARK[Math.min(SPARK.length - 1, Math.floor((Math.max(0, v) / peak) * SPARK.length))])
+        .join("");
+}
+
+/** `~/code/loop` → `~/c/loop`: every directory but the last cut to one letter. */
+function shortPath(cwd: string): string {
+    const home = homedir();
+    const p = cwd.startsWith(home) ? `~${cwd.slice(home.length)}` : cwd;
+    const parts = p.split("/");
+    return parts.map((seg, i) => (i < parts.length - 1 && seg.length > 1 ? seg[0] : seg)).join("/");
+}
+
+/**
+ * The current branch, read straight from `.git/HEAD` — never a `git`
+ * subprocess on a repaint. Cached per directory and re-read when HEAD's mtime
+ * moves, so a checkout shows up on the next repaint.
+ */
+const branchCache = new Map<string, { head: string; mtimeMs: number; branch: string | null }>();
+function gitHeadFile(cwd: string): string | null {
+    let dir = cwd;
+    for (;;) {
+        const dotGit = joinPath(dir, ".git");
+        try {
+            const st = statSync(dotGit);
+            if (st.isDirectory()) return joinPath(dotGit, "HEAD");
+            // A worktree or submodule: `.git` is a file pointing at the real git dir.
+            const m = readFileSync(dotGit, "utf8").match(/^gitdir:\s*(.+)$/m);
+            if (m) return joinPath(m[1].startsWith("/") ? m[1].trim() : joinPath(dir, m[1].trim()), "HEAD");
+        } catch {
+            // not here — keep walking up
+        }
+        const up = dirname(dir);
+        if (up === dir) return null;
+        dir = up;
+    }
+}
+function gitBranch(cwd: string): string | null {
+    try {
+        const cached = branchCache.get(cwd);
+        const head = cached?.head ?? gitHeadFile(cwd);
+        if (!head) return null;
+        const mtimeMs = statSync(head).mtimeMs;
+        if (cached && cached.mtimeMs === mtimeMs) return cached.branch;
+        const raw = readFileSync(head, "utf8").trim();
+        const branch = raw.startsWith("ref: refs/heads/") ? raw.slice(16) : raw.slice(0, 7);
+        branchCache.set(cwd, { head, mtimeMs, branch });
+        return branch;
+    } catch {
+        return null;
+    }
+}
+
+/** A labelled meter: `ctx [||||||    ] 61%`, htop-style. */
+function meter(label: string, ratio: number, width: number): string {
+    const r = Math.min(1, Math.max(0, ratio));
+    const filled = Math.round(r * width);
+    return `${dim(label)} ${dim("[")}${fg(heat(r), "|".repeat(filled))}${" ".repeat(width - filled)}${dim("]")} ${fg(heat(r), `${Math.round(r * 100)}%`)}`;
+}
+
+/** Rounded powerline: like {@link powerline} but with  caps on both ends. */
+function rounded(segs: Array<{ text: string; bg: RGB }>, width = Infinity): string {
+    const strip = powerline(segs, Math.max(1, width - 1));
+    const tail = strip.lastIndexOf("");
+    if (!segs.length || tail < 0) return strip;
+    return fg(segs[0].bg, "") + strip.slice(0, tail) + "" + strip.slice(tail + 1);
+}
+
 // ── layouts ───────────────────────────────────────────────────────────────────
 
-export const LAYOUTS: Layout[] = [
+const ALL: Layout[] = [
     {
         id: "native",
         label: "native",
@@ -393,7 +532,280 @@ export const LAYOUTS: Layout[] = [
             return [`${head}  ${bar} ${pct}  ${tail}`];
         },
     },
+    {
+        id: "plain",
+        label: "plain",
+        description: "the simplest: model, thinking and context percent, no color at all",
+        sample: "Opus 4.8 high 30%",
+        needsVitals: false,
+        render: (ctx) => {
+            const think = thinkValue(ctx);
+            return [[prettyModel(ctx), think, `${Math.round(ctxRatio(ctx) * 100)}%`].filter(Boolean).join(" ")];
+        },
+    },
+    {
+        id: "ascii",
+        label: "ascii",
+        description: "plain ASCII only — safe on any font, terminal or log",
+        sample: "[plan] Opus 4.8 (high) | ctx 30.5% | 61k/200k | $0.0042",
+        needsVitals: false,
+        render: (ctx) => {
+            const think = thinkValue(ctx);
+            const toks = ctx.context.max
+                ? `${fmtTokens(ctx.context.used)}/${fmtTokens(ctx.context.max)}`
+                : fmtTokens(ctx.context.used);
+            return [
+                fit(
+                    [
+                        `[${ctx.agent || "default"}] ${prettyModel(ctx)}${think ? ` (${think})` : ""}`,
+                        `ctx ${pct1(ctxRatio(ctx))}`,
+                        toks,
+                        `$${ctx.cost.usd.toFixed(4)}`,
+                    ],
+                    ctx.width,
+                    " | ",
+                ),
+            ];
+        },
+    },
+    {
+        id: "dot",
+        label: "dot",
+        description: "a status dot that turns green → yellow → red as the context fills, then the model",
+        sample: "● Opus 4.8 high 30%",
+        needsVitals: false,
+        render: (ctx) => {
+            const r = ctxRatio(ctx);
+            return [join([fg(heat(r), "●"), model(ctx), thinking(ctx), fg(heat(r), `${Math.round(r * 100)}%`)], " ")];
+        },
+    },
+    {
+        id: "emoji",
+        label: "emoji",
+        description: "every segment gets an emoji — model, thinking, context, cost, folder",
+        sample: "🤖 Opus 4.8 · 🧠 high · 📊 30.5% · 💰 $0.0042 · 📂 loop",
+        needsVitals: false,
+        render: (ctx) => {
+            const r = ctxRatio(ctx);
+            const think = thinkValue(ctx);
+            const folder = ctx.cwd.split("/").pop() || ctx.cwd;
+            return [
+                fit(
+                    [
+                        `🤖 ${model(ctx)}`,
+                        think ? `🧠 ${fg(COLORS.magenta, think)}` : null,
+                        `📊 ${fg(heat(r), pct1(r))}`,
+                        `💰 ${fg(COLORS.yellow, `$${ctx.cost.usd.toFixed(4)}`)}`,
+                        `📂 ${fg(COLORS.blue, folder)}`,
+                    ],
+                    ctx.width,
+                    dim(" · "),
+                ),
+            ];
+        },
+    },
+    {
+        id: "path",
+        label: "path",
+        description: "where you are: shortened working directory, then model and context",
+        sample: "~/D/n/loop │ Opus 4.8 │ high │ 30.5%",
+        needsVitals: false,
+        render: (ctx) => {
+            const r = ctxRatio(ctx);
+            return [
+                fit([fg(COLORS.blue, shortPath(ctx.cwd)), model(ctx), thinking(ctx), fg(heat(r), pct1(r))], ctx.width),
+            ];
+        },
+    },
+    {
+        id: "git",
+        label: "git",
+        description: "folder and git branch (read from .git, no subprocess), model, context and cost",
+        sample: "loop  main │ Opus 4.8 │ high │ 30.5% │ $0.0042",
+        needsVitals: false,
+        render: (ctx) => {
+            const r = ctxRatio(ctx);
+            const folder = ctx.cwd.split("/").pop() || ctx.cwd;
+            const branch = gitBranch(ctx.cwd);
+            const where = branch
+                ? `${fg(COLORS.blue, folder)} ${fg(COLORS.magenta, ` ${branch}`)}`
+                : fg(COLORS.blue, folder);
+            return [
+                fit(
+                    [
+                        where,
+                        model(ctx),
+                        thinking(ctx),
+                        fg(heat(r), pct1(r)),
+                        fg(COLORS.green, `$${ctx.cost.usd.toFixed(4)}`),
+                    ],
+                    ctx.width,
+                ),
+            ];
+        },
+    },
+    {
+        id: "split",
+        label: "split",
+        description: "lualine-style: identity on the left, numbers pushed to the right edge",
+        sample: "@plan Opus 4.8 high                    30.5% · 61k/200k · $0.0042",
+        needsVitals: false,
+        render: (ctx) => {
+            const r = ctxRatio(ctx);
+            const left = join([agentChip(ctx), model(ctx), thinking(ctx)], " ");
+            const toks = ctx.context.max
+                ? `${fmtTokens(ctx.context.used)}/${fmtTokens(ctx.context.max)}`
+                : fmtTokens(ctx.context.used);
+            const right = join(
+                [fg(heat(r), pct1(r)), dim(toks), fg(COLORS.green, `$${ctx.cost.usd.toFixed(4)}`)],
+                dim(" · "),
+            );
+            const gap = ctx.width - ansiLen(left) - ansiLen(right);
+            // Too narrow to split: fall back to one flowing row.
+            if (gap < 2) return [fit([left, right], ctx.width, " ")];
+            return [left + " ".repeat(gap) + right];
+        },
+    },
+    {
+        id: "session",
+        label: "session",
+        description: "how long this session has run and how fast it is spending",
+        sample: "Opus 4.8 │ high │ 30.5% │ ⏱ 42m │ $0.0042 │ $0.31/h",
+        needsVitals: false,
+        ticks: true,
+        render: (ctx) => {
+            const r = ctxRatio(ctx);
+            const rate = burnRate(ctx);
+            return [
+                fit(
+                    [
+                        model(ctx),
+                        thinking(ctx),
+                        fg(heat(r), pct1(r)),
+                        fg(COLORS.blue, `⏱ ${fmtElapsed(Date.now() - live.startedAt)}`),
+                        fg(COLORS.green, `$${ctx.cost.usd.toFixed(4)}`),
+                        rate ? fg(COLORS.orange, rate) : null,
+                    ],
+                    ctx.width,
+                ),
+            ];
+        },
+    },
+    {
+        id: "spark",
+        label: "spark",
+        description: "a sparkline of how the context has filled over this session",
+        sample: "Opus 4.8 │ high │ ▁▁▂▃▃▄▅▆ 30.5% │ 61k tok",
+        needsVitals: false,
+        render: (ctx) => {
+            const r = ctxRatio(ctx);
+            const spark = live.history.length > 1 ? fg(heat(r), sparkline(live.history)) + " " : "";
+            return [
+                fit(
+                    [
+                        model(ctx),
+                        thinking(ctx),
+                        `${spark}${fg(heat(r), pct1(r))}`,
+                        dim(`${fmtTokens(ctx.context.used)} tok`),
+                    ],
+                    ctx.width,
+                ),
+            ];
+        },
+    },
+    {
+        id: "meter",
+        label: "meter",
+        description: "htop-style meters for context, CPU and memory under the model",
+        sample: "Opus 4.8 high  /  ctx [||||||      ] 30%  cpu [||   ] 12%  mem [|||||] 61%",
+        needsVitals: true,
+        render: (ctx, sys) => {
+            const head = join(
+                [agentChip(ctx), model(ctx), thinking(ctx), fg(COLORS.green, `$${ctx.cost.usd.toFixed(4)}`)],
+                " ",
+            );
+            const meters = [
+                meter("ctx", ctxRatio(ctx), 12),
+                sys.cpu == null ? null : meter("cpu", sys.cpu, 8),
+                sys.memTotal > 0 ? meter("mem", sys.memUsed / sys.memTotal, 8) : null,
+            ];
+            return [head, ...wrap(meters, ctx.width, "  ")];
+        },
+    },
+    {
+        id: "boxed",
+        label: "boxed",
+        description: "the status line in a rounded box",
+        sample: "╭──────────────────────────────╮ │ Opus 4.8 · high · 30.5% · $0.0042 │ ╰──────╯",
+        needsVitals: false,
+        render: (ctx) => {
+            const r = ctxRatio(ctx);
+            const inner = fit(
+                [
+                    agentChip(ctx),
+                    model(ctx),
+                    thinking(ctx),
+                    fg(heat(r), pct1(r)),
+                    fg(COLORS.green, `$${ctx.cost.usd.toFixed(4)}`),
+                ],
+                Math.max(1, ctx.width - 4),
+                dim(" · "),
+            );
+            const w = ansiLen(inner);
+            return [dim(`╭${"─".repeat(w + 2)}╮`), `${dim("│")} ${inner} ${dim("│")}`, dim(`╰${"─".repeat(w + 2)}╯`)];
+        },
+    },
+    {
+        id: "rounded",
+        label: "rounded",
+        description: "powerline with rounded pill caps (needs a Nerd Font)",
+        sample: " @plan  Opus 4.8  high  30.5%  $0.0042 ",
+        needsVitals: false,
+        render: (ctx) => {
+            const r = ctxRatio(ctx);
+            const think = thinkValue(ctx);
+            const agent = ctx.agent || "default";
+            return [
+                rounded(
+                    [
+                        { text: `@${agent}`, bg: agent === "default" ? COLORS.faint : COLORS.orange },
+                        { text: prettyModel(ctx), bg: COLORS.blue },
+                        ...(think ? [{ text: think, bg: COLORS.magenta }] : []),
+                        { text: pct1(r), bg: heat(r) },
+                        { text: `$${ctx.cost.usd.toFixed(4)}`, bg: COLORS.green },
+                    ],
+                    ctx.width,
+                ),
+            ];
+        },
+    },
 ];
+
+/** Picker order: simplest first, fanciest last. */
+const ORDER: LayoutId[] = [
+    "native",
+    "plain",
+    "ascii",
+    "dot",
+    "minimal",
+    "emoji",
+    "path",
+    "git",
+    "compact",
+    "bar",
+    "split",
+    "session",
+    "spark",
+    "tokens",
+    "meter",
+    "vitals",
+    "boxed",
+    "powerline",
+    "rounded",
+    "flex",
+];
+
+export const LAYOUTS: Layout[] = ORDER.map((id) => ALL.find((l) => l.id === id)!);
 
 export const DEFAULT_LAYOUT: LayoutId = "native";
 

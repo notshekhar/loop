@@ -15,6 +15,7 @@ import {
     truncateToWidth,
     TUI,
     TuiAltScreen,
+    getKeybindings,
     ScrollView,
     VStack,
     type Component,
@@ -232,6 +233,13 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         // One line per notch is the library default and reads as a stuck
         // wheel; three is what terminals themselves scroll by.
         wheelScrollLines: 3,
+        searchNavigationButtonStyle: (text, hovered) => (hovered ? theme.underline(text) : text),
+        // Scrolled up while a turn streams, this is the one-click way back.
+        scrollToEndIndicator: () => {
+            const shortcut = getKeybindings().getKeys("tui.altScreen.bottom")[0];
+            const label = ` ↓ Jump to latest message${shortcut ? ` · ${shortcut}` : ""} `;
+            return theme.bg("selectedBg", theme.fg("text", label));
+        },
     });
 
     const history = new ChatHistory(tui, opts.cwd);

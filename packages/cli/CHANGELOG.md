@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.20.17] - 2026-10-06
+
+### Added
+
+- **Jump to the latest message.** Scrolled up in the transcript, a "↓ Jump to latest message · End" label appears on its last row; click it, or press End, to follow the conversation again.
+- **Alt+wheel scrolls five times as far** (Option+wheel on a Mac), for getting through a long transcript quickly.
+- **Twelve new status-line layouts** in the `statusline-themes` extension, and `/statusline` now lists all twenty from simplest to fanciest: `plain`, `ascii`, `dot`, `emoji`, `path`, `git` (the branch, read from `.git` without running git), `split`, `session` (elapsed time and spend per hour), `spark` (a sparkline of the context filling), `meter` (htop-style context, CPU and memory meters), `boxed` and `rounded`.
+- **Ten new `/statuscolor` themes:** `dracula`, `nord`, `gruvbox`, `catppuccin`, `tokyo`, `pastel`, `aurora`, `ice`, `candy` and `amber`.
+
+### Changed
+
+- **Transcript search is a bordered box** with a "Find in transcript" placeholder, a muted match count, and clickable ↑/↓ buttons that name their keys. It is also faster on long transcripts: unchanged results are reused and only visible matches are highlighted.
+
+### Fixed
+
+- **Images in WezTerm no longer collapse to a one-row strip** when the transcript scrolls or a row they cover is redrawn.
+
 ## [0.20.16] - 2026-10-05
 
 ### Changed
