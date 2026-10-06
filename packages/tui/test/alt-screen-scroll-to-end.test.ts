@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { ScrollView } from "../src/components/scroll-view";
 import { Text } from "../src/components/text";
 import { VStack } from "../src/components/v-stack";
@@ -77,6 +77,27 @@ describe("wheel scrolling", () => {
             terminal.sendInput("\x1b[<72;1;1M");
             await terminal.waitForRender();
             assert.equal(tui.viewportTop, 3);
+        } finally {
+            tui.stop();
+        }
+    });
+});
+
+describe("terminal focus", () => {
+    it("tells onFocusIn when the terminal regains focus, and only then", async () => {
+        const terminal = new VirtualTerminal(20, 4);
+        const tui = new TuiAltScreen(terminal);
+        let focusIns = 0;
+        tui.onFocusIn = () => focusIns++;
+        tui.addChild(new Text("hello", 0, 0));
+        tui.start();
+        try {
+            await terminal.waitForRender();
+            terminal.sendInput("abc");
+            terminal.sendInput("\x1b[O");
+            expect(focusIns).toBe(0);
+            terminal.sendInput("\x1b[I");
+            expect(focusIns).toBe(1);
         } finally {
             tui.stop();
         }

@@ -69,6 +69,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "verbose-mode",
+    title: "Verbose mode",
+    to: "/settings/appearance",
+  },
+  {
     id: "sidebar-style",
     title: "Sidebar style",
     to: "/settings/appearance",

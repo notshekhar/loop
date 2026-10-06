@@ -782,7 +782,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
             this.lastClick = undefined;
             return { consume: true };
         }
-        if (data === FOCUS_IN) return { consume: true };
+        if (data === FOCUS_IN) {
+            this.onFocusIn?.();
+            return { consume: true };
+        }
 
         const wheelEvent = this.parseWheelEvent(data);
         if (wheelEvent) {

@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.21.0] - 2026-10-06
+
+### Added
+
+- **Several sessions at once in one loop.** Starting something new no longer ends what is running: `/new`, `/clear` or `/resume` during a turn sends that turn to the background, where it keeps working, and opens the new session beside it. **Ctrl+S** switches between them or starts another. The status line shows the others at a glance ("◆ 1 needs you · ⋮ 2 working"), `/resume` lists live sessions first with their state, and a question asked by a session you are not looking at waits for you instead of interrupting the one you are.
+- **Verbose mode in the desktop app** (Settings → Appearance). The Chat / Trajectory tabs are now hidden by default, so a thread is just its conversation; turn Verbose mode on to bring the timing view back.
+
+### Changed
+
+- **The desktop app's terminal runs on xterm.js**, the terminal VS Code uses, replacing loop's own renderer. Text is sharper, the cursor always shows, and selection, typing in other languages and fast output all behave. Terminals are now tabs across the top of the drawer, with split, new and close beside them; a split shows as one tab naming both panes.
+- **A new message box in the desktop app.** It starts as a single quiet line with a return-key send button, and model, effort, agent, checkout and branch sit in one row underneath it, all at the same size. Messages stop above the box with a soft fade instead of scrolling behind it.
+- **Effort is a slider**: drag or click from Faster to Smarter, with the provider's default marked Recommended and the color warming as you go up.
+- **A livelier "working" indicator**: loop's ∞ mark with a comet running around it, a shimmer across the label, and a verb that changes while you wait. "Running bash" and other specific steps still say exactly what is happening.
+
+### Fixed
+
+- **Pressing Shift+Enter no longer jumps the conversation to the bottom** when you have scrolled up to read something.
+- **Text typed right after opening a new terminal goes to the new terminal**, not the previous one.
+- **No more stray `%` and blank lines** in a terminal after splitting it or switching tabs.
+- **The clipboard-image tip no longer flashes a Dock icon on every keystroke** under cmux. It now checks the clipboard only when the terminal window regains focus.
+
 ## [0.20.18] - 2026-10-06
 
 ### Changed

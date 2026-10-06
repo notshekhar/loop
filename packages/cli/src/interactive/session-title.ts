@@ -163,7 +163,9 @@ export async function maybeTitleSession(
         // the model was thinking — check again before writing.
         if (state.session?.id !== session.id || session.getName()) return;
         await session.setName(title);
-        setTabName(deps, title);
+        // The tab names what is on screen; a session titled in the
+        // background shows its name in the switcher instead.
+        if (deps.isForeground()) setTabName(deps, title);
         traceEvent("session-title", title);
     } catch {
         // Best-effort by design: an unnamed session is a cosmetic loss.

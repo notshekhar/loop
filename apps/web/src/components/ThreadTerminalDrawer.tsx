@@ -1,8 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@loop/runtime/state/runtime";
+import { isAtomCommandInterrupted, squashAtomCommandFailure } from "@loop/runtime/state/runtime";
 import { type TerminalSessionState } from "@loop/runtime/state/terminal";
 import {
   Plus,
@@ -34,10 +31,11 @@ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
-  GhosttyTerminalSurface,
-  type GhosttyTerminalSurfaceOptions,
-} from "~/terminal/ghostty/surface";
-import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
+  TerminalSurface,
+  type TerminalColor,
+  type TerminalSurfaceOptions,
+  type TerminalTheme,
+} from "~/terminal/xterm/surface";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { isTerminalLinkActivation, resolvePathLinkTarget } from "../terminal-links";
 import {
@@ -79,15 +77,15 @@ function clampDrawerHeight(height: number): number {
   return Math.min(Math.max(Math.round(safeHeight), MIN_DRAWER_HEIGHT), maxHeight);
 }
 
-function writeSystemMessage(terminal: GhosttyTerminalSurface, message: string): void {
+function writeSystemMessage(terminal: TerminalSurface, message: string): void {
   terminal.write(`\r\n[terminal] ${message}\r\n`);
 }
 
-function writeTerminalBuffer(terminal: GhosttyTerminalSurface, buffer: string): void {
+function writeTerminalBuffer(terminal: TerminalSurface, buffer: string): void {
   terminal.resetAndWrite(buffer);
 }
 
-function parseTerminalColor(value: string, fallback: GhosttyColor): GhosttyColor {
+function parseTerminalColor(value: string, fallback: TerminalColor): TerminalColor {
   if (typeof document === "undefined") return fallback;
 
   const canvas = document.createElement("canvas");
@@ -132,7 +130,7 @@ function normalizeComputedColor(value: string | null | undefined, fallback: stri
 }
 
 /** `#rrggbb` -> the renderer's color triple. */
-function hexColor(value: string): GhosttyColor {
+function hexColor(value: string): TerminalColor {
   return {
     r: Number.parseInt(value.slice(1, 3), 16),
     g: Number.parseInt(value.slice(3, 5), 16),
@@ -155,8 +153,22 @@ function hexColor(value: string): GhosttyColor {
  * background, where it still reads.
  */
 const DARK_TERMINAL_PALETTE = [
-  "#000000", "#cd3131", "#0dbc79", "#e5e510", "#2472c8", "#bc3fbc", "#11a8cd", "#e5e5e5",
-  "#666666", "#f14c4c", "#23d18b", "#f5f543", "#3b8eea", "#d670d6", "#29b8db", "#e5e5e5",
+  "#000000",
+  "#cd3131",
+  "#0dbc79",
+  "#e5e510",
+  "#2472c8",
+  "#bc3fbc",
+  "#11a8cd",
+  "#e5e5e5",
+  "#666666",
+  "#f14c4c",
+  "#23d18b",
+  "#f5f543",
+  "#3b8eea",
+  "#d670d6",
+  "#29b8db",
+  "#e5e5e5",
 ].map(hexColor);
 
 /**
@@ -174,8 +186,22 @@ const DARK_TERMINAL_PALETTE = [
  * BACKGROUND, since programs use 7/15 for both.
  */
 const LIGHT_TERMINAL_PALETTE = [
-  "#24292f", "#cd3131", "#00875f", "#946b00", "#0451a5", "#a626a4", "#0b7285", "#6e7781",
-  "#57606a", "#c5221f", "#0f9d58", "#8a6100", "#1a63c4", "#8f39a8", "#0e7490", "#8b949e",
+  "#24292f",
+  "#cd3131",
+  "#00875f",
+  "#946b00",
+  "#0451a5",
+  "#a626a4",
+  "#0b7285",
+  "#6e7781",
+  "#57606a",
+  "#c5221f",
+  "#0f9d58",
+  "#8a6100",
+  "#1a63c4",
+  "#8f39a8",
+  "#0e7490",
+  "#8b949e",
 ].map(hexColor);
 
 /**
@@ -190,7 +216,7 @@ const LIGHT_TERMINAL_PALETTE = [
  * document has no styles at all, and a wrong guess there is more misleading
  * than an obvious one.
  */
-function terminalThemeFromApp(mountElement?: HTMLElement | null): GhosttyTheme {
+function terminalThemeFromApp(mountElement?: HTMLElement | null): TerminalTheme {
   const isDark = document.documentElement.classList.contains("dark");
   const drawerSurface =
     mountElement?.closest(".thread-terminal-drawer") ??
@@ -351,7 +377,7 @@ export function TerminalViewport({
   keybindings,
 }: TerminalViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
+  const terminalRef = useRef<TerminalSurface | null>(null);
   const environmentId = threadRef.environmentId;
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
@@ -410,7 +436,7 @@ export function TerminalViewport({
   const terminalStatus = terminalSession.status;
   const synchronizedStatusRef = useRef<TerminalSessionState["status"]>("closed");
   const synchronizeTerminalStatus = useEffectEvent(
-    (terminal: GhosttyTerminalSurface, status: TerminalSessionState["status"]) => {
+    (terminal: TerminalSurface, status: TerminalSessionState["status"]) => {
       const synchronized = synchronizedStatusRef.current;
       if (status === "running") {
         hasHandledExitRef.current = false;
@@ -445,7 +471,6 @@ export function TerminalViewport({
     keybindingsRef.current = keybindings;
   }, [keybindings]);
 
-
   useEffect(() => {
     const mount = containerRef.current;
     if (!mount) return;
@@ -453,11 +478,11 @@ export function TerminalViewport({
     const localApi = readLocalApi();
     let cancelled = false;
     let teardown: (() => void) | null = null;
-    let setupTerminal: GhosttyTerminalSurface | null = null;
+    let setupTerminal: TerminalSurface | null = null;
     let setupCleanups: Array<() => void> = [];
 
     const setup = async (): Promise<(() => void) | null> => {
-      const terminalOptions: GhosttyTerminalSurfaceOptions = {
+      const terminalOptions: TerminalSurfaceOptions = {
         theme: terminalThemeFromApp(mount),
         onData: (data) => handleData(data),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
@@ -466,7 +491,7 @@ export function TerminalViewport({
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
       };
-      const terminal = await GhosttyTerminalSurface.create(mount, terminalOptions);
+      const terminal = await TerminalSurface.create(mount, terminalOptions);
       if (cancelled) {
         terminal.dispose();
         return null;
@@ -789,8 +814,7 @@ export function TerminalViewport({
         setupTerminal?.dispose();
         setupTerminal = null;
         if (cancelled) return;
-        const message =
-          error instanceof Error ? error.message : "Unable to initialize libghostty-vt";
+        const message = error instanceof Error ? error.message : "Unable to start the terminal";
         mount.textContent = `${message} — close and reopen the terminal to retry.`;
       });
 
@@ -872,10 +896,7 @@ export function TerminalViewport({
     };
   }, [drawerHeight, environmentId, resizeEpoch, terminalId, threadId]);
   return (
-    <div
-      ref={containerRef}
-      className="relative h-full w-full overflow-hidden rounded-[4px] bg-background"
-    />
+    <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-background" />
   );
 }
 
@@ -1097,15 +1118,19 @@ export default function ThreadTerminalDrawer({
     return nextGroups;
   }, [normalizedTerminalIds, terminalGroups]);
 
+  // The active terminal decides the visible group; the group id is only a
+  // fallback. The two are updated separately, and preferring the group id
+  // kept a just-created terminal's group hidden — so keys typed into "New
+  // Terminal" landed in the previous one.
   const resolvedActiveGroupIndex = useMemo(() => {
-    const indexById = resolvedTerminalGroups.findIndex(
-      (terminalGroup) => terminalGroup.id === activeTerminalGroupId,
-    );
-    if (indexById >= 0) return indexById;
     const indexByTerminal = resolvedTerminalGroups.findIndex((terminalGroup) =>
       terminalGroup.terminalIds.includes(resolvedActiveTerminalId),
     );
-    return indexByTerminal >= 0 ? indexByTerminal : 0;
+    if (indexByTerminal >= 0) return indexByTerminal;
+    const indexById = resolvedTerminalGroups.findIndex(
+      (terminalGroup) => terminalGroup.id === activeTerminalGroupId,
+    );
+    return indexById >= 0 ? indexById : 0;
   }, [activeTerminalGroupId, resolvedActiveTerminalId, resolvedTerminalGroups]);
 
   const visibleTerminalIds =
@@ -1113,11 +1138,7 @@ export default function ThreadTerminalDrawer({
     (normalizedTerminalIds.length > 0 ? [resolvedActiveTerminalId] : []);
   const splitDirection =
     resolvedTerminalGroups[resolvedActiveGroupIndex]?.splitDirection ?? "horizontal";
-  const hasTerminalSidebar = normalizedTerminalIds.length > 1;
   const isSplitView = visibleTerminalIds.length > 1;
-  const showGroupHeaders =
-    resolvedTerminalGroups.length > 1 ||
-    resolvedTerminalGroups.some((terminalGroup) => terminalGroup.terminalIds.length > 1);
   const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
   const terminalLabelById = useMemo(() => {
     const next = new Map<string, string>();
@@ -1302,6 +1323,13 @@ export default function ThreadTerminalDrawer({
   }
 
   const activeTerminalLaunchLocation = resolveTerminalLaunchLocation(resolvedActiveTerminalId);
+  const toolbarButtonClassName = (disabled = false) =>
+    cn(
+      "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors",
+      disabled
+        ? "cursor-not-allowed opacity-40"
+        : "cursor-pointer hover:bg-accent hover:text-foreground",
+    );
 
   return (
     <aside
@@ -1322,275 +1350,189 @@ export default function ThreadTerminalDrawer({
         />
       ) : null}
 
-      {!hasTerminalSidebar && (
-        <div className="pointer-events-none absolute right-2 top-2 z-20">
-          <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background shadow-xs">
-            <TerminalActionButton
-              className={`p-1 text-foreground/90 transition-colors ${
-                hasReachedSplitLimit
-                  ? "cursor-not-allowed opacity-45 hover:bg-transparent"
-                  : "hover:bg-accent"
-              }`}
-              onClick={onSplitTerminalAction}
-              label={splitTerminalActionLabel}
-            >
-              <SquareSplitHorizontal className="size-3.25" />
-            </TerminalActionButton>
-            <div className="h-4 w-px bg-border/80" />
-            <TerminalActionButton
-              className={`p-1 text-foreground/90 transition-colors ${
-                hasReachedSplitLimit
-                  ? "cursor-not-allowed opacity-45 hover:bg-transparent"
-                  : "hover:bg-accent"
-              }`}
-              onClick={onSplitTerminalVerticalAction}
-              label={splitTerminalVerticalActionLabel}
-            >
-              <SquareSplitVertical className="size-3.25" />
-            </TerminalActionButton>
-            <div className="h-4 w-px bg-border/80" />
-            <TerminalActionButton
-              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
-              onClick={onNewTerminalAction}
-              label={newTerminalActionLabel}
-            >
-              <Plus className="size-3.25" />
-            </TerminalActionButton>
-            <div className="h-4 w-px bg-border/80" />
-            <TerminalActionButton
-              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
-              onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
-              label={closeTerminalActionLabel}
-            >
-              <Trash2 className="size-3.25" />
-            </TerminalActionButton>
-          </div>
+      {/* One tab per group (a split group is one tab naming its panes), and the
+          actions on the right — the Synara/VS Code shape. This replaced a
+          floating toolbar over the output and a GROUP/└ tree in a side column,
+          which together took a sixth of the drawer to say very little. */}
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 pr-2 pl-2">
+        <div
+          role="tablist"
+          aria-label="Terminals"
+          className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none]"
+        >
+          {resolvedTerminalGroups.map((terminalGroup, groupIndex) => {
+            const isGroupActive = groupIndex === resolvedActiveGroupIndex;
+            const groupActiveTerminalId =
+              isGroupActive && terminalGroup.terminalIds.includes(resolvedActiveTerminalId)
+                ? resolvedActiveTerminalId
+                : (terminalGroup.terminalIds[0] ?? resolvedActiveTerminalId);
+            const label = terminalGroup.terminalIds
+              .map((terminalId) => terminalLabelById.get(terminalId) ?? "Terminal")
+              .join(" · ");
+            const closeLabel = `Close ${label}${
+              isGroupActive && closeShortcutLabel && terminalGroup.terminalIds.length === 1
+                ? ` (${closeShortcutLabel})`
+                : ""
+            }`;
+            return (
+              <div
+                key={terminalGroup.id}
+                className={cn(
+                  "group/tab flex h-7 max-w-56 shrink-0 items-center gap-1.5 rounded-md border pr-1 pl-2 text-xs transition-colors",
+                  isGroupActive
+                    ? "border-border bg-card text-foreground shadow-xs/5"
+                    : "border-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                )}
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={isGroupActive}
+                  className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left outline-hidden"
+                  onClick={() => onActiveTerminalChange(groupActiveTerminalId)}
+                >
+                  {terminalGroup.terminalIds.length > 1 ? (
+                    terminalGroup.splitDirection === "vertical" ? (
+                      <SquareSplitVertical className="size-3.5 shrink-0 opacity-70" />
+                    ) : (
+                      <SquareSplitHorizontal className="size-3.5 shrink-0 opacity-70" />
+                    )
+                  ) : (
+                    <TerminalSquare className="size-3.5 shrink-0 opacity-70" />
+                  )}
+                  <span className="truncate">{label}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={closeLabel}
+                  title={closeLabel}
+                  className={cn(
+                    "inline-flex size-4.5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition hover:bg-accent hover:text-foreground",
+                    isGroupActive ? "opacity-70" : "opacity-0 group-hover/tab:opacity-70",
+                  )}
+                  onClick={() => {
+                    for (const terminalId of terminalGroup.terminalIds) onCloseTerminal(terminalId);
+                  }}
+                >
+                  <XIcon className="size-3" />
+                </button>
+              </div>
+            );
+          })}
         </div>
-      )}
+        <div className="flex shrink-0 items-center gap-0.5">
+          <TerminalActionButton
+            className={toolbarButtonClassName(hasReachedSplitLimit)}
+            onClick={onSplitTerminalAction}
+            label={splitTerminalActionLabel}
+          >
+            <SquareSplitHorizontal className="size-3.75" />
+          </TerminalActionButton>
+          <TerminalActionButton
+            className={toolbarButtonClassName(hasReachedSplitLimit)}
+            onClick={onSplitTerminalVerticalAction}
+            label={splitTerminalVerticalActionLabel}
+          >
+            <SquareSplitVertical className="size-3.75" />
+          </TerminalActionButton>
+          <TerminalActionButton
+            className={toolbarButtonClassName()}
+            onClick={onNewTerminalAction}
+            label={newTerminalActionLabel}
+          >
+            <Plus className="size-4" />
+          </TerminalActionButton>
+          <TerminalActionButton
+            className={toolbarButtonClassName()}
+            onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
+            label={closeTerminalActionLabel}
+          >
+            <Trash2 className="size-3.75" />
+          </TerminalActionButton>
+        </div>
+      </div>
 
       <div className="min-h-0 w-full flex-1">
-        <div className={`flex h-full min-h-0 ${hasTerminalSidebar ? "gap-1.5" : ""}`}>
-          <div className="min-w-0 flex-1">
-            {isSplitView ? (
-              <div
-                className="grid h-full w-full min-w-0 gap-0 overflow-hidden"
-                style={
-                  splitDirection === "vertical"
-                    ? {
-                        gridTemplateRows: `repeat(${visibleTerminalIds.length}, minmax(0, 1fr))`,
-                      }
-                    : {
-                        gridTemplateColumns: `repeat(${visibleTerminalIds.length}, minmax(0, 1fr))`,
-                      }
-                }
-              >
-                {visibleTerminalIds.map((terminalId) => {
-                  const terminalLaunchLocation = resolveTerminalLaunchLocation(terminalId);
-                  return (
+        {isSplitView ? (
+          <div
+            className="grid h-full w-full min-w-0 gap-0 overflow-hidden"
+            style={
+              splitDirection === "vertical"
+                ? { gridTemplateRows: `repeat(${visibleTerminalIds.length}, minmax(0, 1fr))` }
+                : { gridTemplateColumns: `repeat(${visibleTerminalIds.length}, minmax(0, 1fr))` }
+            }
+          >
+            {visibleTerminalIds.map((terminalId) => {
+              const terminalLaunchLocation = resolveTerminalLaunchLocation(terminalId);
+              const isActive = terminalId === resolvedActiveTerminalId;
+              return (
+                <div
+                  key={terminalId}
+                  className={cn(
+                    "relative min-h-0 min-w-0 border-border/60",
+                    splitDirection === "vertical"
+                      ? "border-t first:border-t-0"
+                      : "border-l first:border-l-0",
+                  )}
+                  onMouseDown={() => {
+                    if (!isActive) onActiveTerminalChange(terminalId);
+                  }}
+                >
+                  {/* Which pane keys go to, without a heavier frame: a hairline
+                      in the accent along the active pane's top edge. */}
+                  {isActive ? (
                     <div
-                      key={terminalId}
-                      className={`min-h-0 min-w-0 ${
-                        splitDirection === "vertical"
-                          ? "border-t first:border-t-0"
-                          : "border-l first:border-l-0"
-                      } ${
-                        terminalId === resolvedActiveTerminalId
-                          ? "border-border"
-                          : "border-border/70"
-                      }`}
-                      onMouseDown={() => {
-                        if (terminalId !== resolvedActiveTerminalId) {
-                          onActiveTerminalChange(terminalId);
-                        }
-                      }}
-                    >
-                      <div className="h-full p-1">
-                        <TerminalViewport
-                          threadRef={threadRef}
-                          threadId={threadId}
-                          terminalId={terminalId}
-                          terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
-                          cwd={terminalLaunchLocation.cwd}
-                          {...(terminalLaunchLocation.worktreePath !== undefined
-                            ? { worktreePath: terminalLaunchLocation.worktreePath }
-                            : {})}
-                          {...(terminalLaunchLocation.runtimeEnv
-                            ? { runtimeEnv: terminalLaunchLocation.runtimeEnv }
-                            : {})}
-                          onSessionExited={() => onCloseTerminal(terminalId)}
-                          onAddTerminalContext={onAddTerminalContext}
-                          focusRequestId={focusRequestId}
-                          autoFocus={terminalId === resolvedActiveTerminalId}
-                          resizeEpoch={resizeEpoch}
-                          drawerHeight={drawerHeight}
-                          keybindings={keybindings}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="h-full p-1">
-                <TerminalViewport
-                  key={resolvedActiveTerminalId}
-                  threadRef={threadRef}
-                  threadId={threadId}
-                  terminalId={resolvedActiveTerminalId}
-                  terminalLabel={terminalLabelById.get(resolvedActiveTerminalId) ?? "Terminal"}
-                  cwd={activeTerminalLaunchLocation.cwd}
-                  {...(activeTerminalLaunchLocation.worktreePath !== undefined
-                    ? { worktreePath: activeTerminalLaunchLocation.worktreePath }
-                    : {})}
-                  {...(activeTerminalLaunchLocation.runtimeEnv
-                    ? { runtimeEnv: activeTerminalLaunchLocation.runtimeEnv }
-                    : {})}
-                  onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
-                  onAddTerminalContext={onAddTerminalContext}
-                  focusRequestId={focusRequestId}
-                  autoFocus
-                  resizeEpoch={resizeEpoch}
-                  drawerHeight={drawerHeight}
-                  keybindings={keybindings}
-                />
-              </div>
-            )}
-          </div>
-
-          {hasTerminalSidebar && (
-            <aside className="flex w-36 min-w-36 flex-col border border-border/70 bg-muted/10">
-              <div className="flex h-[22px] items-stretch justify-end border-b border-border/70">
-                <div className="inline-flex h-full items-stretch">
-                  <TerminalActionButton
-                    className={`inline-flex h-full items-center px-1 text-foreground/90 transition-colors ${
-                      hasReachedSplitLimit
-                        ? "cursor-not-allowed opacity-45 hover:bg-transparent"
-                        : "hover:bg-accent/70"
-                    }`}
-                    onClick={onSplitTerminalAction}
-                    label={splitTerminalActionLabel}
-                  >
-                    <SquareSplitHorizontal className="size-3.25" />
-                  </TerminalActionButton>
-                  <TerminalActionButton
-                    className={`inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors ${
-                      hasReachedSplitLimit
-                        ? "cursor-not-allowed opacity-45 hover:bg-transparent"
-                        : "hover:bg-accent/70"
-                    }`}
-                    onClick={onSplitTerminalVerticalAction}
-                    label={splitTerminalVerticalActionLabel}
-                  >
-                    <SquareSplitVertical className="size-3.25" />
-                  </TerminalActionButton>
-                  <TerminalActionButton
-                    className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
-                    onClick={onNewTerminalAction}
-                    label={newTerminalActionLabel}
-                  >
-                    <Plus className="size-3.25" />
-                  </TerminalActionButton>
-                  <TerminalActionButton
-                    className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
-                    onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
-                    label={closeTerminalActionLabel}
-                  >
-                    <Trash2 className="size-3.25" />
-                  </TerminalActionButton>
+                      aria-hidden
+                      className="pointer-events-none absolute inset-x-0 top-0 z-10 h-px bg-primary/60"
+                    />
+                  ) : null}
+                  <TerminalViewport
+                    threadRef={threadRef}
+                    threadId={threadId}
+                    terminalId={terminalId}
+                    terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
+                    cwd={terminalLaunchLocation.cwd}
+                    {...(terminalLaunchLocation.worktreePath !== undefined
+                      ? { worktreePath: terminalLaunchLocation.worktreePath }
+                      : {})}
+                    {...(terminalLaunchLocation.runtimeEnv
+                      ? { runtimeEnv: terminalLaunchLocation.runtimeEnv }
+                      : {})}
+                    onSessionExited={() => onCloseTerminal(terminalId)}
+                    onAddTerminalContext={onAddTerminalContext}
+                    focusRequestId={focusRequestId}
+                    autoFocus={isActive}
+                    resizeEpoch={resizeEpoch}
+                    drawerHeight={drawerHeight}
+                    keybindings={keybindings}
+                  />
                 </div>
-              </div>
-
-              <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1">
-                {resolvedTerminalGroups.map((terminalGroup, groupIndex) => {
-                  const isGroupActive =
-                    terminalGroup.terminalIds.includes(resolvedActiveTerminalId);
-                  const groupActiveTerminalId = isGroupActive
-                    ? resolvedActiveTerminalId
-                    : (terminalGroup.terminalIds[0] ?? resolvedActiveTerminalId);
-
-                  return (
-                    <div key={terminalGroup.id} className="pb-0.5">
-                      {showGroupHeaders && (
-                        <button
-                          type="button"
-                          className={`flex w-full items-center rounded px-1 py-0.5 text-[10px] uppercase tracking-[0.08em] ${
-                            isGroupActive
-                              ? "bg-accent/70 text-foreground"
-                              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                          }`}
-                          onClick={() => onActiveTerminalChange(groupActiveTerminalId)}
-                        >
-                          Group {groupIndex + 1}
-                        </button>
-                      )}
-
-                      <div
-                        className={showGroupHeaders ? "ml-1 border-l border-border/60 pl-1.5" : ""}
-                      >
-                        {terminalGroup.terminalIds.map((terminalId) => {
-                          const isActive = terminalId === resolvedActiveTerminalId;
-                          const closeTerminalLabel = `Close ${
-                            terminalLabelById.get(terminalId) ?? "terminal"
-                          }${isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""}`;
-                          return (
-                            <div
-                              key={terminalId}
-                              className={`group flex items-center gap-1 rounded px-1 py-0.5 text-[11px] ${
-                                isActive
-                                  ? "bg-accent text-foreground"
-                                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                              }`}
-                            >
-                              {showGroupHeaders && (
-                                <span className="text-[10px] text-muted-foreground/80">└</span>
-                              )}
-                              <button
-                                type="button"
-                                className="flex min-w-0 flex-1 items-center gap-1 text-left"
-                                onClick={() => onActiveTerminalChange(terminalId)}
-                              >
-                                <TerminalSquare className="size-3 shrink-0" />
-                                <span className="truncate">
-                                  {terminalLabelById.get(terminalId) ?? "Terminal"}
-                                </span>
-                              </button>
-                              {normalizedTerminalIds.length > 1 && (
-                                <Popover>
-                                  <PopoverTrigger
-                                    openOnHover
-                                    render={
-                                      <button
-                                        type="button"
-                                        className="inline-flex size-3.5 items-center justify-center rounded text-xs font-medium leading-none text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground group-hover:opacity-100"
-                                        onClick={() => onCloseTerminal(terminalId)}
-                                        aria-label={closeTerminalLabel}
-                                      />
-                                    }
-                                  >
-                                    <XIcon className="size-2.5" />
-                                  </PopoverTrigger>
-                                  <PopoverPopup
-                                    tooltipStyle
-                                    side="bottom"
-                                    sideOffset={6}
-                                    align="center"
-                                    className="pointer-events-none select-none"
-                                  >
-                                    {closeTerminalLabel}
-                                  </PopoverPopup>
-                                </Popover>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </aside>
-          )}
-        </div>
+              );
+            })}
+          </div>
+        ) : (
+          <TerminalViewport
+            key={resolvedActiveTerminalId}
+            threadRef={threadRef}
+            threadId={threadId}
+            terminalId={resolvedActiveTerminalId}
+            terminalLabel={terminalLabelById.get(resolvedActiveTerminalId) ?? "Terminal"}
+            cwd={activeTerminalLaunchLocation.cwd}
+            {...(activeTerminalLaunchLocation.worktreePath !== undefined
+              ? { worktreePath: activeTerminalLaunchLocation.worktreePath }
+              : {})}
+            {...(activeTerminalLaunchLocation.runtimeEnv
+              ? { runtimeEnv: activeTerminalLaunchLocation.runtimeEnv }
+              : {})}
+            onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
+            onAddTerminalContext={onAddTerminalContext}
+            focusRequestId={focusRequestId}
+            autoFocus
+            resizeEpoch={resizeEpoch}
+            drawerHeight={drawerHeight}
+            keybindings={keybindings}
+          />
+        )}
       </div>
     </aside>
   );

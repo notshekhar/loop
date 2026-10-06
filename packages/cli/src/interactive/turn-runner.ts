@@ -9,6 +9,7 @@ import {
     setPlanMode,
     type CommandContext,
     parseModelId,
+    runInSession,
     runTurn,
 } from "@notshekhar/loop-core";
 import { wrapSessionHookContext } from "@notshekhar/loop-core";
@@ -31,6 +32,15 @@ function commandExists(commands: { has(name: string): boolean }, input: string):
     const space = input.indexOf(" ");
     const name = (space < 0 ? input.slice(1) : input.slice(1, space)).trim();
     return commands.has(name);
+}
+
+/** Commands that move the screen to another session instead of acting on this one. */
+const LEAVING_COMMANDS = new Set(["new", "clear", "resume", "sessions"]);
+
+function leavesSession(input: string, commands: { has(name: string): boolean }): boolean {
+    if (!input.startsWith("/") || !commandExists(commands, input)) return false;
+    const space = input.indexOf(" ");
+    return LEAVING_COMMANDS.has((space < 0 ? input.slice(1) : input.slice(1, space)).trim());
 }
 
 /**
@@ -106,8 +116,18 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
     // draining — chat turns drain from their finally, commands/guards from
     // their return paths.
     const drainNext = (): void => {
-        const next = queuedMessages.shift();
+        // A command that skipped the queue mid-turn (/new) drains nothing:
+        // the turn still running will drain its own queue when it ends.
+        if (state.busy) return;
+        const next = queuedMessages[0];
         if (next === undefined) return;
+        // A session working in the background drains its chat messages on its
+        // own, but a queued /command or !command waits until it is on screen
+        // again: commands act on the session you are LOOKING at, and running
+        // this one's /model or /new against another session would be worse
+        // than waiting. Switching back drains it.
+        if (!deps.isForeground() && (next.trimStart().startsWith("/") || parseBangCommand(next) !== null)) return;
+        queuedMessages.shift();
         traceEvent("drain", `"${next}" aborted=${state.abort.signal.aborted} remaining=${queuedMessages.length}`);
         renderPending();
         if (editor.onSubmit) void editor.onSubmit(next);
@@ -126,7 +146,12 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
         // race the running turn, so they run in order when their turn comes up
         // rather than preempting. The queue drains after each item via
         // drainNext(), whatever its type.
-        if (state.busy) {
+        //
+        // Except the commands that LEAVE this session: /new, /clear and
+        // /resume never touch the running turn — it carries on in the
+        // background and the other session opens beside it — so making them
+        // wait for the turn would be waiting for nothing.
+        if (state.busy && !leavesSession(text, commands)) {
             queuedMessages.push(text);
             traceEvent("queue", `"${text}" (depth=${queuedMessages.length})`);
             renderPending();
@@ -288,17 +313,22 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
         emitter.on("tool-result", syncPlanMode);
         traceEvent("turn", `start "${text}" abortedAtStart=${turnSignal.aborted} agent=${turnAgent}`);
         try {
-            await runTurn({
-                session: activeSession,
-                modelId: state.modelId,
-                userInput: finalInput,
-                cwd: state.cwd,
-                abortSignal: turnSignal,
-                tracker,
-                emitter,
-                thinkingLevel: state.thinkingLevel,
-                agent: turnAgent,
-            });
+            // In the session's scope so a question or approval this turn
+            // raises is routed to THIS session, even if by then you are
+            // looking at another one.
+            await runInSession(activeSession.id, () =>
+                runTurn({
+                    session: activeSession,
+                    modelId: state.modelId,
+                    userInput: finalInput,
+                    cwd: state.cwd,
+                    abortSignal: turnSignal,
+                    tracker,
+                    emitter,
+                    thinkingLevel: state.thinkingLevel,
+                    agent: turnAgent,
+                }),
+            );
         } catch (err) {
             noteTurnFailure(err);
         } finally {
@@ -328,6 +358,7 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
             }
             syncPlanMode();
             hideWorking();
+            deps.settleTurn(turnErrors.length > 0 && !turnSignal.aborted);
             tui.requestRender();
             // Plan follow-up runs before the queue drains so the selector
             // isn't fighting a queued message's turn.

@@ -23,7 +23,7 @@
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { Session, withSession } from "./harness";
+import { Session, withSession, type SessionOptions } from "./harness";
 
 const NOIR = '{"theme": "night"}';
 
@@ -1171,6 +1171,37 @@ async function testRecipes(): Promise<void> {
     });
 }
 
+/**
+ * A session whose only model is the local fixture listening on `port`: a
+ * custom Anthropic-compatible provider, set as the default model.
+ */
+function withFixtureSession(
+    port: number | undefined,
+    body: (s: Session) => Promise<void>,
+    opts: SessionOptions = {},
+): Promise<void> {
+    const settings = JSON.stringify({ theme: "night", defaultModel: "custom:fixture/fixture" });
+    return withSession({ settings, envExtra: { LOOP_SKIP_VERSION_CHECK: "1" }, ...opts }, async (s) => {
+        s.writeHome(
+            ".loop/auth.json",
+            JSON.stringify({
+                active: "custom:fixture",
+                customProviders: {
+                    fixture: {
+                        name: "fixture",
+                        sdk: "anthropic",
+                        baseURL: `http://127.0.0.1:${port}/v1`,
+                        apiKey: "fixture",
+                        auth: { kind: "apikey", apiKey: "fixture" },
+                        models: [{ id: "fixture", contextWindow: 100000, maxOutput: 4096 }],
+                    },
+                },
+            }),
+        );
+        await body(s);
+    });
+}
+
 /** A local model fixture drives extraction, review and the destination pickers. */
 async function testHandoff(): Promise<void> {
     const server = Bun.serve({
@@ -1195,24 +1226,7 @@ async function testHandoff(): Promise<void> {
         },
     });
     try {
-        const settings = JSON.stringify({ theme: "night", defaultModel: "custom:fixture/fixture" });
-        await withSession({ settings, envExtra: { LOOP_SKIP_VERSION_CHECK: "1" } }, async (s) => {
-            s.writeHome(
-                ".loop/auth.json",
-                JSON.stringify({
-                    active: "custom:fixture",
-                    customProviders: {
-                        fixture: {
-                            name: "fixture",
-                            sdk: "anthropic",
-                            baseURL: `http://127.0.0.1:${server.port}/v1`,
-                            apiKey: "fixture",
-                            auth: { kind: "apikey", apiKey: "fixture" },
-                            models: [{ id: "fixture", contextWindow: 100000, maxOutput: 4096 }],
-                        },
-                    },
-                }),
-            );
+        await withFixtureSession(server.port, async (s) => {
             s.writeHome(
                 "source.jsonl",
                 JSON.stringify({
@@ -1385,28 +1399,116 @@ async function withFixtureModel(
         fetch: async (req) => respond((await req.json().catch(() => ({}))) as { stream?: boolean }),
     });
     try {
-        const settings = JSON.stringify({ theme: "night", defaultModel: "custom:fixture/fixture" });
-        await withSession({ settings, envExtra: { LOOP_SKIP_VERSION_CHECK: "1" } }, async (s) => {
-            s.writeHome(
-                ".loop/auth.json",
-                JSON.stringify({
-                    active: "custom:fixture",
-                    customProviders: {
-                        fixture: {
-                            name: "fixture",
-                            sdk: "anthropic",
-                            baseURL: `http://127.0.0.1:${server.port}/v1`,
-                            apiKey: "fixture",
-                            auth: { kind: "apikey", apiKey: "fixture" },
-                            models: [{ id: "fixture", contextWindow: 100000, maxOutput: 4096 }],
-                        },
-                    },
-                }),
-            );
+        await withFixtureSession(server.port, async (s) => {
             await s.pump(7);
             await s.send("does validation run before the write?\r", 4.0);
             await body(s);
         });
+    } finally {
+        server.stop(true);
+    }
+}
+
+/**
+ * Two sessions in one loop, one of them mid-turn. The fixture holds any prompt
+ * containing "slow" for SLOW_MS before answering, so a turn is provably still
+ * running while the other session is used — and must finish where it started.
+ */
+async function testParallelSessions(): Promise<void> {
+    const SLOW_MS = 8_000;
+    const lastUserText = (body: { messages?: { role: string; content: unknown }[] }): string => {
+        const last = [...(body.messages ?? [])].reverse().find((m) => m.role === "user");
+        if (!last) return "";
+        if (typeof last.content === "string") return last.content;
+        return (last.content as { text?: string }[]).map((b) => b.text ?? "").join(" ");
+    };
+    const server = Bun.serve({
+        port: 0,
+        idleTimeout: 30,
+        fetch: async (req) => {
+            const text = lastUserText((await req.json().catch(() => ({}))) as never);
+            if (text.includes("slow task alpha")) {
+                await Bun.sleep(SLOW_MS);
+                return streamedReply("SLOW-DONE for alpha.");
+            }
+            if (text.includes("slow task gamma")) {
+                await Bun.sleep(SLOW_MS);
+                return streamedReply("GAMMA-DONE.");
+            }
+            return streamedReply("FAST-REPLY for beta.");
+        },
+    });
+    try {
+        await withFixtureSession(server.port, async (s) => {
+            const screen = () => s.screenRows().join("\n");
+            await s.pump(7);
+
+            // Session A starts a slow turn.
+            await s.send("slow task alpha\r", 1.5);
+            check(screen().includes("slow task alpha"), "A: the prompt is on screen", s.screenRows());
+
+            // Ctrl+S mid-turn opens the switcher, with A listed as working.
+            await s.send("\x13", 1.0);
+            check(screen().includes("+ New session"), "ctrl+s opens the switcher mid-turn", s.screenRows());
+            check(screen().includes("this one keeps running"), "and says the running session is kept", s.screenRows());
+
+            // "+ New session" is the default row: Enter opens B.
+            await s.send("\r", 2.0);
+            check(!screen().includes("slow task alpha"), "B: A's transcript is off screen", s.screenRows());
+            check(screen().includes("1 working"), "B: the status line counts A as working", s.screenRows());
+
+            // B is usable while A is still running.
+            await s.send("quick question beta\r", 2.5);
+            check(screen().includes("FAST-REPLY for beta."), "B: answers while A is still running", s.screenRows());
+            check(!screen().includes("SLOW-DONE"), "A's reply never lands in B", s.screenRows());
+
+            // /resume marks what is live: A working, B here, both above the rest.
+            await s.send("/resume\r", 1.5);
+            const rows = s.screenRows();
+            const aRow = rows.findIndex((r) => r.includes("● ") && r.includes("slow task alpha"));
+            const bRow = rows.findIndex((r) => r.includes("○ ") && r.includes("here · ") && r.includes("quick question beta"));
+            check(rows.some((r) => r.includes("2 live")), "/resume: the title counts the live sessions", rows);
+            check(aRow >= 0, "/resume: the running session wears the working glyph", rows);
+            check(bRow >= 0, "/resume: the session on screen is idle and marked here", rows);
+            check(aRow >= 0 && bRow >= 0 && aRow < bRow, "/resume: working sorts above idle", rows);
+            await s.send("\x1b", 0.8);
+
+            // A finishes out of sight.
+            await s.pump(SLOW_MS / 1000);
+            check(screen().includes("1 done"), "B: the status line says A finished", s.screenRows());
+            await s.send("\x13", 1.0);
+            const doneRow = s.screenRows().find((r) => r.includes("slow task alpha")) ?? "";
+            check(
+                doneRow.includes("✓") && doneRow.includes("done ·") && !doneRow.includes("Generating"),
+                "switcher: a finished session says done, not Generating",
+                s.screenRows(),
+            );
+            await s.send("\x1b", 0.8);
+            check(!screen().includes("SLOW-DONE"), "and A's reply still is not in B", s.screenRows());
+
+            // Back to A through the switcher (filtering by its title).
+            await s.send("\x13", 1.0);
+            await s.send("alpha", 0.8);
+            await s.send("\r", 2.0);
+            check(screen().includes("SLOW-DONE for alpha."), "A: the reply finished in its own transcript", s.screenRows());
+            check(!screen().includes("FAST-REPLY"), "A: B's turn is not here", s.screenRows());
+
+            // /new mid-turn moves the turn to the background instead of killing it.
+            await s.send("slow task gamma\r", 1.5);
+            await s.send("/new\r", 2.0);
+            check(
+                screen().includes("previous session keeps running"),
+                "/new mid-turn keeps the turn running",
+                s.screenRows(),
+            );
+            check(!screen().includes("slow task gamma"), "/new opened a fresh session", s.screenRows());
+            await s.pump(SLOW_MS / 1000 + 1);
+            check(screen().includes("1 done"), "the backgrounded turn finished", s.screenRows());
+            await s.send("\x13", 1.0);
+            await s.send("alpha", 0.8);
+            await s.send("\r", 2.0);
+            check(screen().includes("GAMMA-DONE."), "and its reply is in its own session", s.screenRows());
+        }, { rows: 40 });
     } finally {
         server.stop(true);
     }
@@ -1610,6 +1712,7 @@ const SCENARIOS: Record<string, () => Promise<void>> = {
     "lua-fullscreen": testLuaFullscreen,
     nav: testNavigationIsFocusOnly,
     "turn-failed": testTurnFailed,
+    sessions: testParallelSessions,
     click: testClickSelectsAnEntry,
 };
 

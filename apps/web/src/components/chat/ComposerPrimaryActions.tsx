@@ -1,5 +1,5 @@
 import { memo, type PointerEventHandler } from "react";
-import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronLeftIcon, CornerDownLeftIcon } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
@@ -136,7 +136,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     return (
       <button
         type="button"
-        className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-[0_1px_--theme(--color-white/16%)] transition-all duration-150 hover:bg-destructive hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none sm:h-8 sm:w-8"
+        className="flex size-7 cursor-pointer items-center justify-center rounded-lg bg-foreground text-background transition-colors duration-150 hover:bg-foreground/85"
         {...pointerFocusProps}
         onClick={onInterrupt}
         aria-label="Stop generation"
@@ -206,10 +206,12 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     <button
       type="submit"
       className={cn(
-        "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full text-primary-foreground shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/16%)] hover:scale-105 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8",
+        // A quiet return key while there is nothing to send, ink once there
+        // is: the box should read as a command bar, not a big blue button.
+        "relative isolate flex size-7 items-center justify-center overflow-hidden rounded-lg transition-colors duration-150 enabled:cursor-pointer disabled:pointer-events-none disabled:bg-transparent disabled:text-muted-foreground/60",
         stageBackdropVariant
-          ? "bg-transparent enabled:shadow-black/24 enabled:hover:brightness-110"
-          : "bg-primary/90 enabled:shadow-primary/24 hover:bg-primary",
+          ? "bg-transparent text-primary-foreground enabled:hover:brightness-110"
+          : "bg-foreground text-background hover:bg-foreground/85",
       )}
       {...pointerFocusProps}
       disabled={
@@ -241,15 +243,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       {isConnecting || isSendBusy ? (
         <Spinner className="size-3.5" aria-hidden="true" />
       ) : (
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <path
-            d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <CornerDownLeftIcon className="size-3.75" strokeWidth={2} aria-hidden="true" />
       )}
     </button>
   );

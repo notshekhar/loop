@@ -332,6 +332,8 @@ export interface TUI extends Component {
     children: Component[];
     terminal: Terminal;
     onDebug?: () => void;
+    /** The terminal window regained focus (fullscreen only; needs focus reporting). */
+    onFocusIn?: () => void;
     readonly fullRedraws: number;
     addChild(component: Component): void;
     removeChild(component: Component): void;
@@ -386,6 +388,7 @@ export abstract class TuiBase extends Container implements TUI {
 
     /** Global callback for debug key (Shift+Ctrl+D). Called before input is forwarded to focused component. */
     public onDebug?: () => void;
+    public onFocusIn?: () => void;
     private renderRequested = false;
     private immediateRenderScheduled = false;
     private renderTimer: NodeJS.Timeout | undefined;

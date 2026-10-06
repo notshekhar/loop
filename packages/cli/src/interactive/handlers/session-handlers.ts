@@ -16,6 +16,7 @@ import {
     sessionToMarkdown,
     setProjectModel,
     settingsStore,
+    LIVE_STATUS_ORDER,
     type CommandContext,
 } from "@notshekhar/loop-core";
 import type { AppDeps } from "../deps";
@@ -26,6 +27,7 @@ import { copyToClipboard } from "../clipboard";
 import { showWelcomeBanner } from "../welcome";
 import { showWorkspaceBanners } from "../startup";
 import { dim } from "../ui/text";
+import { HERE, liveActivity, liveGlyph } from "../session-roster";
 
 type SessionHandlers = Pick<
     CommandContext,
@@ -46,6 +48,16 @@ type SessionHandlers = Pick<
  * the /background manager's "open last run".
  */
 export async function resumeSessionById(state: AppState, deps: AppDeps, idOrPath: string): Promise<void> {
+    // Already live in this loop (running in the background, say): go to it
+    // rather than open a second copy that would fight it over the transcript.
+    const live = deps.sessions.findLive(idOrPath);
+    if (live) {
+        deps.sessions.switchTo(live);
+        return;
+    }
+    // Never replace a session mid-turn: it keeps running, and the resumed
+    // one opens beside it.
+    if (state.busy) await deps.sessions.openNew();
     const { tui, history, statusLine, tracker, manager, refreshStatusLine } = deps;
     try {
         state.session = await manager.open(idOrPath);
@@ -121,7 +133,18 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
 
     return {
         async newSession() {
-            abortActiveTurn();
+            // A turn in flight is not thrown away: it carries on in the
+            // background (Ctrl+S to go back) and the new session opens beside
+            // it. Only an idle session is replaced in place, as before.
+            if (state.busy) {
+                await deps.sessions.openNew();
+                history.addSystem(dim("previous session keeps running in the background · ctrl+s to switch"));
+                tui.requestRender();
+                return;
+            }
+            // Its reads only, not every live session's (the registry is keyed
+            // by session; no id would clear them all).
+            if (state.session) clearReadRegistry(state.session.id);
             state.session = null;
             statusLine.setSession("unsaved");
             // The tab named the session that just went away. Hand it back its
@@ -135,7 +158,6 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
             statusLine.setPlanMode(false);
             deps.todoPanel.clear();
             tracker.reset();
-            clearReadRegistry();
             state.latestContextTokens = 0;
             refreshStatusLine();
             queuedMessages.length = 0;
@@ -147,6 +169,9 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
             tui.requestRender();
         },
         clearScreen() {
+            // /clear is a new session too, and a running turn survives it the
+            // same way: newSession opens the fresh one beside it.
+            if (state.busy) return;
             abortActiveTurn();
             process.stdout.write("\x1b[3J\x1b[2J\x1b[H");
             tracker.reset();
@@ -236,22 +261,41 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
             let pick: SelectItem | null;
             while (true) {
                 const filter = dateFilters[filterIndex];
-                const filtered = sessions.filter((s) => filter.test(s.mtime));
+                // Sessions live in this loop lead the list, in roster order
+                // (needs you, working, done, …); the rest keep their recency.
+                const live = new Map(sessions.map((s) => [s.id, deps.sessions.findLive(s.id)] as const));
+                const rank = (id: string) => {
+                    const slot = live.get(id);
+                    return slot ? LIVE_STATUS_ORDER.indexOf(slot.status) : LIVE_STATUS_ORDER.length;
+                };
+                const filtered = sessions
+                    .filter((s) => filter.test(s.mtime))
+                    .sort((a, b) => rank(a.id) - rank(b.id));
+                const liveCount = filtered.filter((s) => live.get(s.id)).length;
                 const items: SelectItem[] = [
                     {
                         value: FILTER_ROW,
                         label: `⏷ date: ${filter.label}`,
                         description: "Enter cycles · all → today → yesterday → last 7 days → last 30 days",
                     },
-                    ...filtered.map((s) => ({
-                        value: s.path,
-                        label: s.name
+                    ...filtered.map((s) => {
+                        const slot = live.get(s.id);
+                        // Not-live rows get a blank where the glyph goes, so
+                        // every title starts in the same column.
+                        const badge = slot ? liveGlyph(slot) : " ";
+                        const here = s.id === state.session?.id ? HERE : "";
+                        const title = s.name
                             ? `${s.name}  ·  ${s.id.slice(0, 12)}`
-                            : `${s.id.slice(0, 12)}  ${s.model || "?"}`,
-                        description: `${formatSessionTime(s.mtime)}  ·  ${s.firstUserMessage?.slice(0, 80) ?? "(no messages)"}`,
-                    })),
+                            : `${s.id.slice(0, 12)}  ${s.model || "?"}`;
+                        return {
+                            value: s.path,
+                            label: `${badge} ${title}`,
+                            description: `${here}${slot ? liveActivity(slot) : ""}${formatSessionTime(s.mtime)}  ·  ${s.firstUserMessage?.slice(0, 80) ?? "(no messages)"}`,
+                        };
+                    }),
                 ];
-                pick = await searchOnce(items, `Resume session · ${filtered.length}/${sessions.length}`);
+                const liveNote = liveCount > 0 ? ` · ${liveCount} live` : "";
+                pick = await searchOnce(items, `Resume session · ${filtered.length}/${sessions.length}${liveNote}`);
                 if (!pick) return;
                 if (pick.value === FILTER_ROW) {
                     filterIndex = (filterIndex + 1) % dateFilters.length;

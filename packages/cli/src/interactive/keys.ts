@@ -27,6 +27,7 @@ export const isCtrlE = (d: string) =>
     isKittyProtocolActive() ? matchesKey(d, "ctrl+e") && d !== "\x05" : d === "\x05" || matchesKey(d, "ctrl+e");
 export const isCtrlV = (d: string) => d === "\x16" || matchesKey(d, "ctrl+v");
 export const isCtrlG = (d: string) => d === "\x07" || matchesKey(d, "ctrl+g");
+export const isCtrlS = (d: string) => d === "\x13" || matchesKey(d, "ctrl+s");
 export const isCtrlP = (d: string) => d === "\x10" || matchesKey(d, "ctrl+p");
 /** Delete-to-line-start — loop's "clear what I typed" gesture. */
 export const isClearLine = (d: string) =>

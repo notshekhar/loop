@@ -71,8 +71,8 @@ const appIconPath = resolve(distDirectory, "icon.png");
 
 /**
  * The app ships every asset it uses, so nothing needs to be fetched from the
- * network. `wasm-unsafe-eval` is required by the terminal's ghostty wasm, and
- * inline styles by the bundled CSS-in-JS.
+ * network. `wasm-unsafe-eval` stays for the bundled WebAssembly modules, and
+ * inline styles for the bundled CSS-in-JS.
  */
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",

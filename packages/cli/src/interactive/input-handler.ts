@@ -9,6 +9,7 @@ import {
     isCtrlDown,
     isCtrlE,
     isCtrlG,
+    isCtrlS,
     isCtrlI,
     isCtrlL,
     isCtrlP,
@@ -98,6 +99,14 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
     const { tui, history, queuedMessages, renderPending, hideWorking, cleanExit, editor, statusLine, scrollbackFocus } = deps;
 
     const clipboardTip = new ClipboardImageTip();
+    // Coming back to the terminal is when a freshly copied image is worth
+    // naming — and the only time the pasteboard is probed.
+    tui.onFocusIn = () =>
+        clipboardTip.check(
+            statusLine,
+            () => imagePasteEligible((editor as unknown as { focused?: boolean }).focused === true),
+            () => tui.requestRender(),
+        );
 
     /** Would an image attach right now? Gates the tip's pasteboard probe. */
     const imagePasteEligible = (editorFocused: boolean): boolean => {
@@ -238,14 +247,8 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
         // editor has focus.
         const editorFocused = (editor as unknown as { focused?: boolean }).focused === true;
 
-        // Ride this keystroke to notice an image sitting on the pasteboard (and
-        // to drop an already-read tip). Throttled + deduped inside; nothing is
-        // scheduled, so an idle prompt never probes.
-        clipboardTip.onKey(
-            statusLine,
-            () => imagePasteEligible(editorFocused),
-            () => tui.requestRender(),
-        );
+        // A keystroke means the tip was read. Probing happens on focus-in only.
+        clipboardTip.onKey(statusLine);
 
         // Scrollback focus mode owns navigation keys while active. Selectors
         // (which steal editor focus) suspend it implicitly via the flag reset
@@ -411,6 +414,12 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
             if (editor.onSubmit) void editor.onSubmit("continue");
             return { consume: true };
         }
+        // Ctrl+S: the session switcher. Works mid-turn — that is the point:
+        // the running session carries on while you look at another.
+        if (isCtrlS(data) && editorFocused && deps.getSelectorDepth() === 0) {
+            void deps.sessions.showSwitcher();
+            return { consume: true };
+        }
         if (isCtrlD(data) && !state.busy && editorFocused) {
             cleanExit(0);
             return { consume: true };
@@ -433,7 +442,14 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
                 return { consume: true };
             }
             state.lastCtrlCAt = now;
-            history.addSystem("Press Ctrl+C again to quit.");
+            // Quitting takes every session in this loop with it; say so when
+            // some are still working where you cannot see them.
+            const running = deps.sessions.runningElsewhere();
+            history.addSystem(
+                running > 0
+                    ? `Press Ctrl+C again to quit — ${running} session${running === 1 ? " is" : "s are"} still running in the background.`
+                    : "Press Ctrl+C again to quit.",
+            );
             tui.requestRender();
             return { consume: true };
         }

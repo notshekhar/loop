@@ -106,7 +106,12 @@ import {
   rememberEnabledProjectGroupingMode,
   resolveBackgroundActivityProfileOption,
 } from "./SettingsPanels.logic";
-import { SettingResetButton, SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingResetButton,
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 const THEME_OPTIONS = [
@@ -145,8 +150,7 @@ const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, stri
 type BackgroundActivityProfileOption = BackgroundActivityProfile | "advanced";
 type BackgroundActivityOverridePatch = Partial<{
   [K in keyof BackgroundActivitySettings["overrides"]]:
-    | BackgroundActivitySettings["overrides"][K]
-    | undefined;
+    BackgroundActivitySettings["overrides"][K] | undefined;
 }>;
 
 const BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS: Record<BackgroundActivityProfileOption, string> = {
@@ -496,6 +500,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Project Grouping"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.verboseMode !== DEFAULT_UNIFIED_SETTINGS.verboseMode ? ["Verbose mode"] : []),
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
         : []),
@@ -546,6 +551,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
       settings.wordWrap,
+      settings.verboseMode,
       theme,
     ],
   );
@@ -564,6 +570,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      verboseMode: DEFAULT_UNIFIED_SETTINGS.verboseMode,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
@@ -1020,6 +1027,28 @@ export function AppearanceSettingsPanel() {
           }
         />
 
+        <SettingsRow
+          {...searchableSetting("verbose-mode")}
+          description="Show the Chat and Trajectory tabs above a thread, for a step-by-step timing view of each run."
+          resetAction={
+            settings.verboseMode !== DEFAULT_UNIFIED_SETTINGS.verboseMode ? (
+              <SettingResetButton
+                label="verbose mode"
+                onClick={() =>
+                  updateSettings({ verboseMode: DEFAULT_UNIFIED_SETTINGS.verboseMode })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.verboseMode}
+              onCheckedChange={(checked) => updateSettings({ verboseMode: Boolean(checked) })}
+              aria-label="Show the Chat and Trajectory tabs"
+            />
+          }
+        />
+
         <SidebarStyleSetting />
       </SettingsSection>
     </SettingsPageContainer>
@@ -1067,7 +1096,6 @@ function SidebarStyleSetting() {
   const selected =
     SIDEBAR_STYLE_OPTIONS.find((option) => option.value === sidebarStyle) ??
     SIDEBAR_STYLE_OPTIONS[0];
-
 
   return (
     <SettingsRow

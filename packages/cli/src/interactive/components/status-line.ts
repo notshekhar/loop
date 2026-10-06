@@ -101,6 +101,14 @@ export class StatusLine implements Component {
         this.costData = d;
     }
 
+    /** The other live sessions in this loop ("◆ 1 needs you · ⋮ 2 working"),
+     * pre-rendered by the caller; null while this is the only one. */
+    private sessions: string | null = null;
+
+    setSessions(chip: string | null): void {
+        this.sessions = chip;
+    }
+
     /** Transient contextual hint row — replaces the status rows while set
      * (scrollback focus mode). */
     private hint: string | null = null;
@@ -142,6 +150,7 @@ export class StatusLine implements Component {
             usage.push(remaining < 60_000 ? warn(body) : dim(body));
         }
         if (this.clockEnabled) usage.push(dim(formatClock()));
+        if (this.sessions) usage.push(this.sessions);
 
         // Extension contributions: rows[0]=identity, rows[1]=usage, >1 = extra.
         const { contributors, transforms } = getExtensionHost().getStatusLine();

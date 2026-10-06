@@ -14,7 +14,7 @@ import {
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
 } from "@loop/shared/model";
-import { memo, useCallback, useState } from "react";
+import { type CSSProperties, memo, useCallback, useRef, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ZapIcon } from "lucide-react";
 import { buttonVariants } from "../ui/button";
@@ -223,6 +223,172 @@ export interface TraitsMenuContentProps {
   triggerClassName?: string;
 }
 
+/**
+ * Effort as a slider, the way Claude Code draws it: "Faster" to "Smarter",
+ * one stop per level, the provider's default marked "Recommended". A radio
+ * list made every level look like an unrelated choice; this one reads as the
+ * single dial it is.
+ */
+export function EffortSlider({
+  label,
+  options,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  options: ReadonlyArray<{ id: string; label: string; isDefault?: boolean | undefined }>;
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const railRef = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const selectedIndex = Math.max(
+    0,
+    options.findIndex((option) => option.id === value),
+  );
+  const selected = options[selectedIndex];
+  const defaultIndex = options.findIndex((option) => option.isDefault);
+  const lastIndex = Math.max(1, options.length - 1);
+  const percent = (index: number) => (index / lastIndex) * 100;
+  const select = (index: number) => {
+    const next = options[Math.min(options.length - 1, Math.max(0, index))];
+    if (next && next.id !== value) onChange(next.id);
+  };
+  // Snap a pointer position to the nearest stop on the inner rail.
+  const selectAtPointer = (clientX: number) => {
+    const rail = railRef.current;
+    if (!rail) return;
+    const bounds = rail.getBoundingClientRect();
+    const fraction = bounds.width > 0 ? (clientX - bounds.left) / bounds.width : 0;
+    select(Math.round(Math.min(1, Math.max(0, fraction)) * lastIndex));
+  };
+  // The level's color, from "faster" green to "smarter" orange, so how much
+  // thinking you asked for reads before the label does.
+  const levelColor = `color-mix(in oklch, var(--effort-smarter) ${percent(selectedIndex)}%, var(--effort-faster))`;
+
+  return (
+    <div
+      className="w-60 px-2 pt-1.5 pb-2 [--effort-faster:#10b981] [--effort-smarter:#e8743b]"
+      style={{ "--effort-level": levelColor } as CSSProperties}
+    >
+      <div className="flex items-baseline gap-1.5 text-xs">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="font-medium text-(--effort-level) transition-colors">
+          {selected?.label}
+        </span>
+      </div>
+      <div className="mt-2.5 flex justify-between text-[11px] text-muted-foreground">
+        <span>Faster</span>
+        <span>Smarter</span>
+      </div>
+      <div
+        role="slider"
+        tabIndex={disabled ? -1 : 0}
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={options.length - 1}
+        aria-valuenow={selectedIndex}
+        aria-valuetext={selected?.label}
+        aria-disabled={disabled}
+        className={cn(
+          "relative mt-1.5 h-5 touch-none rounded-md bg-muted outline-hidden ring-ring select-none focus-visible:ring-2",
+          disabled ? "opacity-50" : dragging ? "cursor-grabbing" : "cursor-pointer",
+        )}
+        onKeyDown={(event) => {
+          if (disabled) return;
+          if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+            event.preventDefault();
+            event.stopPropagation();
+            select(selectedIndex - 1);
+          } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+            event.preventDefault();
+            event.stopPropagation();
+            select(selectedIndex + 1);
+          } else if (event.key === "Home" || event.key === "End") {
+            event.preventDefault();
+            event.stopPropagation();
+            select(event.key === "Home" ? 0 : lastIndex);
+          }
+        }}
+        onPointerDown={(event) => {
+          if (disabled || event.button !== 0) return;
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          event.currentTarget.focus({ preventScroll: true });
+          setDragging(true);
+          selectAtPointer(event.clientX);
+        }}
+        onPointerMove={(event) => {
+          if (!dragging) return;
+          selectAtPointer(event.clientX);
+        }}
+        onPointerUp={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+          setDragging(false);
+        }}
+        onPointerCancel={() => setDragging(false)}
+      >
+        {/* Stops sit on an inner rail inset by half a thumb, so the first
+            and last land inside the track's rounded ends. */}
+        <div ref={railRef} className="absolute inset-y-0 right-2.5 left-2.5">
+          <div
+            aria-hidden
+            className={cn(
+              "absolute inset-y-0 -left-2.5 rounded-md bg-[color-mix(in_oklch,var(--effort-level)_28%,transparent)]",
+              !dragging && "transition-[width,background-color] duration-150 ease-out",
+            )}
+            style={{ width: `calc(${percent(selectedIndex)}% + 1.25rem)` }}
+          />
+          {options.map((option, index) => (
+            <span
+              key={option.id}
+              aria-hidden
+              title={option.label}
+              className="absolute top-0 flex h-5 w-5 -translate-x-1/2 items-center justify-center"
+              style={{ left: `${percent(index)}%` }}
+            >
+              {index === selectedIndex ? null : (
+                <span
+                  className={cn(
+                    "size-1 rounded-full",
+                    index < selectedIndex
+                      ? "bg-[color-mix(in_oklch,var(--effort-level)_70%,var(--foreground))]"
+                      : "bg-muted-foreground/45",
+                  )}
+                />
+              )}
+            </span>
+          ))}
+          {/* The thumb, drawn once and moved, so a drag slides it between
+              stops instead of popping it from one to the next. */}
+          <span
+            aria-hidden
+            className={cn(
+              "pointer-events-none absolute top-0.5 h-4 w-2.5 -translate-x-1/2 rounded-[4px] border-[1.5px] border-(--effort-level) bg-background shadow-sm",
+              !dragging && "transition-[left,border-color] duration-150 ease-out",
+            )}
+            style={{ left: `${percent(selectedIndex)}%` }}
+          />
+        </div>
+      </div>
+      {defaultIndex >= 0 ? (
+        <div className="relative mx-2.5 mt-1 h-4 text-[11px] text-muted-foreground">
+          <span
+            className="absolute -translate-x-1/2 whitespace-nowrap"
+            style={{ left: `clamp(1.75rem, ${percent(defaultIndex)}%, calc(100% - 1.75rem))` }}
+          >
+            Recommended
+          </span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   provider,
   instanceId,
@@ -305,6 +471,27 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
             ? "ultrathink"
             : (getDescriptorStringValue(descriptor) ?? "");
+
+        if (descriptor.id === primarySelectDescriptor?.id && descriptor.options.length >= 2) {
+          return (
+            <div key={descriptor.id}>
+              {index > 0 ? <MenuDivider /> : null}
+              {ultrathinkInBodyText ? (
+                <div className="w-60 px-2 pt-1.5 text-muted-foreground/80 text-xs">
+                  Your prompt contains &quot;ultrathink&quot; in the text. Remove it to change this
+                  option.
+                </div>
+              ) : null}
+              <EffortSlider
+                label={descriptor.label}
+                options={descriptor.options}
+                value={selectedValue}
+                disabled={ultrathinkInBodyText}
+                onChange={(value) => handleSelectChange(descriptor, value)}
+              />
+            </div>
+          );
+        }
 
         return (
           <div key={descriptor.id}>

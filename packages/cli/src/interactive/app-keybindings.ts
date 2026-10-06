@@ -11,6 +11,7 @@ const APP_KEYBINDINGS = {
     "app.interrupt": { defaultKeys: "escape", description: "Interrupt agent" },
     "app.clear": { defaultKeys: "ctrl+c", description: "Clear / exit" },
     "app.continue": { defaultKeys: "ctrl+g", description: 'Send "continue"' },
+    "app.sessions": { defaultKeys: "ctrl+s", description: "Switch session / start a new one" },
     // Both were bound but registered nowhere, so /hotkeys never listed them —
     // "clipboard paste doesn't work" was largely nobody knowing the key. Cmd+V
     // can't be bound here: the terminal consumes it before loop sees it.

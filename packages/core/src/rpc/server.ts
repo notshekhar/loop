@@ -1,7 +1,6 @@
 import { getConfigDir, PRODUCT_NAME } from "../brand";
 import { createServer, type Server, type Socket } from "node:net";
 import { randomBytes } from "node:crypto";
-import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -38,6 +37,7 @@ import {
 } from "../agent/agents";
 import { setAskUserBridge, type AskAnswer, type AskQuestion } from "../tools/ask-bridge";
 import { killAllBashChildren, killSessionShells } from "../tools/utils/shell-registry";
+import { currentSessionId, runInSession } from "../host/session-scope";
 import { THINKING_LEVELS, type ThinkingLevel } from "../agent/thinking";
 import {
     artifactFilePath,
@@ -246,17 +246,6 @@ const WEB_SETTINGS: ReadonlyArray<{ key: keyof AppSettings; label: string; descr
     },
 ];
 
-/**
- * Which session's turn is currently running, for the ask bridge.
- *
- * The bridge is a single global (core cannot depend on a UI), but a question
- * has to reach the client watching THAT session — and several sessions can be
- * mid-turn at once. A module variable would answer whichever turn started
- * last; async-local storage follows the actual call, including through every
- * await inside runTurn.
- */
-const askSession = new AsyncLocalStorage<string>();
-
 /** Events kept per active session for reconnect replay (session.attach). */
 const EVENT_RING_SIZE = 2048;
 
@@ -396,7 +385,7 @@ export class RpcServer {
      */
     private askOverRpc(questions: AskQuestion[], opts?: { signal?: AbortSignal }): Promise<AskAnswer[]> {
         const declined = (): AskAnswer[] => questions.map(() => ({ answers: [], declined: true }));
-        const sessionId = askSession.getStore();
+        const sessionId = currentSessionId();
         const ctx = sessionId ? this.sessions.get(sessionId) : undefined;
         if (!sessionId || !ctx || ctx.subscribers.size === 0) return Promise.resolve(declined());
 
@@ -681,9 +670,9 @@ export class RpcServer {
                 ctx.modelId = modelId;
                 this.setRunning(id, ctx, true);
                 // run async; events stream via notifications
-                // Inside askSession.run so the ask tool can tell which session
+                // Inside runInSession so the ask tool can tell which session
                 // is asking — it follows the call through every await.
-                void askSession.run(id, () =>
+                void runInSession(id, () =>
                     runTurn({
                         session: ctx.session,
                         modelId,

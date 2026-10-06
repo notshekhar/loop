@@ -26,6 +26,7 @@ export * from "./artifacts";
 export * from "./agent";
 export * from "./commands";
 export * from "./rpc";
+export * from "./host";
 export * from "./settings";
 export * from "./reminders";
 export * from "./goals";

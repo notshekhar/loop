@@ -9,12 +9,14 @@
  * keystroke for us to hook. Ctrl+V does arrive, so the fix is discoverability:
  * notice the image and name the chord that works.
  *
- * Trigger model: opportunistic, throttled polling that rides keystrokes the
- * event loop is already handling. Nothing schedules a wakeup, so an idle loop
- * probes zero times. Each in-window poll spends one `osascript` subprocess
- * (~70ms) off the event loop, at most once per {@link POLL_INTERVAL_MS}, and
- * refires only when the clipboard actually changed — the same copied image
- * never nags twice.
+ * Trigger model: one probe when the terminal regains focus — which is what
+ * copying an image elsewhere and switching back looks like — never on a
+ * keystroke. The probe is an `osascript` subprocess, and `clipboard info`
+ * makes it a window-server client: macOS can flash it in the Dock under the
+ * terminal's icon, which under cmux reads as a new cmux appearing with every
+ * key. Keystrokes only take an already-read hint back down. Probes are still
+ * throttled to one per {@link POLL_INTERVAL_MS} and refire only when the
+ * clipboard actually changed — the same copied image never nags twice.
  */
 import { spawn } from "node:child_process";
 
@@ -104,13 +106,17 @@ export class ClipboardImageTip {
         return this.shown;
     }
 
+    /** A keystroke: the hint has been read, so take it down. Never probes. */
+    onKey(surface: TipSurface): void {
+        this.dismiss(surface);
+    }
+
     /**
-     * Ride one keystroke: drop a hint that's already been read, then maybe
-     * start a probe. `eligible` is the caller's "an image would be accepted
-     * here" test (editor focused, idle, vision model) — false short-circuits
-     * before any subprocess.
+     * Maybe probe the pasteboard — called when the terminal regains focus.
+     * `eligible` is the caller's "an image would be accepted here" test (editor
+     * focused, idle, vision model) — false short-circuits before any subprocess.
      */
-    onKey(surface: TipSurface, eligible: () => boolean, onShow: () => void): void {
+    check(surface: TipSurface, eligible: () => boolean, onShow: () => void): void {
         this.dismiss(surface);
         if (this.inFlight || !eligible()) return;
         const now = this.now();

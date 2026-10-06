@@ -17,6 +17,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -50,6 +51,7 @@ import { LoopCompactRow } from "../loop/LoopCompactRow";
 import { LoopHookRow } from "../loop/LoopHookRow";
 import { LoopRecapRow } from "../loop/LoopRecapRow";
 import { LoopThinkingRow } from "../loop/LoopThinkingRow";
+import { GeneratingIndicator } from "./GeneratingIndicator";
 import { LoopToolGroupRow } from "../loop/LoopToolGroupRow";
 import { LoopToolRow } from "../loop/LoopToolRow";
 import { groupToolRuns } from "../loop/loopVerbGroup";
@@ -516,7 +518,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   return (
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
-        <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
+        <div
+          ref={setTimelineViewportElement}
+          className="relative h-full min-h-0"
+          // Where the composer's box begins, measured from the bottom: the
+          // timeline mask ends there, so rows fade out above the input instead
+          // of sliding underneath it (see `.chat-timeline-mask`).
+          style={{ "--timeline-bottom-inset": `${contentInsetEndAdjustment}px` } as CSSProperties}
+        >
           <LegendList<MessagesTimelineRow>
             ref={listRef}
             data={rows}
@@ -546,6 +555,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             onScroll={handleScroll}
             className={cn(
               "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
+              "chat-timeline-mask",
               topFadeEnabled && "chat-timeline-scroll-fade",
             )}
             ListHeaderComponent={topFadeEnabled ? TIMELINE_LIST_FADE_HEADER : TIMELINE_LIST_HEADER}
@@ -1126,24 +1136,12 @@ function ProposedPlanTimelineRow({
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   return (
-    <div className="py-0.5 pl-1.5">
-      <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70 tabular-nums">
-        <span className="inline-flex items-center gap-[3px]">
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse" />
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:200ms]" />
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:400ms]" />
-        </span>
-        <span>
-          {row.createdAt ? (
-            <>
-              {row.label ?? "Working"} for <WorkingTimer createdAt={row.createdAt} />
-            </>
-          ) : (
-            `${row.label ?? "Working"}...`
-          )}
-        </span>
-      </div>
-    </div>
+    <GeneratingIndicator
+      // "Running <tool>" says what is happening and stays; the generic
+      // "Generating" says nothing the indicator doesn't, so the verbs rotate.
+      label={row.label === "Generating" ? null : row.label}
+      elapsed={row.createdAt ? <WorkingTimer createdAt={row.createdAt} /> : null}
+    />
   );
 }
 

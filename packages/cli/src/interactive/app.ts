@@ -91,7 +91,8 @@ import { createBashApprovalBridge } from "./bash-approve";
 import { createCommandContext } from "./command-handlers";
 import { createInputHandler } from "./input-handler";
 import { isEventTraceEnabled, setEventTraceSink, toggleEventTrace } from "./debug-log";
-import { createTurnRunner } from "./turn-runner";
+import { forwardTo, makeStateView, SlotManager, type SharedState } from "./slots";
+import { createSessionRoster, type SessionRoster } from "./session-roster";
 import { createStatusLineRefresher } from "./status-line-refresh";
 import { createScrollbackFocus } from "./scrollback-focus";
 import { scrollTopFor } from "./transcript-scroll";
@@ -202,10 +203,10 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         }
     }
 
-    const tracker = new CostTracker();
+    const firstTracker = new CostTracker();
     // Resumed sessions restore their cost/usage/ctx from the transcript's
     // usage entries instead of showing zeros until the next message.
-    const seededCtxTokens = initialSession ? tracker.seedFromSession(initialSession).ctxTokens : 0;
+    const seededCtxTokens = initialSession ? firstTracker.seedFromSession(initialSession).ctxTokens : 0;
     // Load extensions BEFORE building commands so registerBuiltins (which lists
     // agents) sees extension-registered agents and gives them /<name> commands.
     // With nothing installed this is a no-op, so the command set is exactly the
@@ -242,16 +243,16 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         },
     });
 
-    const history = new ChatHistory(tui, opts.cwd);
+    const firstHistory = new ChatHistory(tui, opts.cwd);
     const statusLine = new StatusLine();
-    const todoPanel = new TodoPanel();
+    const firstTodoPanel = new TodoPanel();
     const shellsPanel = new ShellsPanel();
     // A resumed session restores its branch's latest checklist immediately.
-    if (initialSession) todoPanel.setItems(latestTodos(initialSession.getBranch()) ?? []);
+    if (initialSession) firstTodoPanel.setItems(latestTodos(initialSession.getBranch()) ?? []);
     statusLine.setModel(initialModelId);
     statusLine.setSession(initialSession?.id ?? "unsaved");
-    statusLine.setCost(tracker.format());
-    statusLine.setCostData(tracker.sessionBreakdown());
+    statusLine.setCost(firstTracker.format());
+    statusLine.setCostData(firstTracker.sessionBreakdown());
     statusLine.setCwd(opts.cwd);
     const initialThinking: ThinkingLevel = (settingsStore.get("thinkingLevel") as ThinkingLevel | undefined) ?? "off";
     statusLine.setThinking(initialThinking);
@@ -259,29 +260,42 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     // Plan is a per-session mode, not a sticky preference: a new loop always
     // boots in the default agent even if the last session ended in plan.
     const savedAgent = resolveSavedAgent(settingsStore.get("agent") as string | undefined) ?? DEFAULT_AGENT_NAME;
-    const state: AppState = {
+    // One slot per live session (slots.ts). This is the first; `/new` while
+    // a turn runs and the Ctrl+S switcher add more. Everything below that was
+    // written for one session — `state`, `history`, `todoPanel`, `tracker`,
+    // the queue — follows whichever slot is on screen.
+    const slots = new SlotManager({
         cwd: opts.cwd,
         modelId: initialModelId,
         provider: effectiveProvider,
         thinkingLevel: initialThinking,
         agent: agentExists(savedAgent) ? savedAgent : DEFAULT_AGENT_NAME,
         oneShotAgent: null,
-        cycleCustomAgent:
-            agentExists(savedAgent) && (!isBuiltinAgent(savedAgent) || isHiddenAgent(savedAgent)) ? savedAgent : null,
         session: initialSession,
         latestContextTokens: seededCtxTokens,
         busy: false,
-        scrollbackFocus: false,
-        pinnedInput: Boolean(settingsStore.get("pinnedInput")),
         abort: new AbortController(),
         pendingInjection: null,
-        lastCtrlCAt: 0,
         startupHooksDone: null,
         pendingPlan: null,
         planModeViaCycle: false,
+        history: firstHistory,
+        todoPanel: firstTodoPanel,
+        tracker: firstTracker,
+    });
+    const shared: SharedState = {
+        cycleCustomAgent:
+            agentExists(savedAgent) && (!isBuiltinAgent(savedAgent) || isHiddenAgent(savedAgent)) ? savedAgent : null,
+        scrollbackFocus: false,
+        pinnedInput: Boolean(settingsStore.get("pinnedInput")),
+        lastCtrlCAt: 0,
         timerEndsAt: null,
         timerLabel: "",
     };
+    const state: AppState = makeStateView(shared, () => slots.foreground);
+    const history = forwardTo(() => slots.foreground.history);
+    const todoPanel = forwardTo(() => slots.foreground.todoPanel);
+    const tracker = forwardTo(() => slots.foreground.tracker);
     statusLine.setAgent(state.agent);
 
     const { refreshStatusLine, refreshStatusLineCtx } = createStatusLineRefresher(statusLine, tracker, tui, state);
@@ -349,7 +363,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
 
     // queued user messages render between status and editor
     const pendingContainer = new Container();
-    const queuedMessages: string[] = [];
+    const queuedMessages: string[] = forwardTo(() => slots.foreground.queue);
     function renderPending(): void {
         pendingContainer.clear();
         for (let i = 0; i < queuedMessages.length; i++) {
@@ -502,6 +516,9 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         });
 
     const workingIndicator = createWorkingIndicator(tui, statusContainer, statusIdleSpacer);
+    // Built once the command context exists (below); everything that reaches
+    // it before then is a closure that only runs after startup.
+    let roster!: SessionRoster;
 
     // Agent-status bus: the semantic working/blocked/idle state of this pane.
     // Fed by the two seams that already see everything — the working
@@ -509,14 +526,14 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     // and showSelector below (every modal prompt). Consumed by agent-state
     // watchers: the herdr reporter and the Notification hook bridge.
     const agentStatus = createAgentStatusBus();
-    const showWorking = (message?: string): void => {
-        agentStatus.setWorking();
-        workingIndicator.showWorking(message);
-    };
-    const hideWorking = (): void => {
-        agentStatus.setIdle();
-        workingIndicator.hideWorking();
-    };
+    // The loader shows the foreground session; the bus reports the whole
+    // pane, so it is working while ANY session is (see the roster listener).
+    const showWorking = (message?: string): void => roster.showWorkingFor(slots.foreground, message);
+    const hideWorking = (): void => roster.hideWorkingFor(slots.foreground);
+    slots.onChange(() => {
+        if (slots.all().some((s) => s.status === "working" || s.busy)) agentStatus.setWorking();
+        else agentStatus.setIdle();
+    });
 
     // herdr agent-state reporting (inert outside a herdr pane).
     const herdr = attachHerdrReporter(agentStatus, {
@@ -560,7 +577,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     // signal — same event the PreToolUse-denial path in core fires. Gated on
     // state.busy so user-opened menus (/provider, /theme) don't ping.
     agentStatus.on((e) => {
-        if (e.status !== "blocked" || !state.busy) return;
+        if (e.status !== "blocked" || !slots.all().some((s) => s.busy)) return;
         void runHooks(
             "Notification",
             undefined,
@@ -798,32 +815,43 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
 
     // Ask tool UI bridge — registering it is also what makes runTurn offer the
     // tool at all (print mode never registers, so no gate needed there).
-    setAskUserBridge(createAskUserBridge({ host: selectorHost, editorTheme }));
+    //
+    // All three are gated on the asking session being on screen: a question
+    // from a session working in the background parks (the switcher shows it
+    // as needing you) instead of opening over the one you are looking at.
+    const askBridge = createAskUserBridge({ host: selectorHost, editorTheme });
+    setAskUserBridge({
+        ask: (questions, o) =>
+            roster.gated("question", o?.signal, () => askBridge.ask(questions, o), () =>
+                questions.map(() => ({ answers: [], declined: true })),
+            ),
+    });
 
     // Bash approval bridge — only registered here (interactive), so the
     // bashApprove setting has no effect in print mode / RPC. The setting
     // itself is checked in the bash tool; the bridge is just the UI.
-    setBashApprovalBridge(createBashApprovalBridge(selectorHost));
+    const approvalBridge = createBashApprovalBridge(selectorHost);
+    setBashApprovalBridge({
+        confirm: (req, o) =>
+            roster.gated(`${req.kind ?? "bash"} approval`, o?.signal, () => approvalBridge.confirm(req, o), () => "deny"),
+    });
 
     // MCP elicitation — a server asking the user something mid-tool-call.
     // Interactive only; elsewhere core declines rather than stalling the call.
-    setMcpElicitationBridge(
-        createMcpElicitationBridge({
+    const elicitBridge = createMcpElicitationBridge({
             selectOnce,
             promptOnce,
             say: (text) => {
                 history.addSystem(text);
                 tui.requestRender();
             },
-        }),
-    );
+    });
+    setMcpElicitationBridge({
+        elicit: (request, o) =>
+            roster.gated("MCP request", o?.signal, () => elicitBridge.elicit(request, o), () => ({ action: "cancel" })),
+    });
 
-    async function ensureSession(): Promise<Session> {
-        if (state.session) return state.session;
-        state.session = await manager.create({ cwd: state.cwd, provider: state.provider, model: state.modelId });
-        statusLine.setSession(state.session.id);
-        return state.session;
-    }
+    const ensureSession = (): Promise<Session> => roster.ensureSessionFor(slots.foreground);
 
     async function resolveModelId(input: string): Promise<string | null> {
         const cat = await getCatalog();
@@ -916,6 +944,12 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
             process.stdout.write(`\nStopped ${strayShells} background shell${strayShells === 1 ? "" : "s"}.\n`);
         }
         printResumeHint(state.session?.id);
+        // The others died with this process too; each can be picked up again.
+        const others = slots.all().filter((s) => !slots.isForeground(s) && s.session);
+        if (others.length > 0 && process.stdout.isTTY) {
+            process.stdout.write(`\nOther sessions from this run:\n`);
+            for (const s of others) process.stdout.write(`  ${PRODUCT_NAME} --session ${s.session!.id}\n`);
+        }
         // Put the tab back to a plain name: whatever spinner frame was showing
         // would otherwise be the last thing this terminal was told.
         stopTerminalTitle();
@@ -991,6 +1025,16 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         promptOnce,
         resolveModelId,
         ensureSession,
+        sessions: {
+            findLive: (idOrPath) =>
+                slots.all().find((s) => s.session && (s.session.id === idOrPath || s.session.path === idOrPath)),
+            switchTo: (slot) => slots.switchTo(slot),
+            openNew: () => roster.openNew(),
+            showSwitcher: () => roster.showSwitcher(),
+            runningElsewhere: () => slots.all().filter((s) => s.busy && !slots.isForeground(s)).length,
+        },
+        isForeground: () => true,
+        settleTurn: (failed) => slots.settle(slots.foreground, failed),
         cleanExit,
         refreshCommands,
         version: opts.version,
@@ -1023,8 +1067,21 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     if (initialSession) renderSessionBranch(initialSession, history, state.modelId, todoPanel);
 
     const ctx = createCommandContext(state, deps);
+    roster = createSessionRoster({
+        slots,
+        shared,
+        deps,
+        ctx,
+        tui,
+        editor,
+        statusLine,
+        manager,
+        indicator: { show: (m) => workingIndicator.showWorking(m), hide: () => workingIndicator.hideWorking() },
+        refreshShells,
+    });
     tui.addInputListener(createInputHandler(state, deps, ctx));
-    editor.onSubmit = createTurnRunner(state, deps, ctx);
+    // The editor submits to whichever session is on screen.
+    editor.onSubmit = (raw) => roster.runnerFor(slots.foreground)(raw);
 
     // Plugin hooks ship statusMessage ("Loading caveman mode…") — transient
     // "while running" text, so it rides the loader, never the chat (a chat line

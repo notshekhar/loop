@@ -329,7 +329,88 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(loop-mob
 
   /* Fade rows themselves as they pass beneath the top chrome. A mask remains
      visible even when the header and timeline share the same background. */
-  .chat-timeline-scroll-fade,
+  /*
+   * The chat timeline's mask, top to bottom: the header fade (only with
+   * `.chat-timeline-scroll-fade`), solid rows, a fade into the composer, and
+   * nothing at all behind the composer — rows end above the input the way
+   * Claude Code's do, instead of sliding underneath it. The right-hand strip
+   * stays solid so the scrollbar is never masked.
+   */
+  .chat-timeline-mask {
+    --timeline-top-fade: 0px;
+    --timeline-bottom-fade: 2.25rem;
+    --timeline-bottom-cut: var(--timeline-bottom-inset, 0px);
+    --timeline-top-fade-image: linear-gradient(
+      to bottom,
+      transparent 0%,
+      rgb(0 0 0 / 10%) 10%,
+      rgb(0 0 0 / 30%) 24%,
+      rgb(0 0 0 / 58%) 42%,
+      rgb(0 0 0 / 82%) 62%,
+      rgb(0 0 0 / 96%) 82%,
+      black 100%
+    );
+    --timeline-bottom-fade-image: linear-gradient(
+      to top,
+      transparent 0%,
+      rgb(0 0 0 / 18%) 18%,
+      rgb(0 0 0 / 52%) 42%,
+      rgb(0 0 0 / 84%) 70%,
+      black 100%
+    );
+
+    -webkit-mask-image:
+      var(--timeline-top-fade-image), linear-gradient(black, black),
+      var(--timeline-bottom-fade-image), linear-gradient(black, black);
+    -webkit-mask-repeat: no-repeat;
+    -webkit-mask-position:
+      0 0,
+      0 var(--timeline-top-fade),
+      0 calc(100% - var(--timeline-bottom-cut)),
+      right;
+    -webkit-mask-size:
+      100% var(--timeline-top-fade),
+      100%
+        max(
+          0px,
+          calc(
+            100% - var(--timeline-top-fade) - var(--timeline-bottom-fade) -
+              var(--timeline-bottom-cut)
+          )
+        ),
+      100% var(--timeline-bottom-fade),
+      var(--app-scrollbar-width) 100%;
+    mask-image:
+      var(--timeline-top-fade-image), linear-gradient(black, black),
+      var(--timeline-bottom-fade-image), linear-gradient(black, black);
+    mask-repeat: no-repeat;
+    mask-position:
+      0 0,
+      0 var(--timeline-top-fade),
+      0 calc(100% - var(--timeline-bottom-cut)),
+      right;
+    mask-size:
+      100% var(--timeline-top-fade),
+      100%
+        max(
+          0px,
+          calc(
+            100% - var(--timeline-top-fade) - var(--timeline-bottom-fade) -
+              var(--timeline-bottom-cut)
+          )
+        ),
+      100% var(--timeline-bottom-fade),
+      var(--app-scrollbar-width) 100%;
+  }
+
+  .chat-timeline-mask.chat-timeline-scroll-fade {
+    --timeline-top-fade: var(--topbar-scroll-fade-height);
+  }
+
+  .chat-timeline-scroll-fade {
+    --topbar-scroll-fade-height: 2.5rem;
+  }
+
   .settings-page-scroll-fade {
     --topbar-scroll-fade-height: 2.5rem;
     -webkit-mask-image:
@@ -1148,36 +1229,6 @@ code {
   background: var(--app-scrollbar-thumb-hover);
 }
 
-.loop-ghostty-canvas {
-  cursor: text;
-}
-
-.loop-ghostty-scrollbar {
-  position: absolute;
-  z-index: 1;
-  top: 4px;
-  right: 1px;
-  bottom: 4px;
-  width: var(--app-scrollbar-width);
-  cursor: default;
-  touch-action: none;
-}
-
-.loop-ghostty-scrollbar-thumb {
-  position: absolute;
-  top: 0;
-  right: 1px;
-  left: 1px;
-  border-radius: 3px;
-  background: var(--app-scrollbar-thumb);
-  transition: background-color 120ms ease-out;
-}
-
-.loop-ghostty-scrollbar:hover .loop-ghostty-scrollbar-thumb,
-.loop-ghostty-scrollbar:focus-visible .loop-ghostty-scrollbar-thumb {
-  background: var(--app-scrollbar-thumb-hover);
-}
-
 .model-picker-list::-webkit-scrollbar-track {
   margin-block: 0.5rem;
 }
@@ -1831,5 +1882,144 @@ label:has(> select#reasoning-effort) select {
   [data-shell="rail"] [data-slot="sidebar-inset"] .workspace-topbar {
     background: transparent;
     border-bottom-color: transparent;
+  }
+}
+
+/* xterm.js terminal (terminal/xterm/surface.ts). FitAddon subtracts the
+   `.xterm` element's padding, so the grid still fills the pane exactly. */
+.loop-terminal-host .xterm {
+  height: 100%;
+  padding: 6px 4px 6px 12px;
+}
+
+.loop-terminal-host .xterm-viewport {
+  background-color: transparent !important;
+}
+
+/*
+ * Generating indicator (components/chat/GeneratingIndicator.tsx): a comet
+ * running loop's ∞ mark, a light band across the label, and a verb that slides
+ * in when it changes. Brand blue drifting to violet and cyan; reduced motion
+ * leaves a still mark and plain text.
+ */
+.loop-gen-mark {
+  --loop-gen-a: #2f5bea;
+  --loop-gen-b: #7c5cff;
+  --loop-gen-c: #22d3ee;
+  color: var(--muted-foreground);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--loop-gen-b) 45%, transparent));
+  animation: loop-gen-hue 6s ease-in-out infinite alternate;
+}
+
+.dark .loop-gen-mark {
+  --loop-gen-a: #6d8cff;
+  --loop-gen-b: #a78bfa;
+  --loop-gen-c: #67e8f9;
+}
+
+.loop-gen-mark path {
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.loop-gen-track {
+  stroke: currentColor;
+  opacity: 0.18;
+}
+
+/* The comet and its tail share one clock; the tail starts 20 units behind
+   and is 20 units longer, so both end on the comet's head. */
+.loop-gen-comet,
+.loop-gen-tail {
+  animation: loop-gen-run 1.6s linear infinite;
+}
+
+.loop-gen-comet {
+  stroke-dasharray: 14 86;
+}
+
+.loop-gen-tail {
+  stroke-dasharray: 34 66;
+  opacity: 0.35;
+  animation-delay: -0.32s;
+}
+
+@keyframes loop-gen-run {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes loop-gen-hue {
+  from {
+    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--loop-gen-b) 45%, transparent))
+      hue-rotate(0deg);
+  }
+  to {
+    filter: drop-shadow(0 0 5px color-mix(in srgb, var(--loop-gen-b) 60%, transparent))
+      hue-rotate(-40deg);
+  }
+}
+
+.loop-gen-shimmer {
+  color: transparent;
+  background-image: linear-gradient(
+    100deg,
+    var(--muted-foreground) 0%,
+    var(--muted-foreground) 40%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 60%,
+    var(--muted-foreground) 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: loop-gen-shimmer 2.4s linear infinite;
+}
+
+@keyframes loop-gen-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+
+.loop-gen-verb {
+  animation:
+    loop-gen-verb-in 320ms cubic-bezier(0.2, 0.9, 0.3, 1.2),
+    loop-gen-shimmer 2.4s linear infinite;
+}
+
+@keyframes loop-gen-verb-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.45em);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loop-gen-mark,
+  .loop-gen-comet,
+  .loop-gen-tail,
+  .loop-gen-verb {
+    animation: none;
+  }
+
+  .loop-gen-shimmer {
+    animation: none;
+    color: var(--muted-foreground);
+    background: none;
   }
 }

@@ -45,6 +45,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   lazy,
   memo,
+  type PointerEvent as ReactPointerEvent,
   Suspense,
   useCallback,
   useEffect,
@@ -53,7 +54,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -1342,6 +1343,7 @@ function ChatViewContent(props: ChatViewProps) {
   const legendListRef = useRef<LegendListRef | null>(null);
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerOverlayHeight, setComposerOverlayHeight] = useState(0);
+  const [composerToolbarSlot, setComposerToolbarSlot] = useState<HTMLDivElement | null>(null);
   const isAtEndRef = useRef(true);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
@@ -1521,7 +1523,12 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const [conversationViews, setConversationViews] = useState<Record<string, ConversationView>>({});
-  const conversationView = conversationViews[activeThreadKey ?? ""] ?? "chat";
+  // Trajectory is a verbose-mode view: with the setting off there is no tab
+  // switch at all and every thread is just its conversation.
+  const verboseMode = useClientSettings((settings) => settings.verboseMode);
+  const conversationView = verboseMode
+    ? (conversationViews[activeThreadKey ?? ""] ?? "chat")
+    : "chat";
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
     readonly messageId: MessageId | null;
@@ -2426,10 +2433,7 @@ function ChatViewContent(props: ChatViewProps) {
   // dock/undock slide on an element nobody is looking at — and then again, in
   // reverse, the moment you come back.
   const isDraftHeroState =
-    isLocalDraftThread &&
-    timelineEntries.length === 0 &&
-    !isWorking &&
-    !draftHeroDockRequested;
+    isLocalDraftThread && timelineEntries.length === 0 && !isWorking && !draftHeroDockRequested;
   // What actually sits over the bottom of the column. On Trajectory the composer
   // is hidden, and the overlay height keeps its last real value, so this is 0.
   const composerInset = conversationView === "trajectory" ? 0 : composerOverlayHeight;
@@ -3708,56 +3712,38 @@ function ChatViewContent(props: ChatViewProps) {
     setShowScrollToBottom(false);
     void legendListRef.current?.scrollToEnd?.({ animated });
   }, []);
-  useEffect(() => {
-    let removeListeners: (() => void) | null = null;
-    const frame = requestAnimationFrame(() => {
-      const scrollNode = legendListRef.current?.getScrollableNode();
-      if (!scrollNode) {
-        return;
-      }
-      // Gestures are now the ONLY way out of follow mode, so every way a person
-      // can scroll this list has to be represented here. A bare `pointerdown`
-      // used to be, and it meant clicking a tool row or selecting text in a
-      // reply silently stopped the transcript following the stream — hence the
-      // hit test, which counts only the scrollbar gutter and leaves the
-      // transcript itself clickable.
-      const handleManualNavigation = () => {
-        cancelTimelineLiveFollowForUserNavigationRef.current();
-      };
-      const handlePointerDown = (event: PointerEvent) => {
-        const rect = scrollNode.getBoundingClientRect();
-        if (
-          pointerIsOnVerticalScrollbar({
-            clientX: event.clientX,
-            right: rect.right,
-            width: rect.width,
-            clientWidth: scrollNode.clientWidth,
-          })
-        ) {
-          handleManualNavigation();
-        }
-      };
-      scrollNode.addEventListener("wheel", handleManualNavigation, {
-        passive: true,
-      });
-      scrollNode.addEventListener("touchmove", handleManualNavigation, {
-        passive: true,
-      });
-      scrollNode.addEventListener("pointerdown", handlePointerDown, {
-        passive: true,
-      });
-      removeListeners = () => {
-        scrollNode.removeEventListener("wheel", handleManualNavigation);
-        scrollNode.removeEventListener("touchmove", handleManualNavigation);
-        scrollNode.removeEventListener("pointerdown", handlePointerDown);
-      };
-    });
-
-    return () => {
-      cancelAnimationFrame(frame);
-      removeListeners?.();
-    };
-  }, [activeThread?.id]);
+  // Gestures are the ONLY way out of follow mode, so every way a person can
+  // scroll this list has to be represented here. A bare `pointerdown` used to
+  // be, and it meant clicking a tool row or selecting text in a reply silently
+  // stopped the transcript following the stream — hence the hit test, which
+  // counts only the scrollbar gutter and leaves the transcript clickable.
+  //
+  // These are React handlers on the always-mounted conversation panel, not
+  // listeners added to the list's scroll node once per thread. The list mounts
+  // only after a thread's messages load, so a one-shot lookup on thread open
+  // usually found no node, attached nothing, and left the view "following" a
+  // reader who had scrolled away — so the next composer resize (Shift+Enter)
+  // re-pinned them to the bottom.
+  const onTimelineWheel = useCallback(() => {
+    cancelTimelineLiveFollowForUserNavigationRef.current();
+  }, []);
+  const onTimelinePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const scrollNode = legendListRef.current?.getScrollableNode();
+    if (!scrollNode || !(event.target instanceof Node) || !scrollNode.contains(event.target)) {
+      return;
+    }
+    const rect = scrollNode.getBoundingClientRect();
+    if (
+      pointerIsOnVerticalScrollbar({
+        clientX: event.clientX,
+        right: rect.right,
+        width: rect.width,
+        clientWidth: scrollNode.clientWidth,
+      })
+    ) {
+      cancelTimelineLiveFollowForUserNavigationRef.current();
+    }
+  }, []);
 
   const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
     if (pendingTimelineAnchorRef.current === messageId) {
@@ -5862,12 +5848,14 @@ function ChatViewContent(props: ChatViewProps) {
           />
         </header>
 
-        <ConversationViewSwitch
-          value={conversationView}
-          onChange={(view) =>
-            setConversationViews((views) => ({ ...views, [activeThreadKey ?? ""]: view }))
-          }
-        />
+        {verboseMode ? (
+          <ConversationViewSwitch
+            value={conversationView}
+            onChange={(view) =>
+              setConversationViews((views) => ({ ...views, [activeThreadKey ?? ""]: view }))
+            }
+          />
+        ) : null}
 
         <ThreadErrorBanner
           error={threadError}
@@ -5886,10 +5874,17 @@ function ChatViewContent(props: ChatViewProps) {
             </div>
             {/* Messages Wrapper */}
             <div
-              role="tabpanel"
-              id={`conversation-panel-${conversationView}`}
-              aria-labelledby={`conversation-tab-${conversationView}`}
+              {...(verboseMode
+                ? {
+                    role: "tabpanel",
+                    id: `conversation-panel-${conversationView}`,
+                    "aria-labelledby": `conversation-tab-${conversationView}`,
+                  }
+                : {})}
               className="relative flex min-h-0 flex-1 flex-col"
+              onWheel={onTimelineWheel}
+              onTouchMove={onTimelineWheel}
+              onPointerDown={onTimelinePointerDown}
             >
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               {conversationView === "trajectory" ? (
@@ -6026,13 +6021,8 @@ function ChatViewContent(props: ChatViewProps) {
                         : undefined
                     }
                   >
-                    <div
-                      className={cn(
-                        "chat-composer-glass-shell relative mx-auto w-full max-w-3xl",
-                        showComposerContextStrip && "chat-composer-glass-shell-with-context",
-                      )}
-                    >
-                      <div className="chat-composer-glass-host relative z-10 w-full rounded-[22px]">
+                    <div className="relative mx-auto w-full max-w-3xl">
+                      <div className="relative z-10 w-full">
                         <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
                           <ChatComposer
                             onNewThread={handleNewThreadInActiveProject}
@@ -6107,45 +6097,43 @@ function ChatViewContent(props: ChatViewProps) {
                             scheduleComposerFocus={scheduleComposerFocus}
                             setThreadError={setThreadError}
                             onExpandImage={onExpandTimelineImage}
+                            onToolbarSlotChange={setComposerToolbarSlot}
                           />
                         </div>
                       </div>
-                      <div className="min-h-0">
-                        <div
-                          data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
-                          className="relative z-0"
-                        >
-                          {showComposerContextStrip && (
-                            <div className="pointer-events-auto">
-                              <BranchToolbar
-                                environmentId={activeThread.environmentId}
-                                threadId={activeThread.id}
-                                {...(routeKind === "draft" && draftId ? { draftId } : {})}
-                                onEnvModeChange={onEnvModeChange}
-                                startFromOrigin={startFromOrigin}
-                                onStartFromOriginChange={onStartFromOriginChange}
-                                {...(canOverrideServerThreadEnvMode
-                                  ? { effectiveEnvModeOverride: envMode }
-                                  : {})}
-                                {...(canOverrideServerThreadEnvMode
-                                  ? {
-                                      activeThreadBranchOverride: activeThreadBranch,
-                                      onActiveThreadBranchOverrideChange:
-                                        setPendingServerThreadBranch,
-                                    }
-                                  : {})}
-                                envLocked={envLocked}
-                                onComposerFocusRequest={scheduleComposerFocus}
-                                {...(canCheckoutPullRequestIntoThread
-                                  ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                                  : {})}
-                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
-                                availableEnvironments={logicalProjectEnvironments}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                      {/* Checkout and branch ride the toolbar under the box (see
+                          ChatComposer's onToolbarSlotChange) rather than a strip
+                          of their own. */}
+                      {showComposerContextStrip && composerToolbarSlot
+                        ? createPortal(
+                            <BranchToolbar
+                              environmentId={activeThread.environmentId}
+                              threadId={activeThread.id}
+                              {...(routeKind === "draft" && draftId ? { draftId } : {})}
+                              onEnvModeChange={onEnvModeChange}
+                              startFromOrigin={startFromOrigin}
+                              onStartFromOriginChange={onStartFromOriginChange}
+                              {...(canOverrideServerThreadEnvMode
+                                ? { effectiveEnvModeOverride: envMode }
+                                : {})}
+                              {...(canOverrideServerThreadEnvMode
+                                ? {
+                                    activeThreadBranchOverride: activeThreadBranch,
+                                    onActiveThreadBranchOverrideChange:
+                                      setPendingServerThreadBranch,
+                                  }
+                                : {})}
+                              envLocked={envLocked}
+                              onComposerFocusRequest={scheduleComposerFocus}
+                              {...(canCheckoutPullRequestIntoThread
+                                ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+                                : {})}
+                              {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+                              availableEnvironments={logicalProjectEnvironments}
+                            />,
+                            composerToolbarSlot,
+                          )
+                        : null}
                     </div>
                     <div
                       aria-hidden

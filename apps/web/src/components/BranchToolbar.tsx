@@ -304,7 +304,9 @@ export const BranchToolbar = memo(function BranchToolbar({
   if (!hasActiveThread || !activeProject) return null;
 
   return (
-    <div className="chat-composer-context-strip -mt-4 mx-auto flex w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] items-center gap-2 ps-1 pe-2 pt-5 pb-1">
+    // An inline group at the end of the composer's toolbar, not a strip of its
+    // own: ChatView portals it into the row under the input box.
+    <div className="flex min-w-0 items-center justify-end gap-1">
       {isMobile ? (
         <MobileRunContextSelector
           envLocked={envLocked}

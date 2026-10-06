@@ -75,7 +75,7 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalSelectionMouseUp(true, 1)).toBe(false);
   });
 
-  it("uses Ghostty's physical screen range for visually wrapped selections", () => {
+  it("numbers selected lines from the zero-based buffer rows", () => {
     expect(
       terminalSelectionLineRange({
         start: { y: 4 },

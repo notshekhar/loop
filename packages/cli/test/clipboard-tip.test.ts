@@ -35,7 +35,7 @@ describe("ClipboardImageTip", () => {
     test("fires once an image is on the board", async () => {
         const { tip } = harness(["«class PNGf», 75"]);
         const s = surface();
-        tip.onKey(
+        tip.check(
             s,
             () => true,
             () => {},
@@ -47,7 +47,7 @@ describe("ClipboardImageTip", () => {
 
     test("ineligible callers never spend a probe", async () => {
         const h = harness(["«class PNGf», 75"]);
-        h.tip.onKey(
+        h.tip.check(
             surface(),
             () => false,
             () => {},
@@ -60,7 +60,7 @@ describe("ClipboardImageTip", () => {
         const h = harness(["«class PNGf», 75"]);
         const s = surface();
         for (let i = 0; i < 5; i++) {
-            h.tip.onKey(
+            h.tip.check(
                 s,
                 () => true,
                 () => {},
@@ -74,7 +74,7 @@ describe("ClipboardImageTip", () => {
     test("the same copied image never nags twice", async () => {
         const h = harness(["«class PNGf», 75"]);
         const s = surface();
-        h.tip.onKey(
+        h.tip.check(
             s,
             () => true,
             () => {},
@@ -83,7 +83,7 @@ describe("ClipboardImageTip", () => {
         expect(s.hints.filter(Boolean)).toHaveLength(1);
         // Well past both the throttle and the cooldown, same clipboard.
         h.advance(60_000);
-        h.tip.onKey(
+        h.tip.check(
             s,
             () => true,
             () => {},
@@ -96,14 +96,14 @@ describe("ClipboardImageTip", () => {
     test("a new image after the cooldown fires again", async () => {
         const h = harness(["«class PNGf», 75", "«class PNGf», 4096"]);
         const s = surface();
-        h.tip.onKey(
+        h.tip.check(
             s,
             () => true,
             () => {},
         );
         await settle();
         h.advance(60_000);
-        h.tip.onKey(
+        h.tip.check(
             s,
             () => true,
             () => {},
@@ -115,14 +115,14 @@ describe("ClipboardImageTip", () => {
     test("a new image inside the cooldown is held back", async () => {
         const h = harness(["«class PNGf», 75", "«class PNGf», 4096"]);
         const s = surface();
-        h.tip.onKey(
+        h.tip.check(
             s,
             () => true,
             () => {},
         );
         await settle();
         h.advance(2_000); // past the throttle, inside the 30s cooldown
-        h.tip.onKey(
+        h.tip.check(
             s,
             () => true,
             () => {},
@@ -134,20 +134,27 @@ describe("ClipboardImageTip", () => {
     test("the next keystroke takes the hint back down", async () => {
         const h = harness(["«class PNGf», 75"]);
         const s = surface();
-        h.tip.onKey(
+        h.tip.check(
             s,
             () => true,
             () => {},
         );
         await settle();
         h.advance(2_000);
-        h.tip.onKey(
-            s,
-            () => true,
-            () => {},
-        );
+        h.tip.onKey(s);
         expect(s.hints.at(-1)).toBeNull();
         expect(h.tip.visible).toBe(false);
+    });
+
+    test("keystrokes never probe the pasteboard", () => {
+        const h = harness(["«class PNGf», 75"]);
+        const s = surface();
+        for (let i = 0; i < 20; i++) {
+            h.tip.onKey(s);
+            h.advance(2_000);
+        }
+        expect(h.probeCalls()).toBe(0);
+        expect(s.hints).toHaveLength(0);
     });
 
     test("dismiss leaves the status line alone when nothing is showing", () => {
@@ -160,21 +167,21 @@ describe("ClipboardImageTip", () => {
     test("a board that stops holding an image re-arms the fire", async () => {
         const h = harness(["«class PNGf», 75", null, "«class PNGf», 75"]);
         const s = surface();
-        h.tip.onKey(
+        h.tip.check(
             s,
             () => true,
             () => {},
         );
         await settle();
         h.advance(60_000);
-        h.tip.onKey(
+        h.tip.check(
             s,
             () => true,
             () => {},
         ); // probes null — clears the dedup
         await settle();
         h.advance(60_000);
-        h.tip.onKey(
+        h.tip.check(
             s,
             () => true,
             () => {},
@@ -187,7 +194,7 @@ describe("ClipboardImageTip", () => {
         let eligible = true;
         const { tip } = harness(["«class PNGf», 75"]);
         const s = surface();
-        tip.onKey(
+        tip.check(
             s,
             () => eligible,
             () => {},

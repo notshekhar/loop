@@ -5,6 +5,7 @@ import type { StatusLine } from "./components/status-line";
 import type { TodoPanel } from "./components/todo-panel";
 import type { ShellsPanel } from "./components/shells-panel";
 import type { ScrollbackFocus } from "./scrollback-focus";
+import type { SessionSlot } from "./slots";
 
 /**
  * Stable references for handlers. Functions and objects here don't change
@@ -41,6 +42,24 @@ export interface AppDeps {
     /** Rebuild slash-command autocomplete after runtime command changes (agent create/delete). */
     refreshCommands: () => void;
     ensureSession: () => Promise<Session>;
+    /** The other live sessions in this loop (slots.ts). */
+    sessions: {
+        /** The live slot holding this session (by id or transcript path), if any. */
+        findLive(idOrPath: string): SessionSlot | undefined;
+        switchTo(slot: SessionSlot): void;
+        /** Open a fresh session on screen; the current one keeps running. */
+        openNew(): Promise<SessionSlot>;
+        /** The Ctrl+S picker. */
+        showSwitcher(): Promise<void>;
+        /** How many sessions other than the one on screen have a turn running. */
+        runningElsewhere(): number;
+    };
+    /** Whether the session these deps act on is the one on screen. Always
+     * true for the app's own deps; a background turn's deps say no. */
+    isForeground: () => boolean;
+    /** A turn ended: the roster marks it idle, or done/failed if it ended
+     * out of sight. */
+    settleTurn: (failed: boolean) => void;
     cleanExit: (code?: number) => void;
     /** App version (undefined in dev runs). */
     version?: string;

@@ -12,7 +12,7 @@
     },
     "apps/desktop": {
       "name": "@loop/desktop",
-      "version": "0.0.10",
+      "version": "0.0.12",
       "dependencies": {
         "@notshekhar/loop-core": "workspace:*",
         "electron": "40.10.6",
@@ -49,6 +49,10 @@
         "@pierre/trees": "1.0.0-beta.4",
         "@tanstack/react-pacer": "^0.19.4",
         "@tanstack/react-router": "^1.160.2",
+        "@xterm/addon-fit": "^0.11.0",
+        "@xterm/addon-unicode11": "^0.9.0",
+        "@xterm/addon-webgl": "^0.19.0",
+        "@xterm/xterm": "^6.0.0",
         "class-variance-authority": "^0.7.1",
         "effect": "catalog:",
         "jose": "catalog:",
@@ -87,7 +91,7 @@
     },
     "packages/cli": {
       "name": "@notshekhar/loop",
-      "version": "0.20.14",
+      "version": "0.20.18",
       "bin": {
         "loop": "./dist/cli.js",
         "lp": "./dist/cli.js",
@@ -106,7 +110,7 @@
     },
     "packages/core": {
       "name": "@notshekhar/loop-core",
-      "version": "0.20.14",
+      "version": "0.20.18",
       "dependencies": {
         "@ai-sdk/amazon-bedrock": "^5.0.72",
         "@ai-sdk/anthropic": "^4.0.48",
@@ -151,7 +155,7 @@
     },
     "packages/tui": {
       "name": "@notshekhar/loop-tui",
-      "version": "0.20.14",
+      "version": "0.20.18",
       "dependencies": {
         "get-east-asian-width": "^1.6.0",
         "marked": "^18.0.5",
@@ -163,7 +167,7 @@
     },
     "packages/web": {
       "name": "@notshekhar/loop-web",
-      "version": "0.20.14",
+      "version": "0.20.18",
     },
   },
   "trustedDependencies": [
@@ -1005,7 +1009,15 @@
 
     "@xmldom/xmldom": ["@xmldom/xmldom@0.9.10", "", {}, "sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw=="],
 
+    "@xterm/addon-fit": ["@xterm/addon-fit@0.11.0", "", {}, "sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g=="],
+
+    "@xterm/addon-unicode11": ["@xterm/addon-unicode11@0.9.0", "", {}, "sha512-FxDnYcyuXhNl+XSqGZL/t0U9eiNb/q3EWT5rYkQT/zuig8Gz/VagnQANKHdDWFM2lTMk9ly0EFQxxxtZUoRetw=="],
+
+    "@xterm/addon-webgl": ["@xterm/addon-webgl@0.19.0", "", {}, "sha512-b3fMOsyLVuCeNJWxolACEUED0vm7qC0cy4wRvf3oURSzDTYVQiGPhTnhWZwIHdvC48Y+oLhvYXnY4XDXPoJo6A=="],
+
     "@xterm/headless": ["@xterm/headless@6.0.0", "", {}, "sha512-5Yj1QINYCyzrZtf8OFIHi47iQtI+0qYFPHmouEfG8dHNxbZ9Tb9YGSuLcsEwj9Z+OL75GJqPyJbyoFer80a2Hw=="],
+
+    "@xterm/xterm": ["@xterm/xterm@6.0.0", "", {}, "sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg=="],
 
     "@zxcvbn-ts/core": ["@zxcvbn-ts/core@3.0.4", "", { "dependencies": { "fastest-levenshtein": "1.0.16" } }, "sha512-aQeiT0F09FuJaAqNrxynlAwZ2mW/1MdXakKWNmGM1Qp/VaY6CnB/GfnMS2T8gB2231Esp1/maCWd8vTG4OuShw=="],
 
