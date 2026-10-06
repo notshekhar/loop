@@ -13,10 +13,9 @@ import { isDesktopShell } from "../env";
 import { loopWindow } from "../loop/transport";
 import { getLocalStorageItem } from "../hooks/useLocalStorage";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
-import { cn, isMacPlatform } from "../lib/utils";
+import { isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import {
-  useEnvironmentIdentificationMode,
   useSidebarStyle,
   useSidebarV2Enabled,
 } from "../hooks/useSettings";
@@ -24,7 +23,7 @@ import type { SidebarStyle } from "@loop/contracts/settings";
 import FocusedSidebar from "./loop/FocusedSidebar";
 import ProjectSidebar from "./loop/ProjectSidebar";
 import SidebarV2 from "./SidebarV2";
-import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
+import { AppRail } from "./sidebar/AppRail";
 import {
   resolveInitialThreadSidebarWidth,
   resolveThreadSidebarMaximumWidth,
@@ -38,7 +37,6 @@ import {
   SidebarRail,
   SidebarTrigger,
   useSidebar,
-  useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
@@ -68,11 +66,6 @@ function readInitialThreadSidebarWidth(): number {
 function SidebarControl() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar } = useSidebar();
-  const isSidebarVisible = useSidebarVisibility();
-  const environmentIdentificationMode = useEnvironmentIdentificationMode();
-  const stageBackdropVariant = useSidebarStageBackdropVariant(
-    environmentIdentificationMode === "artwork",
-  );
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
 
   useEffect(() => {
@@ -105,12 +98,7 @@ function SidebarControl() {
         <TooltipTrigger
           render={
             <SidebarTrigger
-              className={cn(
-                "pointer-events-auto",
-                isSidebarVisible &&
-                  stageBackdropVariant &&
-                  "[:hover,[data-pressed]]:bg-white/15 focus-visible:ring-white/90 focus-visible:ring-offset-blue-700 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white!",
-              )}
+              className="pointer-events-auto"
               aria-label="Toggle main sidebar"
             />
           }
@@ -214,13 +202,29 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   }, [navigate, pathname]);
 
   return (
-    <SidebarProvider className="h-dvh! min-h-0!" defaultOpen style={sidebarProviderStyle}>
+    // The rail shell: a slim icon rail on the window's ground, and the panel
+    // plus the page sitting together in one inset card below the title band
+    // (see `[data-shell="rail"]` in index.css).
+    <SidebarProvider
+      className="h-dvh! min-h-0! overflow-hidden bg-[var(--app-shell-background)]"
+      data-shell="rail"
+      defaultOpen
+      style={sidebarProviderStyle}
+    >
+      {isDesktopShell ? (
+        // The band over the rail and panel has no route header to drag by.
+        <div
+          aria-hidden
+          className="drag-region fixed top-0 left-0 z-0 hidden h-[var(--workspace-topbar-height)] w-[calc(var(--app-rail-width)+var(--sidebar-width))] md:block group-data-[sidebar-state=collapsed]/sidebar-wrapper:w-(--app-rail-width)"
+        />
+      ) : null}
+      <AppRail />
       <Sidebar
         side="left"
         collapsible="offcanvas"
         data-app-sidebar=""
         data-sidebar-version={useSidebarV2Theme ? "v2" : "v1"}
-        className="border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
+        className="text-sidebar-foreground"
         resizable={{
           maxWidth: sidebarMaximumWidth,
           minWidth: THREAD_SIDEBAR_MIN_WIDTH,

@@ -41,15 +41,28 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     environmentIdentificationMode === "pill"
       ? resolveEnvironmentIdentificationPillLabel(stageLabel)
       : null;
+  // Inside the rail shell's card the header is a row, not a titlebar, and the
+  // stage art reads as a banner in the middle of the window — so from md up
+  // the channel is named by the pill instead.
+  const desktopPillLabel = backdropVariant
+    ? resolveEnvironmentIdentificationPillLabel(stageLabel)
+    : null;
 
   return (
     <SidebarHeader
       className={cn(
-        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0",
+        // On phones the header is still the sheet's titlebar. From md up the
+        // rail shell draws the title band above the panel, so the header is
+        // just the panel's first row: no traffic-light inset, no drag region.
+        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:h-12 md:px-4",
         isDesktopShell && "drag-region",
       )}
     >
-      {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
+      {backdropVariant ? (
+        <div className="md:hidden">
+          <SidebarStageBackdrop variant={backdropVariant} />
+        </div>
+      ) : null}
       <SidebarTrigger
         className={cn(
           "relative z-10 md:hidden",
@@ -68,6 +81,16 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           {pillLabel}
         </Badge>
       ) : null}
+      {desktopPillLabel ? (
+        <Badge
+          className="relative z-10 ml-1.5 hidden rounded-full px-1.5 text-muted-foreground md:inline-flex"
+          data-environment-identification="pill"
+          size="sm"
+          variant="secondary"
+        >
+          {desktopPillLabel}
+        </Badge>
+      ) : null}
     </SidebarHeader>
   );
 });
@@ -77,8 +100,8 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="Go to threads"
       className={cn(
-        "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2",
-        onBackdrop ? "text-white" : "text-foreground",
+        "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 md:ml-0 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2",
+        onBackdrop ? "text-white md:text-foreground" : "text-foreground",
       )}
       to="/"
     >
@@ -93,7 +116,10 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
  */
 function LoopWordmark() {
   return (
-    <span aria-label={APP_BASE_NAME} className="truncate text-sm font-medium tracking-tight">
+    <span
+      aria-label={APP_BASE_NAME}
+      className="truncate text-sm font-medium tracking-tight md:text-[17px] md:font-semibold"
+    >
       {APP_BASE_NAME}
     </span>
   );
@@ -128,7 +154,9 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     <SidebarFooter className="p-[var(--sidebar-content-inset)]">
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
-      <SidebarMenu>
+      {/* From md up these destinations live on the rail (AppRail); the sheet
+          sidebar on phones has no rail, so it keeps them here. */}
+      <SidebarMenu className="md:hidden">
         {/* Usage sits above Settings because it is the one you open often and
             close again — spend and streak are a glance, not a configuration
             session. Unlike Settings it highlights when active: it is a

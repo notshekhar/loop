@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.20.18] - 2026-10-06
+
+### Changed
+
+- **The desktop app has a new layout.** A slim icon rail on the left now holds Home, Search, Usage, Artifacts, Check for updates and Settings, and the sidebar and the page sit together in one bordered card below the title bar. Each thread's title and actions sit in that title bar. Every sidebar style (Threads, Projects and One project) works in the new layout; on a phone, the sidebar is unchanged and keeps those destinations in its footer.
+- **Dev and Nightly builds show a small pill** next to the name in the sidebar instead of the header artwork, on desktop-width windows.
+- **Trajectory uses the whole column.** The message box is hidden while Trajectory is open, so the run's timeline reaches the bottom of the window. Anything you had started typing is still there when you switch back to Chat.
+
+### Fixed
+
+- **The message box no longer slides around when you switch between Chat and Trajectory** on a thread you haven't sent anything in yet.
+
 ## [0.20.17] - 2026-10-06
 
 ### Added

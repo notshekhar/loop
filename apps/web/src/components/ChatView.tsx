@@ -2421,12 +2421,18 @@ function ChatViewContent(props: ChatViewProps) {
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
+  // Deliberately not gated on the Chat tab: Trajectory hides the composer
+  // outright, so flipping the hero layout on a tab switch would only replay the
+  // dock/undock slide on an element nobody is looking at — and then again, in
+  // reverse, the moment you come back.
   const isDraftHeroState =
-    conversationView === "chat" &&
     isLocalDraftThread &&
     timelineEntries.length === 0 &&
     !isWorking &&
     !draftHeroDockRequested;
+  // What actually sits over the bottom of the column. On Trajectory the composer
+  // is hidden, and the overlay height keeps its last real value, so this is 0.
+  const composerInset = conversationView === "trajectory" ? 0 : composerOverlayHeight;
   const [
     attachDraftHeroTransitionGroupRef,
     attachDraftHeroComposerAnchorRef,
@@ -5890,7 +5896,7 @@ function ChatViewContent(props: ChatViewProps) {
                 <TrajectoryView
                   key={activeThreadKey}
                   entries={timelineEntries}
-                  bottomInset={composerOverlayHeight}
+                  bottomInset={composerInset}
                   loading={threadDetailLoading}
                 />
               ) : (
@@ -5951,15 +5957,20 @@ function ChatViewContent(props: ChatViewProps) {
               )}
             </div>
 
-            {/* Input bar — centered hero while a draft has no messages, docked at the bottom otherwise */}
+            {/* Input bar — centered hero while a draft has no messages, docked at the bottom otherwise.
+                Trajectory is a read-only view of the run, so it gets the whole column: the
+                composer is hidden rather than unmounted, so a half-written prompt survives the
+                round trip. Its measured height is NOT reset (the measurement ignores 0), so
+                anything inset by it uses `composerInset` instead. */}
             <div
               ref={setComposerOverlayElement}
               data-chat-composer-overlay="true"
-              className={
+              className={cn(
                 isDraftHeroState
                   ? "pointer-events-none absolute inset-0 z-20 flex items-center"
-                  : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
-              }
+                  : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2",
+                conversationView === "trajectory" && "hidden",
+              )}
             >
               <div
                 ref={attachDraftHeroTransitionGroupRef}
@@ -6150,7 +6161,7 @@ function ChatViewContent(props: ChatViewProps) {
                 key={`${activeThreadKey}:${activePreviewMiniPlayer.tabId}`}
                 threadRef={activeThreadRef}
                 tabId={activePreviewMiniPlayer.tabId}
-                bottomInset={isDraftHeroState ? 0 : composerOverlayHeight}
+                bottomInset={isDraftHeroState ? 0 : composerInset}
               />
             ) : null}
 

@@ -273,7 +273,8 @@ export default function FocusedSidebar() {
                   <span>Add project</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
-              <SidebarMenuItem>
+              {/* Search lives on the rail from md up; the phone sheet has no rail. */}
+              <SidebarMenuItem className="md:hidden">
                 <SidebarMenuButton onClick={() => openCommandPalette()}>
                   <SearchIcon />
                   <span>Search</span>
