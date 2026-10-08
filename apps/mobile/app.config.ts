@@ -74,8 +74,10 @@ const config: ExpoConfig = {
     // Every CI build counts up (the workflow passes its run number), so a new
     // APK installs over the last one instead of being refused as a downgrade.
     versionCode: Number(process.env.LOOP_ANDROID_VERSION_CODE) || 1,
+    // loop's glyphs on its plate colour (branding/loop-icon.svg without the
+    // plate); the launcher draws the shape.
     adaptiveIcon: {
-      backgroundColor: "#000000",
+      backgroundColor: "#FCFCFC",
       foregroundImage: "./assets/android-icon-mark.png",
       monochromeImage: "./assets/android-icon-mark.png",
     },
@@ -102,7 +104,7 @@ const config: ExpoConfig = {
       "expo-notifications",
       {
         icon: "./assets/android-notification-icon.png",
-        color: "#FFFFFF",
+        color: "#1B4ED8",
         mode: APP_VARIANT === "development" ? "development" : "production",
       },
     ],
@@ -134,6 +136,7 @@ const config: ExpoConfig = {
     "./plugins/withAndroidCleartextTraffic.cjs",
     "./plugins/withAndroidGradleHeap.cjs",
     "./plugins/withAndroidReleaseSigning.cjs",
+    "./plugins/withAndroidFbjniPin.cjs",
     "./plugins/withAndroidModernPopupMenu.cjs",
     "./plugins/withAndroidModernAlertDialog.cjs",
     "./plugins/withAndroidPredictiveBackCompat.cjs",
