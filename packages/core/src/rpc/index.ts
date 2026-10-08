@@ -61,3 +61,4 @@ export {
     type RemoteHostStatus,
     type RemoteSessionEvent,
 } from "./remote-host";
+export { protocolMismatch } from "./remote-host";

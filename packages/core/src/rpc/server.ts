@@ -97,7 +97,17 @@ import {
 import { getSetting, setSetting, type AppSettings } from "../settings";
 import { buildSteakGrid } from "../agent/steak";
 import { parseModelId } from "../providers";
-import { RpcErrorCode, type RpcNotification, type RpcRequest, type RpcResponse } from "./protocol";
+import {
+    MIN_CLIENT_PROTOCOL,
+    negotiateProtocol,
+    parseProtocol,
+    PROTOCOL_CAPABILITIES,
+    PROTOCOL_VERSION,
+    RpcErrorCode,
+    type RpcNotification,
+    type RpcRequest,
+    type RpcResponse,
+} from "./protocol";
 import type { ProviderId } from "../types";
 
 /**
@@ -136,6 +146,7 @@ function artifactRow(meta: ArtifactMeta): Record<string, unknown> {
 /** Every method `dispatch` handles — surfaced via `server.info`. Keep in sync. */
 const RPC_METHODS = [
     "server.info",
+    "hello",
     "session.create",
     "session.list",
     "session.projects",
@@ -364,6 +375,7 @@ export class RpcServer {
     /** Every connected client, for host-wide notices (`announce`). */
     private transports = new Set<Transport>();
     private readonly live: LiveSessionProvider | null;
+    private readonly version: string;
     private manager = new SessionManager();
     private commands = new CommandRegistry();
     /**
@@ -402,9 +414,12 @@ export class RpcServer {
              * would send the TUI's own questions to remote clients.
              */
             askBridge?: boolean;
+            /** loop's release, reported by `hello`. */
+            version?: string;
         } = {},
     ) {
         this.remote = opts.remote === true;
+        this.version = opts.version?.trim() || "dev";
         this.live = opts.live ?? null;
         // Registering a bridge is what makes the ask tool exist at all: runTurn
         // only attaches it when one is present, which is why RPC clients never
@@ -1342,6 +1357,27 @@ export class RpcServer {
                 if (typeof params.value !== "boolean") throw new Error("value must be boolean");
                 setSetting(entry.key, params.value as never);
                 return { key, value: params.value };
+            },
+            // The handshake (docs/remote-control.md §4). Optional for a
+            // client — one that never sends it is served as protocol 1.0 — but
+            // the answer is how both sides learn they cannot talk, and say
+            // which of them to update, before anything else fails.
+            hello: (params) => {
+                const client = parseProtocol(params.protocol) ?? [1, 0];
+                const verdict = negotiateProtocol({
+                    client,
+                    host: PROTOCOL_VERSION,
+                    minClient: MIN_CLIENT_PROTOCOL,
+                });
+                if (!verdict.ok) throw new Error(verdict.message);
+                return {
+                    protocol: PROTOCOL_VERSION,
+                    negotiated: verdict.protocol,
+                    minClientProtocol: MIN_CLIENT_PROTOCOL,
+                    host: "loop",
+                    version: this.version,
+                    capabilities: PROTOCOL_CAPABILITIES,
+                };
             },
             "server.info": () => {
                 // Capabilities handshake: lets a client discover the methods and

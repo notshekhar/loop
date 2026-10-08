@@ -23,6 +23,7 @@ import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcServer from "effect/rpc/RpcServer";
 
 import { makeHandlers } from "../../handlers/index.ts";
+import { handshake } from "../../protocol.ts";
 import { createSocketHost, defaultLoopHost, type LoopHost } from "../../transport.ts";
 import type { WsRpcProtocolClient } from "./protocol.ts";
 import type {
@@ -156,6 +157,23 @@ export const make = Effect.gen(function* () {
     const connected = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
     const { client, host } = yield* makeInProcessClient(connection);
+    // The handshake (packages/core/src/rpc/protocol.ts): an app and a host
+    // that cannot talk say so now, naming the side to update, instead of
+    // failing in some method later. Blocked, not retried — retrying cannot
+    // change either side's version.
+    const handshook = yield* Effect.tryPromise({
+      try: () => handshake((method, params) => host.call(method, params), "loop-app"),
+      catch: (error) =>
+        new ConnectionTransientErrorClass({
+          reason: "transport",
+          detail: `Could not reach ${connection.label}: ${error instanceof Error ? error.message : String(error)}`,
+        }),
+    });
+    if (!handshook.ok) {
+      return yield* Effect.fail(
+        new ConnectionBlockedError({ reason: "configuration", detail: handshook.message }),
+      );
+    }
     // The handlers are live the moment they are wired; the supervisor above
     // still waits on this deferred.
     yield* Deferred.succeed(connected, undefined);

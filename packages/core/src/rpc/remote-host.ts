@@ -11,6 +11,12 @@
  * session.list / history / attach {afterSeq} / send / cancel / answer.
  */
 import { SERVE_DEFAULT_PORT } from "./serve";
+import {
+    negotiateProtocol,
+    parseProtocol,
+    PROTOCOL_VERSION,
+    type ProtocolVersion,
+} from "./protocol";
 import { loadRemoteHosts, saveRemoteHosts, type RemoteHostRecord } from "./remote-host-store";
 
 export type { RemoteHostRecord } from "./remote-host-store";
@@ -53,6 +59,28 @@ export interface RemoteEnvironment {
     readonly label: string;
     readonly serverVersion?: string;
     readonly platform?: { os?: string; arch?: string };
+    /** The host's protocol; absent on a host older than the handshake (1.0). */
+    readonly protocol?: ProtocolVersion;
+    readonly minClientProtocol?: ProtocolVersion;
+}
+
+/**
+ * Whether this loop can talk to that host — null when it can, else the
+ * sentence saying which side to update. A host that predates the handshake
+ * is protocol 1.0 and takes any client.
+ */
+export function protocolMismatch(env: Pick<RemoteEnvironment, "protocol" | "minClientProtocol">): string | null {
+    const verdict = negotiateProtocol({
+        client: PROTOCOL_VERSION,
+        host: env.protocol ?? [1, 0],
+        minClient: env.minClientProtocol ?? [1, 0],
+    });
+    return verdict.ok ? null : forThisLoop(verdict.message);
+}
+
+/** The protocol messages are written for an app; here the client is a loop. */
+function forThisLoop(message: string): string {
+    return message.replace("Update the app.", "Update this loop (`loop update`).").replace(/this app/g, "this loop");
 }
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -78,11 +106,15 @@ export async function probeRemoteHost(
         if (!res.ok) throw new Error(`${url} answered ${res.status} — is it a loop serve?`);
         const body = (await res.json()) as Partial<RemoteEnvironment>;
         if (typeof body.environmentId !== "string") throw new Error(`${url} is not a loop serve`);
+        const protocol = parseProtocol(body.protocol);
+        const minClientProtocol = parseProtocol(body.minClientProtocol);
         return {
             environmentId: body.environmentId,
             label: typeof body.label === "string" && body.label ? body.label : new URL(url).hostname,
             serverVersion: body.serverVersion,
             platform: body.platform,
+            ...(protocol ? { protocol } : {}),
+            ...(minClientProtocol ? { minClientProtocol } : {}),
         };
     });
 }
@@ -98,6 +130,10 @@ export async function pairRemoteHost(
 ): Promise<RemoteHostRecord> {
     const doFetch = opts.fetch ?? fetch;
     const env = await probeRemoteHost(link.url, opts);
+    // Refused before it is saved: a host this loop cannot talk to would
+    // otherwise sit in /hosts failing on every open.
+    const mismatch = protocolMismatch(env);
+    if (mismatch) throw new Error(`${env.label}: ${mismatch}`);
     await withTimeout(opts.timeoutMs ?? 4000, async (signal) => {
         const res = await doFetch(`${link.url}/oauth/token`, {
             method: "POST",
@@ -241,6 +277,22 @@ export class RemoteHostClient {
         socket.onmessage = (ev) => this.handle(String(ev.data));
         socket.onerror = () => {};
         socket.onclose = () => this.dropped(socket);
+        // The handshake, before anything else is asked of the host. A host
+        // that does not know `hello` predates it — protocol 1.0, served as is.
+        try {
+            await this.request("hello", { protocol: PROTOCOL_VERSION, client: "loop-tui" });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!/method not found/i.test(message)) {
+                this.closed = true;
+                this.socket = null;
+                try {
+                    socket.close();
+                } catch {}
+                this.setStatus("closed");
+                throw new Error(`${this.host.label}: ${forThisLoop(message)}`);
+            }
+        }
         this.setStatus("open");
     }
 
@@ -290,6 +342,11 @@ export class RemoteHostClient {
 
     async call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T> {
         await this.connect();
+        return this.request<T>(method, params);
+    }
+
+    /** One request on the open socket (no connect — `open` uses it mid-handshake). */
+    private request<T>(method: string, params?: Record<string, unknown>): Promise<T> {
         const socket = this.socket!;
         const id = this.nextId++;
         return new Promise<T>((resolve, reject) => {

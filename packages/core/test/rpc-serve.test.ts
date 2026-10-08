@@ -25,6 +25,7 @@ mock.module("../src/settings", () => ({
 
 const { getOrCreateServeToken, isLoopbackHost, startWebServer } = await import("../src/rpc/serve");
 const { writeAttachmentPayloads, RpcServer } = await import("../src/rpc/server");
+const { MIN_CLIENT_PROTOCOL, PROTOCOL_VERSION } = await import("../src/rpc/protocol");
 import type { ServeHandle } from "../src/rpc/serve";
 
 /** In-memory transport for driving an RpcServer directly. */
@@ -228,6 +229,33 @@ describe("multi-client broadcast + seq replay", () => {
 
 // Turn events reach a session's subscribers; `session.status` reaches every
 // client, so a list elsewhere learns that a turn started or ended.
+// The handshake (protocol.ts), on a real server.
+describe("hello", () => {
+    const say = async (protocol: unknown) => {
+        const server = new RpcServer({ version: "1.2.3", askBridge: false });
+        const sent: Array<{ id?: number; result?: any; error?: { message: string } }> = [];
+        const { feed } = server.attach({ send: (m) => sent.push(m as never) });
+        feed(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "hello", params: { protocol, client: "test" } }) + "\n");
+        for (let i = 0; i < 100 && !sent.some((m) => m.id === 1); i++) await Bun.sleep(10);
+        server.dispose();
+        return sent.find((m) => m.id === 1)!;
+    };
+
+    test("answers with its protocol, its minimum, its release and what it offers", async () => {
+        const reply = await say(PROTOCOL_VERSION);
+        expect(reply.result.protocol).toEqual([...PROTOCOL_VERSION]);
+        expect(reply.result.minClientProtocol).toEqual([...MIN_CLIENT_PROTOCOL]);
+        expect(reply.result.version).toBe("1.2.3");
+        expect(reply.result.capabilities).toContain("status");
+    });
+
+    test("refuses another major with the sentence that says which side to update", async () => {
+        const reply = await say([PROTOCOL_VERSION[0] + 1, 0]);
+        expect(reply.error?.message).toContain("protocol");
+        expect(reply.error?.message).toContain("loop update");
+    });
+});
+
 describe("host-wide session status", () => {
     useTempSessionDb();
 

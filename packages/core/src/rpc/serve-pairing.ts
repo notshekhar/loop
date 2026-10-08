@@ -21,6 +21,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { hostname as osHostname } from "node:os";
+import { MIN_CLIENT_PROTOCOL, PROTOCOL_VERSION } from "./protocol";
 
 /** How long a socket ticket stays redeemable. Clients redeem immediately. */
 export const WS_TICKET_TTL_MS = 60_000;
@@ -152,6 +153,10 @@ export function createPairing(opts: PairingOptions): Pairing {
                         label,
                         platform: platform(),
                         serverVersion: opts.version,
+                        // The client↔host protocol (protocol.ts), so a client
+                        // can say "update" before it pairs, not after.
+                        protocol: PROTOCOL_VERSION,
+                        minClientProtocol: MIN_CLIENT_PROTOCOL,
                         capabilities: { repositoryIdentity: false, connectionProbe: true },
                     });
 

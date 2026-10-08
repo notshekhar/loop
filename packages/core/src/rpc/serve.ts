@@ -164,6 +164,7 @@ export function startWebServer(
     // screen.
     const rpc = new RpcServer({
         remote: true,
+        ...(opts.version ? { version: opts.version } : {}),
         ...(opts.live ? { live: opts.live, askBridge: false } : {}),
     });
     // Every open socket: workspace events (terminal output, git progress) go
