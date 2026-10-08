@@ -226,6 +226,47 @@ describe("multi-client broadcast + seq replay", () => {
     }, 30000);
 });
 
+// Turn events reach a session's subscribers; `session.status` reaches every
+// client, so a list elsewhere learns that a turn started or ended.
+describe("host-wide session status", () => {
+    useTempSessionDb();
+
+    test("a new session and its turn are announced to clients not attached to it", async () => {
+        const server = new RpcServer();
+        const sender = fakeTransport();
+        const bystander = fakeTransport();
+        const fs = server.attach(sender);
+        server.attach(bystander);
+        const cwd = mkdtempSync(join(tmpdir(), "loop-rpc-"));
+        fs.feed(
+            JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "session.create",
+                params: { cwd, provider: "nope", model: "nope/model" },
+            }) + "\n",
+        );
+        await until(() => !!sender.response(1), "session.create response");
+        const sid = (sender.response(1) as { result: { sessionId: string } }).result.sessionId;
+        // An unknown provider fails the turn — still a start and an end.
+        fs.feed(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "session.send", params: { sessionId: sid, input: "hi" } }) + "\n");
+        const notices = () =>
+            bystander.sent
+                .filter((m) => m.method === "session.status")
+                .map((m) => m.params as { sessionId: string; change: string; running?: boolean });
+        await until(() => notices().some((n) => n.change === "running" && n.running === false), "turn end notice");
+        expect(notices().map((n) => (n.change === "running" ? `running:${n.running}` : n.change))).toEqual([
+            "created",
+            "running:true",
+            "running:false",
+        ]);
+        expect(notices().every((n) => n.sessionId === sid)).toBe(true);
+        // The bystander never subscribed, so it got no turn events.
+        expect(bystander.events()).toHaveLength(0);
+        server.dispose();
+    });
+});
+
 describe("startWebServer", () => {
     useTempSessionDb();
 

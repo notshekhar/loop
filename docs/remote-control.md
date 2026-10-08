@@ -1,10 +1,25 @@
 # Draft: Remote control — one host, many clients
 
 **Status: in progress** (2026-10-08). Done: pairing (`serve-pairing.ts`), the
-phone and desktop as clients, and in the TUI `/hosts` (the TUI as a client —
-step 4, over the pairing protocol rather than `loop attach <url>`) and `/rc`
-(step 2, minus the `rc on` chip). Not done: step 1, the host core — `/rc`
-still serves its own RpcServer, not the TUI's live slots. Picked up after the `loop serve`
+phone and desktop as clients, the TUI as a client (`/hosts`), `/rc`, and the
+core of step 1:
+
+- **One stream per session under `/rc`.** The server takes a
+  `LiveSessionProvider` (the TUI's open slots). A client's `session.send` to
+  one is typed into the TUI (`chatOnly`, queued if busy) and runs there, on
+  screen; the TUI's turns publish every event into the session's seq ring
+  (`publishLive` / `setLiveRunning`), so the TUI, the phone and a paired
+  desktop render the same stream. `session.cancel` is Esc in the TUI.
+- **`session.status`** (additive): every client hears when any session starts
+  or ends a turn, appears, is renamed, archived or deleted — not only its
+  subscribers. Lists stay true; no more stuck "Working".
+- The `/rc` server no longer takes the process-global ask bridge, so the
+  TUI's own questions stay on its screen.
+
+Not done: questions/approvals answered from a client for a TUI-run turn,
+the `hello` handshake (§4), and two processes on one machine sharing a host
+(a desktop's own `loop rpc` and a TUI only share a stream when the desktop
+pairs with the TUI's `/rc`). Picked up after the `loop serve`
 web app reaches desktop parity — the browser is the first client, and it should
 be the desktop UI, not the old single-file page.
 

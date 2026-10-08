@@ -631,6 +631,21 @@ class LoopSocket {
       for (const listener of this.#listeners) listener(event);
       return;
     }
+    // Host-wide: a session somewhere on this host started or ended a turn,
+    // appeared, was renamed or went away — sent to every client, subscribed
+    // to that session or not. Delivered through the same listeners as a
+    // `session-status` part with no seq (0), so it never moves a resume point.
+    if (message.method === "session.status") {
+      const status = message.params as { sessionId?: string } | undefined;
+      if (typeof status?.sessionId !== "string") return;
+      const event: LoopEvent = {
+        sessionId: status.sessionId,
+        seq: 0,
+        part: { type: "session-status", data: status },
+      };
+      for (const listener of this.#listeners) listener(event);
+      return;
+    }
     if (message.method === "workspace.event") {
       const { channel, payload } = message.params as { channel: string; payload: unknown };
       for (const listener of this.#channelListeners.get(channel) ?? []) listener(payload);

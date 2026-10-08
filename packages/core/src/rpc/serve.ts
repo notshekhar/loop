@@ -14,7 +14,7 @@
  */
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { networkInterfaces } from "node:os";
-import { RpcServer } from "./server";
+import { RpcServer, type LiveSessionProvider } from "./server";
 import { loadWebApp, serveWebApp, webAppMissing } from "./serve-web-app";
 import { createServeWorkspace, WORKSPACE_EVENT, WORKSPACE_PREFIX } from "./serve-workspace";
 import { getStoredServeToken, storeServeToken } from "./serve-token-store";
@@ -110,6 +110,15 @@ export interface ServeHandle {
     /** LAN URLs (one per non-internal IPv4). Only usable when the bind host
      * actually faces the network — empty for a loopback bind. */
     networkUrls: string[];
+    /**
+     * Feed for sessions the caller runs itself (`live` below): a turn's events
+     * and running flag go out to every client watching, exactly as if this
+     * server had run it.
+     */
+    live: {
+        publish(sessionId: string, part: { type: string; data: unknown }): void;
+        setRunning(sessionId: string, running: boolean): void;
+    };
     stop(): void;
 }
 
@@ -136,6 +145,11 @@ export function startWebServer(
         remoteTerminal?: boolean;
         /** Reported to pairing clients (see serve-pairing.ts). */
         version?: string;
+        /**
+         * Sessions the caller runs itself — the TUI under `/rc` — so a client's
+         * message to one runs there, on screen, instead of as a second copy.
+         */
+        live?: LiveSessionProvider;
     } = {},
 ): ServeHandle {
     const hostname = opts.host ?? "127.0.0.1";
@@ -145,7 +159,13 @@ export function startWebServer(
     const port = opts.port ?? SERVE_DEFAULT_PORT;
     const token = getOrCreateServeToken();
     // Reachable over the network, so artifact.* is refused — see RpcServer.remote.
-    const rpc = new RpcServer({ remote: true });
+    // Embedded in a TUI (`live` given), the ask tool stays the TUI's: its
+    // bridge is process-global, and the TUI's own questions belong on its
+    // screen.
+    const rpc = new RpcServer({
+        remote: true,
+        ...(opts.live ? { live: opts.live, askBridge: false } : {}),
+    });
     // Every open socket: workspace events (terminal output, git progress) go
     // to all of them, and each client picks out the terminals it shows.
     const sockets = new Set<{ send(data: string): unknown }>();
@@ -270,6 +290,10 @@ export function startWebServer(
         token,
         url: `http://${localHost}:${boundPort}/?token=${token}`,
         networkUrls: networkHosts.map((h) => `http://${h}:${boundPort}/?token=${token}`),
+        live: {
+            publish: (sessionId, part) => rpc.publishLive(sessionId, part),
+            setRunning: (sessionId, running) => rpc.setLiveRunning(sessionId, running),
+        },
         // Killing the HTTP server closes the sockets; disposing the RPC
         // server is what kills the background shells its sessions started,
         // which nothing else in this process will do.

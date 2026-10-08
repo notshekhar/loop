@@ -332,8 +332,38 @@ type RpcMethodHandler = (
     req: RpcRequest,
 ) => unknown;
 
+/**
+ * A session whose turns run OUTSIDE this server — in the TUI that started
+ * `/rc`. The server does not run them: a client's send is handed to the TUI
+ * (which shows it and runs it exactly as if it had been typed there), and the
+ * TUI feeds the turn's events back in (`publishLive` / `setLiveRunning`), so
+ * every client and the TUI's own screen render the one stream.
+ */
+export interface LiveSession {
+    /** The session object the TUI is appending to — history is read from it. */
+    readonly session: Session;
+    /** Run this as a chat turn there; queued there if a turn is running. */
+    send(input: string): void;
+    cancel(): void;
+}
+
+export interface LiveSessionProvider {
+    /** The TUI's live session for this id, if it has one open. */
+    get(sessionId: string): LiveSession | undefined;
+}
+
+/** What `session.status` tells every client (see `announce`). */
+export interface SessionStatusNotice {
+    readonly sessionId: string;
+    readonly change: "running" | "created" | "renamed" | "archived" | "deleted";
+    readonly running?: boolean;
+}
+
 export class RpcServer {
     private sessions = new Map<string, ActiveSession>();
+    /** Every connected client, for host-wide notices (`announce`). */
+    private transports = new Set<Transport>();
+    private readonly live: LiveSessionProvider | null;
     private manager = new SessionManager();
     private commands = new CommandRegistry();
     /**
@@ -361,14 +391,29 @@ export class RpcServer {
         if (this.remote) throw localOnlyError(method);
     }
 
-    constructor(opts: { remote?: boolean } = {}) {
+    constructor(
+        opts: {
+            remote?: boolean;
+            /** Sessions a host process runs itself (the TUI under `/rc`). */
+            live?: LiveSessionProvider;
+            /**
+             * Whether this server answers the ask tool. False when it is
+             * embedded in a TUI: the bridge is process-global, and taking it
+             * would send the TUI's own questions to remote clients.
+             */
+            askBridge?: boolean;
+        } = {},
+    ) {
         this.remote = opts.remote === true;
+        this.live = opts.live ?? null;
         // Registering a bridge is what makes the ask tool exist at all: runTurn
         // only attaches it when one is present, which is why RPC clients never
         // saw a question before.
-        setAskUserBridge({
-            ask: (questions, opts) => this.askOverRpc(questions, opts),
-        });
+        if (opts.askBridge !== false) {
+            setAskUserBridge({
+                ask: (questions, opts) => this.askOverRpc(questions, opts),
+            });
+        }
         this.ready = (async () => {
             await getExtensionHost().init();
             await registerBuiltins(this.commands);
@@ -421,12 +466,84 @@ export class RpcServer {
                 if (line) this.handleLine(line, transport);
             }
         };
+        this.transports.add(transport);
         return { feed, close: () => this.disconnect(transport) };
     }
 
     /** Transport gone (socket/WS closed): stop broadcasting to it everywhere. */
     disconnect(transport: Transport): void {
+        this.transports.delete(transport);
         for (const ctx of this.sessions.values()) ctx.subscribers.delete(transport);
+    }
+
+    /**
+     * Tell EVERY client that a session changed — not just its subscribers.
+     *
+     * Turn events only reach clients attached to that session, so a list (the
+     * phone's home, a sidebar) learned of a turn started elsewhere — or of one
+     * ending after its socket had been replaced — only on its next unrelated
+     * refresh, and showed "Working" until then. One small notice per change
+     * keeps every list true. Additive: an older client ignores the method.
+     */
+    private announce(notice: SessionStatusNotice): void {
+        const msg: RpcNotification = { jsonrpc: "2.0", method: "session.status", params: notice };
+        // Next tick: the request that caused it (a create, a rename) gets its
+        // reply first, then the news — the order a client reads them in.
+        setTimeout(() => {
+            for (const t of this.transports) {
+                try {
+                    t.send(msg);
+                } catch {
+                    // A dying transport is the close handler's problem.
+                }
+            }
+        }, 0);
+    }
+
+    /**
+     * A turn in a live session (see LiveSession) emitted an event: stamp it
+     * into that session's stream as if this server had run the turn.
+     */
+    publishLive(sessionId: string, part: { type: string; data: unknown }): void {
+        const ctx = this.liveCtx(sessionId);
+        if (!ctx) return;
+        const data = ERROR_BEARING_EVENTS.has(part.type) ? plainError(part.data) : part.data;
+        this.broadcast(sessionId, ctx, { type: part.type, data });
+    }
+
+    /** A live session's turn started or ended (see publishLive). */
+    setLiveRunning(sessionId: string, running: boolean): void {
+        const ctx = this.liveCtx(sessionId);
+        if (ctx) this.setRunning(sessionId, ctx, running);
+    }
+
+    /**
+     * The context for a live session, made on first use from the TUI's own
+     * Session object, and re-pointed at it if the server had already opened
+     * the same session from the store (that copy would not see the TUI's
+     * appends).
+     */
+    private liveCtx(sessionId: string): ActiveSession | undefined {
+        const live = this.live?.get(sessionId);
+        if (!live) return this.sessions.get(sessionId);
+        const existing = this.sessions.get(sessionId);
+        if (existing) {
+            existing.session = live.session;
+            return existing;
+        }
+        const ctx: ActiveSession = {
+            session: live.session,
+            tracker: new CostTracker(),
+            abort: new AbortController(),
+            emitter: new EventEmitter(),
+            modelId: live.session.lastModel(),
+            running: false,
+            subscribers: new Set(),
+            seq: 0,
+            ring: [],
+        };
+        this.sessions.set(sessionId, ctx);
+        return ctx;
     }
 
     /**
@@ -543,6 +660,7 @@ export class RpcServer {
                 };
                 this.wireCtx(session.id, ctx);
                 this.sessions.set(session.id, ctx);
+                this.announce({ sessionId: session.id, change: "created" });
                 return { sessionId: session.id };
             },
             "session.answer": (params) => {
@@ -673,6 +791,15 @@ export class RpcServer {
             },
             "session.send": (params) => {
                 const id = String(params.sessionId);
+                // Open in the TUI: it runs there, on screen, and streams to
+                // every client through publishLive. A turn already running
+                // there queues this one rather than refusing it — the TUI's
+                // own rule for anything typed mid-turn.
+                const live = this.live?.get(id);
+                if (live) {
+                    live.send(String(params.input ?? "") + writeAttachmentPayloads(params.images));
+                    return { ok: true };
+                }
                 const ctx = this.requireSession(id);
                 if (ctx.running) throw new Error(`session ${id} already has a turn running (cancel it first)`);
                 // Remote clients (web UI) attach images as base64 payloads: each
@@ -728,10 +855,16 @@ export class RpcServer {
                 const ctx = this.requireSession(id);
                 const name = String(params.name ?? "").trim();
                 await ctx.session.setName(name);
+                this.announce({ sessionId: id, change: "renamed" });
                 return { ok: true, name };
             },
             "session.cancel": (params) => {
                 const id = String(params.sessionId);
+                const live = this.live?.get(id);
+                if (live) {
+                    live.cancel();
+                    return { ok: true };
+                }
                 const ctx = this.requireSession(id);
                 ctx.abort.abort();
                 ctx.abort = new AbortController();
@@ -832,6 +965,7 @@ export class RpcServer {
                 const id = String(params.sessionId);
                 const archived = params.archived !== false;
                 const ok = this.manager.setArchived(id, archived);
+                if (ok) this.announce({ sessionId: id, change: "archived" });
                 return { ok, sessionId: id, archived: ok ? archived : false };
             },
             "session.delete": (params) => {
@@ -857,6 +991,7 @@ export class RpcServer {
                 // or killed again by anyone.
                 killSessionShells(id);
                 const deleted = this.manager.delete(id);
+                if (deleted) this.announce({ sessionId: id, change: "deleted" });
                 return { ok: deleted, sessionId: id };
             },
             "session.compact": async (params) => {
@@ -1471,6 +1606,8 @@ export class RpcServer {
      * Reuse is the point: a reload/second client must see the same running
      * flag, abort controller, and event ring as the turn already in flight. */
     private async ensureCtx(id: string): Promise<ActiveSession> {
+        // A session the TUI has open is read from the TUI's own object.
+        if (this.live?.get(id)) return this.liveCtx(id)!;
         const existing = this.sessions.get(id);
         if (existing) return existing;
         const session = await this.manager.open(id);
@@ -1529,6 +1666,7 @@ export class RpcServer {
         if (ctx.running === running) return;
         ctx.running = running;
         this.broadcast(sessionId, ctx, { type: "session-running", data: { running } });
+        this.announce({ sessionId, change: "running", running });
     }
 
     /** Stamp a seq, remember for replay, fan out to every subscriber. */

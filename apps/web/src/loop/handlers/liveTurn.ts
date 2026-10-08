@@ -482,6 +482,13 @@ function apply(sessionId: string, part: LoopTurnPart): void {
     turns.set(sessionId, emptyTurn());
   }
   const data = part.data as Record<string, unknown> | string | undefined;
+  // Not this client's turn to render — just news that the host's list
+  // changed (see `session.status` in the transport). A lifecycle change, so
+  // the shell rebuilds; nothing in a live turn moves.
+  if (part.type === "session-status") {
+    notify(sessionId, false, true);
+    return;
+  }
   switch (part.type) {
     case "text-delta":
       touch(

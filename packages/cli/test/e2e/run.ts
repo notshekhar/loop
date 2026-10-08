@@ -1874,7 +1874,104 @@ async function testResumePaging(): Promise<void> {
     });
 }
 
+/**
+ * /rc shares the TUI's sessions: a client attached to a session the TUI has
+ * open sees the TUI's turns stream live, and a message the client sends runs
+ * IN the TUI — on its screen — rather than as a second copy beside it.
+ */
+async function testRcLiveSessions(): Promise<void> {
+    const lastUserText = (body: { messages?: { role: string; content: unknown }[] }): string => {
+        const last = [...(body.messages ?? [])].reverse().find((m) => m.role === "user");
+        if (!last) return "";
+        if (typeof last.content === "string") return last.content;
+        return (last.content as { text?: string }[]).map((b) => b.text ?? "").join(" ");
+    };
+    const server = Bun.serve({
+        port: 0,
+        fetch: async (req) => {
+            const said = lastUserText((await req.json().catch(() => ({}))) as never);
+            if (said.includes("from the phone")) return streamedReply("PHONE-REPLY rendered in the tui.");
+            if (said.includes("second")) return streamedReply("TUI-SECOND-REPLY streamed to the phone.");
+            return streamedReply("FIRST-REPLY.");
+        },
+    });
+    try {
+        await withFixtureSession(server.port, async (s) => {
+            const screen = () => s.screenRows().join("\n");
+            await s.pump(7);
+            await s.send("first message\r", 4.0);
+            check(screen().includes("FIRST-REPLY."), "the TUI runs its own turn", s.screenRows());
+
+            await s.send("/rc --local\r", 1.5);
+            await s.send("\r", 3.0);
+            const raw = s.raw.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+            const link = /local\s+http:\/\/127\.0\.0\.1:(\d+)\/\?token=([0-9a-f]+)/.exec(raw);
+            check(link !== null, "/rc is on", s.screenRows());
+            if (!link) return;
+            const [, port, token] = link;
+
+            // A client (the phone, the desktop) on the TUI's host.
+            const ticket = await fetch(`http://127.0.0.1:${port}/api/auth/websocket-ticket`, {
+                method: "POST",
+                headers: { authorization: `Bearer ${token}` },
+            }).then((r) => r.json() as Promise<{ ticket: string }>);
+            const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?wsTicket=${ticket.ticket}`);
+            await new Promise((r) => (ws.onopen = r));
+            const frames: Array<{ id?: number; method?: string; params?: any; result?: any }> = [];
+            ws.onmessage = (e) => frames.push(JSON.parse(String(e.data)));
+            let nextId = 1;
+            const call = async (method: string, params: unknown) => {
+                const id = nextId++;
+                ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+                for (let i = 0; i < 100; i++) {
+                    const hit = frames.find((f) => f.id === id);
+                    if (hit) return hit.result;
+                    await Bun.sleep(30);
+                }
+                return undefined;
+            };
+            const rows = (await call("session.list", { limit: 5 })) as { id: string; firstUserMessage?: string }[];
+            const mine = rows?.find((r) => r.firstUserMessage?.includes("first message"));
+            check(mine !== undefined, "the client lists the TUI's session", rows);
+            if (!mine) return;
+            await call("session.attach", { sessionId: mine.id, afterSeq: 0 });
+
+            // Typed in the TUI → streamed to the client.
+            frames.length = 0;
+            await s.send("second message\r", 4.0);
+            const events = frames.filter((f) => f.method === "session.event").map((f) => f.params);
+            const streamed = events
+                .filter((e) => e.part.type === "text-delta")
+                .map((e) => e.part.data)
+                .join("");
+            check(streamed.includes("TUI-SECOND-REPLY"), "a turn typed in the TUI streams to the client", events.map((e) => e.part.type));
+            const running = events.filter((e) => e.part.type === "session-running").map((e) => e.part.data.running);
+            check(running.join(",") === "true,false", "with its start and its end", running);
+            check(
+                frames.some((f) => f.method === "session.status" && f.params.sessionId === mine.id),
+                "and every client hears the status change",
+                frames.map((f) => f.method),
+            );
+
+            // Sent by the client → runs in the TUI, on its screen.
+            await call("session.send", { sessionId: mine.id, input: "hello from the phone" });
+            await s.pump(4);
+            check(screen().includes("hello from the phone"), "a client's message appears in the TUI", s.screenRows());
+            check(screen().includes("PHONE-REPLY rendered in the tui."), "and its reply streams there", s.screenRows());
+            const replayed = frames
+                .filter((f) => f.method === "session.event" && f.params.part.type === "text-delta")
+                .map((f) => f.params.part.data)
+                .join("");
+            check(replayed.includes("PHONE-REPLY"), "and back to the client that sent it", replayed.slice(-120));
+            ws.close();
+        });
+    } finally {
+        server.stop(true);
+    }
+}
+
 const SCENARIOS: Record<string, () => Promise<void>> = {
+    "rc-live": testRcLiveSessions,
     "resume-paging": testResumePaging,
     rc: testRemoteControl,
     hosts: testHosts,

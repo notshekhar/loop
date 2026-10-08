@@ -1043,6 +1043,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         isForeground: () => true,
         settleTurn: (failed) => slots.settle(slots.foreground, failed),
         cleanExit,
+        live: { feed: null },
         refreshCommands,
         version: opts.version,
         restoreConsole,

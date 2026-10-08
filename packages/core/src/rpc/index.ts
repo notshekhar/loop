@@ -1,4 +1,12 @@
-export { RpcServer, startStdioServer, startSocketServer, stopSocketServer } from "./server";
+export {
+    RpcServer,
+    startStdioServer,
+    startSocketServer,
+    stopSocketServer,
+    type LiveSession,
+    type LiveSessionProvider,
+    type SessionStatusNotice,
+} from "./server";
 export {
     startWebServer,
     getOrCreateServeToken,

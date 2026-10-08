@@ -7,6 +7,12 @@ import type { ShellsPanel } from "./components/shells-panel";
 import type { ScrollbackFocus } from "./scrollback-focus";
 import type { SessionSlot } from "./slots";
 
+/** The `/rc` server's side of a local turn (ServeHandle.live). */
+export interface LiveTurnFeed {
+    publish(sessionId: string, part: { type: string; data: unknown }): void;
+    setRunning(sessionId: string, running: boolean): void;
+}
+
 /**
  * Stable references for handlers. Functions and objects here don't change
  * across the app's lifetime — only the AppState fields mutate.
@@ -65,6 +71,13 @@ export interface AppDeps {
      * out of sight. */
     settleTurn: (failed: boolean) => void;
     cleanExit: (code?: number) => void;
+    /**
+     * While `/rc` is on: where this loop's turns are published, so every
+     * remote client streams them live (remote-sessions.ts). A holder rather
+     * than the feed itself — deps are copied per session, and the feed comes
+     * and goes after they are.
+     */
+    live: { feed: LiveTurnFeed | null };
     /** `/hosts` and `/rc` (remote-sessions.ts); set once the roster exists. */
     remote?: { manageHosts(args: string): Promise<void>; remoteControl(args: string): Promise<void> };
     /** App version (undefined in dev runs). */

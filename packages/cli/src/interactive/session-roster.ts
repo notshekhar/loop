@@ -120,7 +120,7 @@ export interface SessionRosterHost {
 
 export interface SessionRoster {
     /** The submit handler for `slot`: a turn runner pinned to that session. */
-    runnerFor(slot: SessionSlot): (raw: string) => Promise<void>;
+    runnerFor(slot: SessionSlot): SlotRunner;
     /** Deps that act on `slot` whether or not it is on screen. */
     depsFor(slot: SessionSlot): AppDeps;
     /** An AppState view pinned to `slot`. */
@@ -141,11 +141,14 @@ export interface SessionRoster {
     setRemoteRunner(factory: (slot: SessionSlot) => (raw: string) => Promise<void>): void;
 }
 
+/** What a slot's input goes through; `chatOnly` marks a remote client's message. */
+export type SlotRunner = (raw: string, opts?: { chatOnly?: boolean }) => Promise<void>;
+
 export function createSessionRoster(host: SessionRosterHost): SessionRoster {
     const { slots, shared, deps, tui, editor, statusLine, manager, indicator } = host;
     const views = new WeakMap<SessionSlot, AppState>();
     const pinned = new WeakMap<SessionSlot, AppDeps>();
-    const runners = new WeakMap<SessionSlot, (raw: string) => Promise<void>>();
+    const runners = new WeakMap<SessionSlot, SlotRunner>();
     const drafts = new WeakMap<SessionSlot, string>();
     let remoteRunner: ((slot: SessionSlot) => (raw: string) => Promise<void>) | null = null;
 
@@ -254,19 +257,19 @@ export function createSessionRoster(host: SessionRosterHost): SessionRoster {
         return d;
     };
 
-    const runnerFor = (slot: SessionSlot): ((raw: string) => Promise<void>) => {
+    const runnerFor = (slot: SessionSlot): SlotRunner => {
         let run = runners.get(slot);
         if (!run) {
             // A session on another machine runs its turns there; this side
             // only forwards what is typed and renders what comes back.
             const runner =
                 slot.remote && remoteRunner ? remoteRunner(slot) : createTurnRunner(viewOf(slot), depsFor(slot), host.ctx);
-            run = (raw: string) => {
+            run = (raw: string, opts?: { chatOnly?: boolean }) => {
                 const text = raw.trim();
                 if (!slot.firstPrompt && text && !text.startsWith("/") && !text.startsWith("!")) {
                     slot.firstPrompt = text.split("\n")[0].slice(0, 120);
                 }
-                return runner(raw);
+                return runner(raw, opts);
             };
             runners.set(slot, run);
         }

@@ -11,6 +11,7 @@ import {
     parseModelId,
     runInSession,
     runTurn,
+    TURN_EVENT_NAMES,
 } from "@notshekhar/loop-core";
 import { wrapSessionHookContext } from "@notshekhar/loop-core";
 import type { AppDeps } from "./deps";
@@ -133,7 +134,8 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
         if (editor.onSubmit) void editor.onSubmit(next);
     };
 
-    const onSubmit = async (raw: string) => {
+    /** `chatOnly`: a message from a remote client — never a command here. */
+    const onSubmit = async (raw: string, opts?: { chatOnly?: boolean }) => {
         const text = raw.trim();
         if (!text) {
             drainNext();
@@ -163,7 +165,7 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
         // conversation. Handled BEFORE slash commands and before the model,
         // because `!` is a prefix on the line rather than a name to look up:
         // there is no "unknown !command" to fall through to chat as prose.
-        const bang = parseBangCommand(text);
+        const bang = opts?.chatOnly ? null : parseBangCommand(text);
         if (bang !== null) {
             history.addCommand(`! ${bang}`);
             tui.requestRender();
@@ -192,7 +194,7 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
         // they die as unhandled rejections nobody sees. An unrecognized /name
         // isn't an error: the user may just be talking about a path or option,
         // so we fall through and send it to the model as a normal message.
-        if (text.startsWith("/") && commandExists(commands, text)) {
+        if (!opts?.chatOnly && text.startsWith("/") && commandExists(commands, text)) {
             history.addCommand(text);
             try {
                 await commands.run(text, ctx);
@@ -311,6 +313,15 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
             tui.requestRender();
         };
         emitter.on("tool-result", syncPlanMode);
+        // Under `/rc` this turn is also every remote client's: the same events,
+        // in the same order, into the session's shared stream. Read from the
+        // holder each time, so turning `/rc` on mid-turn still streams the rest.
+        const publish = (part: { type: string; data: unknown }) =>
+            deps.live.feed?.publish(activeSession.id, part);
+        for (const event of TURN_EVENT_NAMES) {
+            emitter.on(event, (data: unknown) => publish({ type: event, data }));
+        }
+        deps.live.feed?.setRunning(activeSession.id, true);
         traceEvent("turn", `start "${text}" abortedAtStart=${turnSignal.aborted} agent=${turnAgent}`);
         try {
             // In the session's scope so a question or approval this turn
@@ -334,6 +345,7 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
         } finally {
             traceEvent("turn", `end   "${text}" abortedAtEnd=${turnSignal.aborted}`);
             state.busy = false;
+            deps.live.feed?.setRunning(activeSession.id, false);
             subagentStream.dispose();
             history.finishAssistant();
             // Aborted mid-flight: still-pending tool boxes would show a

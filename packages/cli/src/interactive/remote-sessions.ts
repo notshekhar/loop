@@ -44,6 +44,7 @@ import {
     type AskQuestion,
     type CommandRegistry,
     type CommandContext,
+    type LiveSessionProvider,
     type Entry,
     type RemoteHostRecord,
     type RemoteSessionEvent,
@@ -599,6 +600,31 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
 
     // ── /rc: this machine as a host ───────────────────────────────────────
 
+    /**
+     * This loop's open sessions, as the `/rc` server sees them: a client's
+     * message to one is typed into it here (shown on screen, queued if a turn
+     * is running), and its turns stream back out through `deps.live.feed`.
+     * One stream, every screen. Sessions not open here the server runs itself.
+     */
+    const liveSessions: LiveSessionProvider = {
+        get(sessionId) {
+            const slot = slots.bySessionId(sessionId);
+            if (!slot || slot.remote || !slot.session) return undefined;
+            return {
+                session: slot.session,
+                send: (input) => {
+                    void roster.runnerFor(slot)(input, { chatOnly: true });
+                },
+                cancel: () => {
+                    if (!slot.busy) return;
+                    // What Esc does: abort, and a fresh controller for the next turn.
+                    slot.abort.abort();
+                    slot.abort = new AbortController();
+                },
+            };
+        },
+    };
+
     const printReach = (): void => {
         if (!rc) return;
         const tailnet = isLoopbackHost(rc.hostname) ? null : tailnetIdentity();
@@ -625,6 +651,7 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
         if (sub === "off" || sub === "stop") {
             if (!rc) say(dim("remote control is not on"));
             else {
+                deps.live.feed = null;
                 rc.stop();
                 rc = null;
                 say("remote control off");
@@ -657,7 +684,12 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
             // already answers on — usually a `loop serve` started elsewhere.
             if (await portAnswers(port)) continue;
             try {
-                rc = startWebServer({ host: bind, port, ...(host.version ? { version: host.version } : {}) });
+                rc = startWebServer({
+                    host: bind,
+                    port,
+                    ...(host.version ? { version: host.version } : {}),
+                    live: liveSessions,
+                });
             } catch (e) {
                 lastError = e;
             }
@@ -666,6 +698,8 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
             say(err(`could not start remote control: ${formatError(lastError)}`));
             return;
         }
+        // From here, every turn in this loop streams to remote clients too.
+        deps.live.feed = rc.live;
         if (!lanAddresses().length && bind === "0.0.0.0") say(dim("no network address found — reachable from this machine only"));
         printReach();
     };
@@ -676,6 +710,7 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
         dispose: () => {
             for (const c of clients.values()) c.close();
             clients.clear();
+            deps.live.feed = null;
             rc?.stop();
             rc = null;
         },
