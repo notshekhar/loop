@@ -96,12 +96,16 @@ jobs:
                     exit 0
                   fi
                   echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/loop-upload.p12"
+                  # Gradle reads ORG_GRADLE_PROJECT_<name> as project property
+                  # <name> — no edit to the generated gradle.properties (whose
+                  # missing final newline glued an appended line onto the JVM
+                  # args the first time round).
                   {
-                    echo "loopUploadStoreFile=$RUNNER_TEMP/loop-upload.p12"
-                    echo "loopUploadStorePassword=$KEYSTORE_PASSWORD"
-                    echo "loopUploadKeyAlias=loop"
-                    echo "loopUploadKeyPassword=$KEYSTORE_PASSWORD"
-                  } >> apps/mobile/android/gradle.properties
+                    echo "ORG_GRADLE_PROJECT_loopUploadStoreFile=$RUNNER_TEMP/loop-upload.p12"
+                    echo "ORG_GRADLE_PROJECT_loopUploadStorePassword=$KEYSTORE_PASSWORD"
+                    echo "ORG_GRADLE_PROJECT_loopUploadKeyAlias=loop"
+                    echo "ORG_GRADLE_PROJECT_loopUploadKeyPassword=$KEYSTORE_PASSWORD"
+                  } >> "$GITHUB_ENV"
                   echo "signed=true" >> "$GITHUB_OUTPUT"
 
             - name: Build the APK (arm64 — every phone from the last decade)
