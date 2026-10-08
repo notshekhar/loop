@@ -13,7 +13,9 @@ add_library(t3terminal SHARED t3_terminal_jni.cpp)
 
 target_include_directories(
   t3terminal
-  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../../../native/libghostty-vt/include"
+  # Vendored beside the module (upstream keeps them at its repo root,
+  # native/libghostty-vt): the headers the prebuilt jniLibs were built from.
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../vendor/libghostty-vt/include"
 )
 
 target_link_options(
