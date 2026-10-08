@@ -160,15 +160,20 @@ export const make = Effect.gen(function* () {
     // The handshake (packages/core/src/rpc/protocol.ts): an app and a host
     // that cannot talk say so now, naming the side to update, instead of
     // failing in some method later. Blocked, not retried — retrying cannot
-    // change either side's version.
-    const handshook = yield* Effect.tryPromise({
-      try: () => handshake((method, params) => host.call(method, params), "loop-app"),
-      catch: (error) =>
-        new ConnectionTransientErrorClass({
-          reason: "transport",
-          detail: `Could not reach ${connection.label}: ${error instanceof Error ? error.message : String(error)}`,
-        }),
-    });
+    // change either side's version. Only for another machine: the page's own
+    // host (the desktop's bundled loop, or the serve that sent this page)
+    // ships with this app and cannot disagree with it.
+    const handshook =
+      host === defaultLoopHost
+        ? ({ ok: true } as const)
+        : yield* Effect.tryPromise({
+            try: () => handshake((method, params) => host.call(method, params), "loop-app"),
+            catch: (error) =>
+              new ConnectionTransientErrorClass({
+                reason: "transport",
+                detail: `Could not reach ${connection.label}: ${error instanceof Error ? error.message : String(error)}`,
+              }),
+          });
     if (!handshook.ok) {
       return yield* Effect.fail(
         new ConnectionBlockedError({ reason: "configuration", detail: handshook.message }),
