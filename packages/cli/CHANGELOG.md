@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.21.2] - 2026-10-08
+
+### Added
+
+- **Drive loop on other machines, and let them drive this one.** `/hosts` pairs another machine running `loop serve` (`/hosts add <link>`), lists it beside this one with whether it is online, and opens its sessions here: what you type runs there and streams back, Ctrl+S lists those sessions with their machine, and a turn someone starts from another device streams in too. `/rc` makes this loop pairable — a QR code for the phone and a link for another loop, over Tailscale when it is running — and `/rc off` stops it.
+- **One live session, every screen.** With `/rc` on, a session open in this loop is the same session everywhere: a message from the phone or a paired desktop is typed into it here and runs on this screen, and what you type here streams live to them. Esc on any of them stops the turn.
+- **Pairing in `loop serve`.** It prints the link to pair with (the tailnet address when Tailscale is running) and a QR code for the loop phone app.
+- **The desktop app connects to other machines** (Settings → Connections). The sidebar keeps each machine's projects apart and names the machine once there is more than one.
+- **Long session lists load as you scroll** — `/resume`, the `/hosts` lists, the desktop sidebar and the phone — instead of all at once; a search keeps fetching until it finds what you typed.
+- **Version check on connect.** Apps and hosts say which protocol they speak when they connect; when they cannot talk, the message says which side to update instead of failing later.
+
+### Fixed
+
+- **Typing no longer lags in the desktop app while a reply streams.**
+- **The desktop app's built-in browser no longer crashes.**
+- **Claude Code tool calls are kept when you press Esc mid-reply**, instead of vanishing from the transcript.
+- **A session no longer stays "Working" after its turn ended** on another device or across a reconnect: every client now hears when any session starts or finishes.
+
 ## [0.21.1] - 2026-10-07
 
 ### Added
