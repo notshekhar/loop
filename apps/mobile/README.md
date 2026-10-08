@@ -27,6 +27,18 @@ bun run ios:dev        # prebuild + compile the dev client + open the Simulator
 bun run dev:client     # later runs: just start Metro; JS reloads live
 ```
 
+## Android: install the latest build
+
+CI (`.github/workflows/mobile.yml`) builds a signed APK on every push to `main`
+that touches the app, and puts it on the **`mobile-latest`** pre-release:
+https://github.com/notshekhar/loop/releases/tag/mobile-latest — open it on the
+phone, tap the `.apk`, allow installs from the browser. Each build installs over
+the last (same signing key, rising version code).
+
+The upload key lives in the repo secrets `ANDROID_UPLOAD_KEYSTORE_BASE64` /
+`ANDROID_UPLOAD_KEYSTORE_PASSWORD` (a PKCS12, alias `loop`). Lose it and the
+next build cannot update installed copies — keep a backup.
+
 ## Run it in the iOS Simulator (one command)
 
 With Xcode, an iOS Simulator runtime and CocoaPods installed:

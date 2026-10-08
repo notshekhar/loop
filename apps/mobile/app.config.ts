@@ -71,6 +71,9 @@ const config: ExpoConfig = {
   android: {
     icon: APP_ICON,
     package: bundleIdentifier,
+    // Every CI build counts up (the workflow passes its run number), so a new
+    // APK installs over the last one instead of being refused as a downgrade.
+    versionCode: Number(process.env.LOOP_ANDROID_VERSION_CODE) || 1,
     adaptiveIcon: {
       backgroundColor: "#000000",
       foregroundImage: "./assets/android-icon-mark.png",
@@ -130,6 +133,7 @@ const config: ExpoConfig = {
     "./plugins/withIosSceneLifecycle.cjs",
     "./plugins/withAndroidCleartextTraffic.cjs",
     "./plugins/withAndroidGradleHeap.cjs",
+    "./plugins/withAndroidReleaseSigning.cjs",
     "./plugins/withAndroidModernPopupMenu.cjs",
     "./plugins/withAndroidModernAlertDialog.cjs",
     "./plugins/withAndroidPredictiveBackCompat.cjs",
