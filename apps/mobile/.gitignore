@@ -39,3 +39,8 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Native modules' own Gradle/CMake output (a local Android build writes it
+# beside each module's sources)
+/modules/*/android/build/
+/modules/*/android/.cxx/

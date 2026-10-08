@@ -50,7 +50,7 @@ const config: ExpoConfig = {
   // do not. The app ships for iOS and Android.
   platforms: process.env.LOOP_MOBILE_WEB === "1" ? ["ios", "android", "web"] : ["ios", "android"],
   scheme: variant.scheme,
-  version: "0.1.0",
+  version: "0.1.1",
   orientation: "portrait",
   icon: APP_ICON,
   userInterfaceStyle: "automatic",

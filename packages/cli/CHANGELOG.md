@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.3] - 2026-10-08
+
+### Fixed
+
+- **The Android app opens.** It closed on launch, before showing anything: one of its libraries pulled in a newer build of a core Android component than the rest of the app was made for. That component is now pinned to the version React Native expects.
+- **The Android app has loop's icon** — on the home screen and in notifications — instead of the one it was forked from.
+- **The desktop app connects to its own loop again without a version check it does not need.** The handshake added in 0.21.2 now runs only with other machines; the desktop's bundled loop always matches it.
+
 ## [0.21.2] - 2026-10-08
 
 ### Added
