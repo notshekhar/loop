@@ -1,10 +1,8 @@
 import type { OrchestrationShellSnapshot } from "@loop/contracts";
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { HttpClient } from "effect/http";
 
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
@@ -62,31 +60,17 @@ export class ShellSnapshotLoader extends Context.Service<
   }
 >()("@loop/runtime/state/shellSnapshotHttp/ShellSnapshotLoader") {}
 
-export const shellSnapshotLoaderLayer: Layer.Layer<
+/**
+ * loop's hosts serve no HTTP snapshot endpoint: the snapshot is built from
+ * loop's own RPC by the handlers this client runs (handlers/), and arrives as
+ * the subscription's first frame. So the loader declines at once rather than
+ * asking — asking cost every connect a failed, CORS-refused request and a
+ * warning before the same fallback. `fetchEnvironment*Snapshot` stays for an
+ * upstream-shaped server.
+ */
+export const shellSnapshotLoaderLayer: Layer.Layer<ShellSnapshotLoader> = Layer.succeed(
   ShellSnapshotLoader,
-  never,
-  HttpClient.HttpClient
-> = Layer.effect(
-  ShellSnapshotLoader,
-  Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
-    // Resolve the DPoP signer optionally: it is only needed for relay/DPoP
-    // connections, so the loader must not hard-require it.
-    const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-    return ShellSnapshotLoader.of({
-      load: (prepared: PreparedConnection) =>
-        fetchEnvironmentShellSnapshot({ prepared, signer }).pipe(
-          Effect.map(Option.some<OrchestrationShellSnapshot>),
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-          Effect.catchCause((cause) =>
-            Effect.logWarning(
-              "Could not load the environment shell snapshot over HTTP; using the socket snapshot instead.",
-            ).pipe(
-              Effect.annotateLogs({ cause: Cause.pretty(cause) }),
-              Effect.as(Option.none<OrchestrationShellSnapshot>()),
-            ),
-          ),
-        ),
-    });
+  ShellSnapshotLoader.of({
+    load: (_prepared: PreparedConnection) => Effect.succeed(Option.none<OrchestrationShellSnapshot>()),
   }),
 );

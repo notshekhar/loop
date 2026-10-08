@@ -32,6 +32,8 @@ export interface QueuedTurn {
   readonly attachmentCount: number;
   readonly queuedAt: string;
   readonly send: () => Promise<void>;
+  /** Stop the turn it is waiting behind, on whichever host the session lives. */
+  readonly interrupt: () => Promise<void>;
 }
 
 interface QueuedTurnsState {

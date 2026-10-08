@@ -26,11 +26,24 @@ export interface AddedProject {
   readonly addedAt: number;
 }
 
-const added = new Map<string, AddedProject>();
+/**
+ * Per host: a folder added on one machine is a path on THAT machine's disk,
+ * and showing it under another host would offer a project that is not there.
+ */
+const addedByHost = new Map<string, Map<string, AddedProject>>();
+
+function addedOn(hostId: string): Map<string, AddedProject> {
+  let added = addedByHost.get(hostId);
+  if (!added) {
+    added = new Map();
+    addedByHost.set(hostId, added);
+  }
+  return added;
+}
 const listeners = new Set<() => void>();
 
-export function rememberAddedProject(id: string, folder: string): void {
-  added.set(id, { id, folder, addedAt: Date.now() });
+export function rememberAddedProject(hostId: string, id: string, folder: string): void {
+  addedOn(hostId).set(id, { id, folder, addedAt: Date.now() });
   for (const listener of listeners) listener();
 }
 
@@ -40,7 +53,11 @@ export function rememberAddedProject(id: string, folder: string): void {
  * Claimed ones are dropped as they are found, so this stays small and the
  * hand-off happens exactly once.
  */
-export function listUnclaimedProjects(claimedFolders: ReadonlySet<string>): readonly AddedProject[] {
+export function listUnclaimedProjects(
+  hostId: string,
+  claimedFolders: ReadonlySet<string>,
+): readonly AddedProject[] {
+  const added = addedOn(hostId);
   const unclaimed: AddedProject[] = [];
   for (const project of added.values()) {
     if (claimedFolders.has(project.folder)) added.delete(project.id);
@@ -50,8 +67,8 @@ export function listUnclaimedProjects(claimedFolders: ReadonlySet<string>): read
 }
 
 /** Forget an added folder — the removal path for one no session ever claimed. */
-export function forgetAddedProject(id: string): void {
-  if (added.delete(id)) {
+export function forgetAddedProject(hostId: string, id: string): void {
+  if (addedOn(hostId).delete(id)) {
     for (const listener of listeners) listener();
   }
 }

@@ -608,3 +608,96 @@ describe("the packed web UI", () => {
         expect(() => packWebApp(mkdtempSync(join(tmpdir(), "loop-web-empty-")))).toThrow("index.html");
     });
 });
+
+// How another device adds this machine (serve-pairing.ts): the same three
+// steps the shared web/mobile client runtime takes.
+describe("pairing another device", () => {
+    let handle: ServeHandle;
+    let base: string;
+    beforeAll(() => {
+        handle = startWebServer({ port: 0, webAppDir: null, version: "9.9.9" });
+        base = `http://127.0.0.1:${handle.port}`;
+    });
+    afterAll(() => handle.stop());
+
+    const exchange = (subjectToken: string) =>
+        fetch(`${base}/oauth/token`, {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+                subject_token: subjectToken,
+                subject_token_type: "urn:loop:params:oauth:token-type:bootstrap",
+                requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            }),
+        });
+
+    test("says who it is without the token, and the same id every time", async () => {
+        const first = await (await fetch(`${base}/.well-known/loop/environment`)).json();
+        const second = await (await fetch(`${base}/.well-known/loop/environment`)).json();
+        expect(first.environmentId).toMatch(/^loop-[0-9a-f]{24}$/);
+        expect(second.environmentId).toBe(first.environmentId);
+        expect(first.serverVersion).toBe("9.9.9");
+        // One-way: the public id never contains the token.
+        expect(JSON.stringify(first)).not.toContain(handle.token);
+    });
+
+    test("trades the pairing token for an access token, and refuses a wrong one", async () => {
+        const ok = await exchange(handle.token);
+        expect(ok.status).toBe(200);
+        const body = await ok.json();
+        expect(body.token_type).toBe("Bearer");
+        expect(body.access_token).toBe(handle.token);
+
+        const bad = await exchange("not-the-token");
+        expect(bad.status).toBe(400);
+        expect((await bad.json()).error).toBe("invalid_grant");
+    });
+
+    test("a ticket opens one socket, once", async () => {
+        const issue = await fetch(`${base}/api/auth/websocket-ticket`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${handle.token}` },
+        });
+        expect(issue.status).toBe(200);
+        const { ticket } = await issue.json();
+        expect(ticket).not.toContain(handle.token);
+
+        const open = (t: string) =>
+            new Promise<"open" | "refused">((resolve) => {
+                const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/ws?wsTicket=${t}`);
+                ws.onopen = () => {
+                    ws.close();
+                    resolve("open");
+                };
+                ws.onerror = () => resolve("refused");
+            });
+        expect(await open(ticket)).toBe("open");
+        expect(await open(ticket)).toBe("refused");
+    });
+
+    test("issues no ticket and reports no session without the token", async () => {
+        const issue = await fetch(`${base}/api/auth/websocket-ticket`, { method: "POST" });
+        expect(issue.status).toBe(401);
+        const session = await (await fetch(`${base}/api/auth/session`)).json();
+        expect(session.authenticated).toBe(false);
+        const authed = await (
+            await fetch(`${base}/api/auth/session`, { headers: { authorization: `Bearer ${handle.token}` } })
+        ).json();
+        expect(authed.authenticated).toBe(true);
+    });
+
+    test("answers a browser's preflight, so a tab on another origin can pair", async () => {
+        const res = await fetch(`${base}/api/auth/websocket-ticket`, { method: "OPTIONS" });
+        expect(res.status).toBe(204);
+        expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    });
+
+    test("allows whatever headers the client's preflight asks for (tracing included)", async () => {
+        const res = await fetch(`${base}/.well-known/loop/environment`, {
+            method: "OPTIONS",
+            headers: { "access-control-request-headers": "traceparent, authorization" },
+        });
+        expect(res.headers.get("access-control-allow-headers")).toBe("traceparent, authorization");
+    });
+});

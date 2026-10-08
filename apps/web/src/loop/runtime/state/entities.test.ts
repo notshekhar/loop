@@ -270,6 +270,38 @@ describe("environment entity projections", () => {
     expect(harness.registry.get(threadAtom)).toBe(thread);
   });
 
+  it("keeps thread identities when a rebuilt shell repeats them as new objects", () => {
+    // loop's shell handler rebuilds the whole snapshot from `session.list`, so
+    // every thread arrives as a fresh object even when nothing about it moved.
+    const harness = makeHarness();
+    const listAtom = harness.threadShells.threadShellsAtom;
+    const otherAtom = harness.threadShells.threadShellAtom({
+      environmentId: ENVIRONMENT_ID,
+      threadId: OTHER_THREAD_ID,
+    });
+    const list = harness.registry.get(listAtom);
+    const other = harness.registry.get(otherAtom);
+
+    const rebuilt = (threads: OrchestrationShellSnapshot["threads"]) =>
+      harness.registry.set(
+        harness.shellStateAtom,
+        AsyncResult.success(shellState({ ...SNAPSHOT, threads: structuredClone(threads) })),
+      );
+
+    rebuilt(SNAPSHOT.threads);
+    expect(harness.registry.get(listAtom)).toBe(list);
+
+    rebuilt(
+      SNAPSHOT.threads.map((thread) =>
+        thread.id === THREAD_ID ? { ...thread, title: "Renamed" } : thread,
+      ),
+    );
+    const next = harness.registry.get(listAtom);
+    expect(next).not.toBe(list);
+    expect(next.find((thread) => thread.id === THREAD_ID)?.title).toBe("Renamed");
+    expect(harness.registry.get(otherAtom)).toBe(other);
+  });
+
   it("preserves project-scoped thread collections across unrelated project updates", () => {
     const harness = makeHarness();
     const projectRef = {

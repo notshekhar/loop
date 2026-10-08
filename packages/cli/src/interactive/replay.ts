@@ -47,14 +47,27 @@ export function renderSessionBranch(
     modelId: string,
     todoPanel?: TodoPanel,
 ): void {
-    const path = session.getBranch();
+    renderBranchEntries(session.getBranch(), session.id, history, modelId, todoPanel);
+}
+
+/**
+ * The same replay from a branch's entries alone — what a remote host's
+ * `session.history` returns, where there is no local Session to read.
+ */
+export function renderBranchEntries(
+    path: Entry[],
+    sessionId: string,
+    history: ChatHistory,
+    modelId: string,
+    todoPanel?: TodoPanel,
+): void {
     // Branch navigation restores the branch's own latest checklist (or clears
     // the panel on a branch that never had one). The core map seeds alongside
     // the panel so the staleness nudger and RPC readers agree with the screen —
     // after a process restart the map would otherwise be empty.
     const todos = latestTodos(path) ?? [];
     todoPanel?.setItems(todos);
-    seedSessionTodos(session.id, todos);
+    seedSessionTodos(sessionId, todos);
 
     let latestCompact: Extract<Entry, { type: "compact" }> | undefined;
     for (const e of path) {

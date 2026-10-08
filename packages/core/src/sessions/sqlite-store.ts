@@ -117,19 +117,40 @@ export class SessionStore {
      * `active` is the default because archiving that does not remove the
      * session from the list it was cluttering has achieved nothing.
      */
-    listSessions(cwd?: string, scope: SessionScope = "active"): SessionRecord[] {
+    listSessions(cwd?: string, scope: SessionScope = "active", page?: SessionPage): SessionRecord[] {
         const where: string[] = [];
         if (cwd !== undefined) where.push("s.cwd = ?");
+        // Ids are ULIDs; anything else is dropped rather than interpolated.
+        const ids = page?.ids?.filter((id) => /^[0-9A-Za-z_-]{1,64}$/.test(id));
+        if (ids) where.push(ids.length ? `s.pub_id IN (${ids.map((id) => `'${id}'`).join(",")})` : "0");
         if (scope === "archived") where.push("s.archived_at IS NOT NULL");
         else if (scope === "active") where.push("s.archived_at IS NULL");
         const sql = `SELECT s.*, ${FIRST_USER_PAYLOAD}, ${LAST_MODEL} FROM sessions s
                      ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
-                     ORDER BY ${scope === "archived" ? "s.archived_at" : "s.updated_at"} DESC`;
+                     ORDER BY ${scope === "archived" ? "s.archived_at" : "s.updated_at"} DESC, s.id DESC
+                     ${pageClause(page)}`;
         const rows =
             cwd !== undefined
                 ? this.db.query<SessionRow, [string]>(sql).all(cwd)
                 : this.db.query<SessionRow, []>(sql).all();
         return rows.map(toRecord);
+    }
+
+    /**
+     * Every folder that has a session in `scope`, newest first, with how many
+     * and when they span. What a paged list still needs whole: a project with
+     * only old sessions must not vanish from the sidebar because none of them
+     * made the first page.
+     */
+    listSessionFolders(scope: SessionScope = "active"): SessionFolder[] {
+        const where =
+            scope === "archived" ? "WHERE archived_at IS NOT NULL" : scope === "active" ? "WHERE archived_at IS NULL" : "";
+        return this.db
+            .query<SessionFolder, []>(
+                `SELECT cwd, COUNT(*) AS count, MIN(created_at) AS createdAt, MAX(updated_at) AS updatedAt
+                 FROM sessions ${where} GROUP BY cwd ORDER BY updatedAt DESC`,
+            )
+            .all();
     }
 
     /**
@@ -282,4 +303,28 @@ export function getSessionStore(): SessionStore {
     const db = getDb();
     if (!cached || cached.db !== db) cached = { db, store: new SessionStore(db) };
     return cached.store;
+}
+
+/** A slice of a newest-first list. Absent = everything (every older caller). */
+export interface SessionPage {
+    readonly limit?: number;
+    readonly offset?: number;
+    /** Only these sessions (by public id) — what a client has open. */
+    readonly ids?: readonly string[];
+}
+
+export interface SessionFolder {
+    readonly cwd: string;
+    readonly count: number;
+    readonly createdAt: number;
+    readonly updatedAt: number;
+}
+
+/** LIMIT/OFFSET from validated integers only — they are interpolated, not bound. */
+function pageClause(page: SessionPage | undefined): string {
+    const limit = page?.limit;
+    const offset = page?.offset;
+    const ok = (n: number | undefined): n is number => n !== undefined && Number.isInteger(n) && n >= 0;
+    if (!ok(limit)) return ok(offset) && offset > 0 ? `LIMIT -1 OFFSET ${offset}` : "";
+    return `LIMIT ${limit}${ok(offset) && offset > 0 ? ` OFFSET ${offset}` : ""}`;
 }

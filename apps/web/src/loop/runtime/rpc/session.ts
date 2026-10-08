@@ -23,6 +23,7 @@ import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcServer from "effect/rpc/RpcServer";
 
 import { makeHandlers } from "../../handlers/index.ts";
+import { createSocketHost, defaultLoopHost, type LoopHost } from "../../transport.ts";
 import type { WsRpcProtocolClient } from "./protocol.ts";
 import type {
   ConnectionAttemptError,
@@ -90,8 +91,39 @@ const makeClient = () =>
     onFromClient: () => Effect.void,
   });
 
+/**
+ * Which loop host an environment is.
+ *
+ * The primary environment is the page's own loop: the desktop's `loop rpc`, or
+ * the `loop serve` that served this page. Any other environment is another
+ * machine, dialed at the socket URL its connection was prepared with (the
+ * token rides in that URL). A shell with its own idea — the mobile app, which
+ * has no page host at all — provides its own resolver.
+ */
+export class LoopHostResolver extends Context.Reference<{
+  readonly resolve: (connection: PreparedConnection) => Effect.Effect<LoopHost, never, Scope.Scope>;
+}>("@loop/runtime/rpc/LoopHostResolver", {
+  defaultValue: () => ({
+    resolve: (connection) =>
+      connection.target._tag === "PrimaryConnectionTarget"
+        ? Effect.succeed(defaultLoopHost)
+        : Effect.acquireRelease(
+            // The URL carries a one-use ticket, so the socket does not redial
+            // itself: its close ends this session and the supervisor prepares
+            // the connection again, which mints a fresh ticket.
+            Effect.sync(() =>
+              createSocketHost(connection.environmentId, connection.socketUrl, { reconnect: false }),
+            ),
+            (host) => Effect.sync(() => host.close()),
+          ),
+  }),
+}) {}
+
 const makeInProcessClient = Effect.fnUntraced(function* (connection: PreparedConnection) {
+  const resolver = yield* LoopHostResolver;
+  const host = yield* resolver.resolve(connection);
   const handlers = makeHandlers({
+    host,
     environmentId: connection.environmentId,
     label: connection.label,
     // Replaced by the folder loop reports from `server.info`; only used when
@@ -112,7 +144,7 @@ const makeInProcessClient = Effect.fnUntraced(function* (connection: PreparedCon
       return server.write(0, message);
     },
   });
-  return client.client as WsRpcProtocolClient;
+  return { client: client.client as WsRpcProtocolClient, host };
 });
 
 export const make = Effect.gen(function* () {
@@ -123,10 +155,29 @@ export const make = Effect.gen(function* () {
 
     const connected = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
-    const client = yield* makeInProcessClient(connection);
-    // There is no socket to open, so the connection is live the moment the
-    // handlers are wired. The supervisor above still waits on this deferred.
+    const { client, host } = yield* makeInProcessClient(connection);
+    // The handlers are live the moment they are wired; the supervisor above
+    // still waits on this deferred.
     yield* Deferred.succeed(connected, undefined);
+    // A host reached over its own socket can drop. Report that as this
+    // session closing, so the supervisor reconnects — with a fresh ticket —
+    // instead of the UI talking to a socket that is gone. The page's own
+    // host (desktop bridge, same-origin serve) recovers by itself.
+    if (host !== defaultLoopHost) {
+      const unwatch = host.onConnectionChange((state) => {
+        if (state !== "closed") return;
+        Deferred.doneUnsafe(
+          disconnected,
+          Effect.fail(
+            new ConnectionTransientErrorClass({
+              reason: "transport",
+              detail: `The connection to ${connection.label} closed.`,
+            }),
+          ),
+        );
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(unwatch));
+    }
     const initialConfig = yield* Effect.cached(
       client[WS_METHODS.serverGetConfig]({}).pipe(
         Effect.mapError(mapSessionRpcError),

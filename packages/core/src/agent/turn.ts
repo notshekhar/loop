@@ -4,6 +4,7 @@
  * per-step accrual it shares with runSubagent live in model-call.ts.
  */
 import { streamText, isStepCount, type ModelMessage } from "ai";
+import { ProviderExecutedTail } from "./provider-executed-tail";
 import { toolInputDeltaEvent, toolInputStartEvent, type TurnEmitter } from "./events";
 import { getModel, isNativeAgentProvider, parseModelId, type NativeAgentTurnContext } from "../providers";
 import { getCatalog } from "../catalog";
@@ -1074,6 +1075,9 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
     // partial output and estimate its cost.
     let textSinceStep = "";
     let reasoningSinceStep = "";
+    // The same tail in stream order, tools included — for providers that run
+    // the tools themselves, where one step is the whole turn (see the class).
+    const providerTail = new ProviderExecutedTail();
     // Wall clock per reasoning part (start→end), in stream order — stamped
     // onto the step's assistant entry as reasoningMs so "Thought for Xs"
     // survives resume. Consumed by persistStep in the same order.
@@ -1129,11 +1133,13 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
                     case "text-delta":
                         assistantText += part.text;
                         textSinceStep += part.text;
+                        providerTail.text(part.text);
                         emitter.emit("text-delta", part.text);
                         break;
                     case "reasoning-delta": {
                         const rt = (part as { text: string }).text;
                         reasoningSinceStep += rt;
+                        providerTail.reasoning(rt);
                         emitter.emit("reasoning-delta", rt);
                         break;
                     }
@@ -1161,9 +1167,11 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
                         break;
                     case "tool-call":
                         if (part.toolName) toolsUsed.push(part.toolName);
+                        providerTail.toolCall(part);
                         emitter.emit("tool-call", part);
                         break;
                     case "tool-result":
+                        providerTail.toolResult(part);
                         emitter.emit("tool-result", part);
                         break;
                     case "tool-error": {
@@ -1173,6 +1181,7 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
                         // another approach — we just surface it in the UI (red) instead
                         // of leaving the tool box spinning forever.
                         const e = part as { toolCallId?: string; toolName?: string; error?: unknown };
+                        providerTail.toolError(part);
                         emitter.emit("tool-error", { toolCallId: e.toolCallId, toolName: e.toolName, error: e.error });
                         break;
                     }
@@ -1205,6 +1214,7 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
                         // double-counting finished text.
                         textSinceStep = "";
                         reasoningSinceStep = "";
+                        providerTail.reset();
                         // Counts across attempts: the resume budget is the
                         // remainder of maxSteps, never a fresh allowance.
                         stepsDone++;
@@ -1370,7 +1380,10 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
     const tailParts: Array<{ type: "reasoning"; text: string } | { type: "text"; text: string }> = [];
     if (reasoningSinceStep.trim() !== "") tailParts.push({ type: "reasoning", text: reasoningSinceStep });
     if (textSinceStep.trim() !== "") tailParts.push({ type: "text", text: textSinceStep });
-    const streamedTail = tailParts.length > 0;
+    // A native agent's interrupted step keeps the tools that completed in it,
+    // in place; every other provider keeps text and reasoning only.
+    const nativeTail = providerTail.content();
+    const streamedTail = tailParts.length > 0 || nativeTail !== undefined;
 
     if (aborted) {
         // Estimate the interrupted in-flight request's usage — the SDK reports
@@ -1397,15 +1410,17 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
         // Persist the interrupted turn so the transcript AND the next turn's
         // context both reflect it. `interrupted: true` makes toModelMessages
         // append a note (and never silently drop an empty aborted turn). Only
-        // text/usage here — never tool-call parts (those persist on finished
-        // steps only), so there's no orphaned tool_use to break the next turn.
+        // text/usage here — never a tool call without its result, so there's
+        // no orphaned tool_use to break the next turn. A native agent's
+        // completed calls are the exception (`nativeTail`): its provider ran
+        // them, each already has its result, and its one step is the turn.
         if (streamedTail || !persistedAnyMessage) {
             const inFlight = timing.closeInFlight();
             const interruptedEntry = {
                 type: "message" as const,
                 ts: Date.now(),
                 role: "assistant" as const,
-                content: tailParts.length > 0 ? tailParts : "",
+                content: nativeTail ?? (tailParts.length > 0 ? tailParts : ""),
                 interrupted: true,
                 ...(inFlight ? { timing: inFlight } : {}),
                 ...(est ? { usage: stampUsageCost(modelId, est), model: modelId } : {}),

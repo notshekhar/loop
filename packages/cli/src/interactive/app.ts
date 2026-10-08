@@ -93,6 +93,7 @@ import { createInputHandler } from "./input-handler";
 import { isEventTraceEnabled, setEventTraceSink, toggleEventTrace } from "./debug-log";
 import { forwardTo, makeStateView, SlotManager, type SharedState } from "./slots";
 import { createSessionRoster, type SessionRoster } from "./session-roster";
+import { createRemoteSessions, type RemoteSessions } from "./remote-sessions";
 import { createStatusLineRefresher } from "./status-line-refresh";
 import { createScrollbackFocus } from "./scrollback-focus";
 import { scrollTopFor } from "./transcript-scroll";
@@ -519,6 +520,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     // Built once the command context exists (below); everything that reaches
     // it before then is a closure that only runs after startup.
     let roster!: SessionRoster;
+    let remoteSessions: RemoteSessions | null = null;
 
     // Agent-status bus: the semantic working/blocked/idle state of this pane.
     // Fed by the two seams that already see everything — the working
@@ -765,8 +767,11 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     const selectorHost = { tui, showSelector };
     const selectOnce = (items: SelectItem[], title?: string, opts?: { initialIndex?: number }) =>
         selectOnceShared(selectorHost, items, title, opts);
-    const searchOnce = (items: SelectItem[], title?: string, opts?: { initialIndex?: number }) =>
-        searchSelectOnceShared(selectorHost, items, title, opts);
+    const searchOnce = (
+        items: SelectItem[],
+        title?: string,
+        opts?: { initialIndex?: number; loadMore?: () => Promise<SelectItem[]> },
+    ) => searchSelectOnceShared(selectorHost, items, title, opts);
     const promptOnce = (label?: string, initial?: string) =>
         promptOnceShared(selectorHost, editorTheme, label, initial);
     const toggleOnce = (values: string[], initial: Set<string>, title?: string) =>
@@ -915,6 +920,8 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
 
     const cleanExit = (code = 0) => {
         stopTicker();
+        // Sockets to other machines, and /rc's server if it is on.
+        remoteSessions?.dispose();
         // BEFORE tui.stop(): the exit path renders this frame one last time,
         // without a viewport, and that render is what lands in the user's
         // scrollback. A dock still mounted would print its rows there — a band
@@ -1079,6 +1086,17 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         indicator: { show: (m) => workingIndicator.showWorking(m), hide: () => workingIndicator.hideWorking() },
         refreshShells,
     });
+    remoteSessions = createRemoteSessions({
+        slots,
+        roster,
+        deps,
+        ctx,
+        commands,
+        tui,
+        ask: (questions, o) => askBridge.ask(questions, o),
+        version: opts.version,
+    });
+    deps.remote = remoteSessions;
     tui.addInputListener(createInputHandler(state, deps, ctx));
     // The editor submits to whichever session is on screen.
     editor.onSubmit = (raw) => roster.runnerFor(slots.foreground)(raw);

@@ -19,12 +19,18 @@ import {
     startStdioServer,
     startWebServer,
     stopSocketServer,
+    tailnetIdentity,
+    terminalQr,
 } from "@notshekhar/loop-core";
 import type { ProviderId } from "@notshekhar/loop-core";
 import { readStdinAll, readStdinLine, type Args } from "./args";
 import type { OutputFormat } from "./spec";
 import { runPrint } from "./print";
 import { openBrowser } from "./open-browser";
+
+declare const __APP_VERSION__: string;
+/** Same source as `loop --version` (cli.ts): injected at build, "0.0.0" from source. */
+const APP_VERSION = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0";
 
 const UPGRADE_URL = `https://raw.githubusercontent.com/${REPO_SLUG}/main/install.sh`;
 const UPGRADE_URL_PS1 = `https://raw.githubusercontent.com/${REPO_SLUG}/main/install.ps1`;
@@ -322,7 +328,7 @@ export function cmdServe(args: Args): void {
     let token: string;
     let stop: () => void;
     try {
-        ({ url, hostname, networkUrls, port: boundPort, token, stop } = startWebServer({ host, port, remoteTerminal: Boolean(args.flags.terminal) }));
+        ({ url, hostname, networkUrls, port: boundPort, token, stop } = startWebServer({ host, port, remoteTerminal: Boolean(args.flags.terminal), version: APP_VERSION }));
     } catch (err) {
         console.error((err as Error).message);
         process.exitCode = 1;
@@ -355,6 +361,15 @@ export function cmdServe(args: Args): void {
             console.log(`            (not reachable yet — restart without --host to expose)`);
         }
     }
+    // The tailnet name works from anywhere the phone is, not just this Wi-Fi —
+    // but only when the bind faces more than loopback.
+    const tailnet = isLoopbackHost(hostname) ? null : tailnetIdentity();
+    const tailnetUrl = tailnet?.dnsName ? `http://${tailnet.dnsName}:${boundPort}/?token=${token}` : null;
+    if (tailnetUrl) console.log(`  tailnet   ${tailnetUrl}`);
+    // The link a phone pairs with (apps/mobile): scan this, or paste the URL.
+    const pairingUrl = tailnetUrl ?? networkUrls[0] ?? url;
+    console.log(`\nPair a phone — scan with the loop app (${tailnetUrl ? "tailnet" : networkUrls[0] ? "LAN" : "this machine only"}):\n`);
+    console.log(terminalQr(pairingUrl));
     console.log(``);
     console.log(`WARNING: anyone with this URL fully controls this machine (the agent runs`);
     console.log(`shell commands as you). The token is the only lock — do not share or log it.`);

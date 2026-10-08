@@ -664,6 +664,7 @@ export const RelayJwtSubjectTokenType = "urn:ietf:params:oauth:token-type:jwt" a
 export const RelayAccessTokenType = "urn:ietf:params:oauth:token-type:access_token" as const;
 export const RelayPublicClientId = Schema.Literals(["loop-mobile", "loop-web"]);
 export type RelayPublicClientId = typeof RelayPublicClientId.Type;
+export const RelayMobileClientId = "loop-mobile" as const;
 export const RelayWebClientId = "loop-web" as const;
 
 export const RelayDpopAccessTokenRequest = Schema.Struct({

@@ -1,6 +1,10 @@
 # Draft: Remote control — one host, many clients
 
-**Status: PLANNED, not started** (2026-10-06). Picked up after the `loop serve`
+**Status: in progress** (2026-10-08). Done: pairing (`serve-pairing.ts`), the
+phone and desktop as clients, and in the TUI `/hosts` (the TUI as a client —
+step 4, over the pairing protocol rather than `loop attach <url>`) and `/rc`
+(step 2, minus the `rc on` chip). Not done: step 1, the host core — `/rc`
+still serves its own RpcServer, not the TUI's live slots. Picked up after the `loop serve`
 web app reaches desktop parity — the browser is the first client, and it should
 be the desktop UI, not the old single-file page.
 

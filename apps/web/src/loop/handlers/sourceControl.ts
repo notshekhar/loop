@@ -15,7 +15,7 @@ import {
 } from "@loop/contracts";
 import * as Effect from "effect/Effect";
 
-import { loopSourceControl } from "../transport.ts";
+import { defaultLoopHost, type LoopHost } from "../transport.ts";
 
 const unavailable = (operation: string) =>
   new SourceControlRepositoryError({
@@ -29,8 +29,9 @@ const failed = (operation: string, detail: string) =>
 
 export const lookupRepository = Effect.fnUntraced(function* (
   input: SourceControlRepositoryLookupInput,
+  host: LoopHost = defaultLoopHost,
 ) {
-  const bridge = loopSourceControl();
+  const bridge = host.sourceControl();
   if (!bridge) return yield* Effect.fail(unavailable("lookupRepository"));
 
   const result = yield* Effect.promise(() => bridge.lookup(input.repository));
@@ -44,8 +45,9 @@ export const lookupRepository = Effect.fnUntraced(function* (
 
 export const cloneRepository = Effect.fnUntraced(function* (
   input: SourceControlCloneRepositoryInput,
+  host: LoopHost = defaultLoopHost,
 ) {
-  const bridge = loopSourceControl();
+  const bridge = host.sourceControl();
   if (!bridge) return yield* Effect.fail(unavailable("cloneRepository"));
 
   const result = yield* Effect.promise(() =>
@@ -66,8 +68,9 @@ export const cloneRepository = Effect.fnUntraced(function* (
 
 export const publishRepository = Effect.fnUntraced(function* (
   input: SourceControlPublishRepositoryInput,
+  host: LoopHost = defaultLoopHost,
 ) {
-  const bridge = loopSourceControl();
+  const bridge = host.sourceControl();
   if (!bridge) return yield* Effect.fail(unavailable("publishRepository"));
 
   const result = yield* Effect.promise(() =>

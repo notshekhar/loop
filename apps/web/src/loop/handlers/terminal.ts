@@ -22,7 +22,12 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { loopPty, type TerminalOutput, type TerminalSnapshot } from "../transport.ts";
+import {
+  defaultLoopHost,
+  type LoopHost,
+  type TerminalOutput,
+  type TerminalSnapshot,
+} from "../transport.ts";
 
 const decodeSnapshot = Schema.decodeUnknownEffect(TerminalSessionSnapshotSchema);
 
@@ -41,15 +46,18 @@ const malformed = () =>
 const toContract = (snapshot: TerminalSnapshot) =>
   decodeSnapshot(snapshot).pipe(Effect.mapError(malformed));
 
-export const openTerminal = Effect.fnUntraced(function* (input: {
-  readonly threadId: string;
-  readonly terminalId: string;
-  readonly cwd: string;
-  readonly worktreePath?: string | null | undefined;
-  readonly cols?: number | undefined;
-  readonly rows?: number | undefined;
-}) {
-  const pty = loopPty();
+export const openTerminal = Effect.fnUntraced(function* (
+  input: {
+    readonly threadId: string;
+    readonly terminalId: string;
+    readonly cwd: string;
+    readonly worktreePath?: string | null | undefined;
+    readonly cols?: number | undefined;
+    readonly rows?: number | undefined;
+  },
+  host: LoopHost = defaultLoopHost,
+) {
+  const pty = host.pty();
   if (!pty) return yield* Effect.fail(unavailable());
   const snapshot = yield* Effect.promise(() =>
     pty.open({
@@ -64,51 +72,65 @@ export const openTerminal = Effect.fnUntraced(function* (input: {
   return yield* toContract(snapshot);
 });
 
-export const writeTerminal = Effect.fnUntraced(function* (input: {
-  readonly threadId: string;
-  readonly terminalId: string;
-  readonly data: string;
-}) {
-  const pty = loopPty();
+export const writeTerminal = Effect.fnUntraced(function* (
+  input: {
+    readonly threadId: string;
+    readonly terminalId: string;
+    readonly data: string;
+  },
+  host: LoopHost = defaultLoopHost,
+) {
+  const pty = host.pty();
   if (!pty) return yield* Effect.fail(unavailable());
   yield* Effect.promise(() => pty.write(input.threadId, input.terminalId, input.data));
 });
 
-export const resizeTerminal = Effect.fnUntraced(function* (input: {
-  readonly threadId: string;
-  readonly terminalId: string;
-  readonly cols: number;
-  readonly rows: number;
-}) {
-  const pty = loopPty();
+export const resizeTerminal = Effect.fnUntraced(function* (
+  input: {
+    readonly threadId: string;
+    readonly terminalId: string;
+    readonly cols: number;
+    readonly rows: number;
+  },
+  host: LoopHost = defaultLoopHost,
+) {
+  const pty = host.pty();
   if (!pty) return yield* Effect.fail(unavailable());
   yield* Effect.promise(() =>
     pty.resize(input.threadId, input.terminalId, input.cols, input.rows),
   );
 });
 
-export const clearTerminal = Effect.fnUntraced(function* (input: {
-  readonly threadId: string;
-  readonly terminalId: string;
-}) {
-  const pty = loopPty();
+export const clearTerminal = Effect.fnUntraced(function* (
+  input: {
+    readonly threadId: string;
+    readonly terminalId: string;
+  },
+  host: LoopHost = defaultLoopHost,
+) {
+  const pty = host.pty();
   if (!pty) return yield* Effect.fail(unavailable());
   yield* Effect.promise(() => pty.clear(input.threadId, input.terminalId));
 });
 
 /** An absent terminalId means every terminal of the thread; see the contract. */
-export const closeTerminal = Effect.fnUntraced(function* (input: {
-  readonly threadId: string;
-  readonly terminalId?: string | undefined;
-}) {
-  const pty = loopPty();
+export const closeTerminal = Effect.fnUntraced(function* (
+  input: {
+    readonly threadId: string;
+    readonly terminalId?: string | undefined;
+  },
+  host: LoopHost = defaultLoopHost,
+) {
+  const pty = host.pty();
   if (!pty) return yield* Effect.fail(unavailable());
   yield* Effect.promise(() => pty.close(input.threadId, input.terminalId));
 });
 
 /** Output from every terminal, for the panel's global subscription. */
-export function terminalEventStream(): Stream.Stream<TerminalEvent, EnvironmentAuthorizationError> {
-  const pty = loopPty();
+export function terminalEventStream(
+  host: LoopHost = defaultLoopHost,
+): Stream.Stream<TerminalEvent, EnvironmentAuthorizationError> {
+  const pty = host.pty();
   // Idle rather than fail: this is opened when the panel mounts, not by an
   // action, and failing a connect-time subscription is how you lose a render.
   if (!pty) return Stream.never;
@@ -131,14 +153,17 @@ export function terminalEventStream(): Stream.Stream<TerminalEvent, EnvironmentA
  * Ordering is the whole contract here — a client that received output before
  * the snapshot would paint the new bytes and then wipe them with the history.
  */
-export function attachTerminal(input: {
-  readonly threadId: string;
-  readonly terminalId: string;
-  readonly cwd?: string | undefined;
-  readonly cols?: number | undefined;
-  readonly rows?: number | undefined;
-}): Stream.Stream<TerminalAttachStreamEvent, EnvironmentAuthorizationError> {
-  const pty = loopPty();
+export function attachTerminal(
+  input: {
+    readonly threadId: string;
+    readonly terminalId: string;
+    readonly cwd?: string | undefined;
+    readonly cols?: number | undefined;
+    readonly rows?: number | undefined;
+  },
+  host: LoopHost = defaultLoopHost,
+): Stream.Stream<TerminalAttachStreamEvent, EnvironmentAuthorizationError> {
+  const pty = host.pty();
   if (!pty) return Stream.fail(unavailable());
 
   return Stream.callback<TerminalAttachStreamEvent, EnvironmentAuthorizationError>((queue) =>

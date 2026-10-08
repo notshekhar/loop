@@ -1,10 +1,8 @@
 import type { OrchestrationThreadDetailSnapshot, ThreadId } from "@loop/contracts";
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { HttpClient } from "effect/http";
 
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
@@ -70,45 +68,17 @@ export class ThreadSnapshotLoader extends Context.Service<
   }
 >()("@loop/runtime/state/threadSnapshotHttp/ThreadSnapshotLoader") {}
 
-export const threadSnapshotLoaderLayer: Layer.Layer<
+/**
+ * loop's hosts serve no HTTP snapshot endpoint: the snapshot is built from
+ * loop's own RPC by the handlers this client runs (handlers/), and arrives as
+ * the subscription's first frame. So the loader declines at once rather than
+ * asking — asking cost every connect a failed, CORS-refused request and a
+ * warning before the same fallback. `fetchEnvironment*Snapshot` stays for an
+ * upstream-shaped server.
+ */
+export const threadSnapshotLoaderLayer: Layer.Layer<ThreadSnapshotLoader> = Layer.succeed(
   ThreadSnapshotLoader,
-  never,
-  HttpClient.HttpClient
-> = Layer.effect(
-  ThreadSnapshotLoader,
-  Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
-    // Resolve the DPoP signer optionally: it is only needed for relay/DPoP
-    // connections, so the loader must not hard-require it (bearer/primary
-    // connections work without one).
-    const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-    return ThreadSnapshotLoader.of({
-      load: (prepared: PreparedConnection, threadId: ThreadId) =>
-        fetchEnvironmentThreadSnapshot({ prepared, threadId, signer }).pipe(
-          Effect.map(Option.some<OrchestrationThreadDetailSnapshot>),
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-          // A genuinely missing thread (404) is expected — the socket
-          // subscription is the source of truth for thread existence and will
-          // surface the deletion — so don't treat it as an error worth warning
-          // about; just defer to the socket path.
-          Effect.catchTags({
-            EnvironmentResourceNotFoundError: () =>
-              Effect.logDebug(
-                "Thread snapshot not found over HTTP; deferring to the socket subscription.",
-              ).pipe(
-                Effect.annotateLogs({ threadId }),
-                Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
-              ),
-          }),
-          Effect.catchCause((cause) =>
-            Effect.logWarning(
-              "Could not load the thread snapshot over HTTP; using the socket snapshot instead.",
-            ).pipe(
-              Effect.annotateLogs({ threadId, cause: Cause.pretty(cause) }),
-              Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
-            ),
-          ),
-        ),
-    });
+  ThreadSnapshotLoader.of({
+    load: (_prepared: PreparedConnection, _threadId: ThreadId) => Effect.succeed(Option.none<OrchestrationThreadDetailSnapshot>()),
   }),
 );

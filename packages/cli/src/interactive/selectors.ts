@@ -70,27 +70,41 @@ function filterItems(items: SelectItem[], query: string): SelectItem[] {
  * description), arrows navigate the filtered set, Enter selects, Esc cancels.
  * For long lists (e.g. an OpenRouter model picker).
  */
+/**
+ * The next page of a long list, for infinite scroll: more rows, or an empty
+ * array once there are none. Called as the cursor nears the end, and while a
+ * search has too few matches to fill the list.
+ */
+export type LoadMoreItems = () => Promise<SelectItem[]>;
+
 export function searchSelectOnce(
     host: SelectorHost,
-    items: SelectItem[],
+    initialItems: SelectItem[],
     title?: string,
-    opts?: { initialIndex?: number },
+    opts?: { initialIndex?: number; loadMore?: LoadMoreItems },
 ): Promise<SelectItem | null> {
+    const items = [...initialItems];
     return new Promise((resolve) => {
         if (!items.length) {
             resolve(null);
             return;
         }
-        const list = new SelectList(items, Math.min(items.length, 10), getSelectListTheme());
+        // Sized for the page it may grow to, not the first one: the list
+        // keeps its height while more rows arrive.
+        const visibleRows = opts?.loadMore ? 10 : Math.min(items.length, 10);
+        const list = new SelectList(items, visibleRows, getSelectListTheme());
         // Re-open at a caller-supplied position so a looping menu (e.g. /settings
         // toggles) doesn't snap back to the top after each action.
         if (opts?.initialIndex != null) list.setSelectedIndex(opts.initialIndex);
         const header = new Text("", 0, 0);
+        let loading = false;
+        let exhausted = !opts?.loadMore;
         const renderHeader = (query: string) =>
             header.setText(
                 accentTitle(` ${title ?? "Select"}`) +
                     dim("  search: ") +
-                    (query ? strong(query) : dim("(type to filter)")),
+                    (query ? strong(query) : dim("(type to filter)")) +
+                    (loading ? dim("  · loading more…") : ""),
             );
         renderHeader("");
 
@@ -115,11 +129,56 @@ export function searchSelectOnce(
         list.onCancel = () => finish(null);
 
         let query = "";
+        let shown = items;
+        let cursor = opts?.initialIndex ?? 0;
         const applyQuery = () => {
-            list.setItems(filterItems(items, query));
+            shown = filterItems(items, query);
+            list.setItems(shown);
+            cursor = 0;
             renderHeader(query);
             host.tui.requestRender();
+            fill();
         };
+
+        // Infinite scroll: a page at a time, never two at once, until the
+        // source says there is no more.
+        const loadPage = async (): Promise<void> => {
+            if (loading || exhausted || done || !opts?.loadMore) return;
+            loading = true;
+            renderHeader(query);
+            host.tui.requestRender();
+            let page: SelectItem[] = [];
+            try {
+                page = await opts.loadMore();
+            } catch {
+                page = [];
+            }
+            loading = false;
+            if (page.length === 0) exhausted = true;
+            if (done) return;
+            items.push(...page);
+            // Keep the cursor where it was: the new rows land below it.
+            const keep = shown[cursor];
+            shown = filterItems(items, query);
+            list.setItems(shown);
+            const at = keep ? shown.indexOf(keep) : -1;
+            cursor = at >= 0 ? at : 0;
+            list.setSelectedIndex(cursor);
+            renderHeader(query);
+            host.tui.requestRender();
+            fill();
+        };
+        /** Load until the cursor has room below it, or a search has a screenful. */
+        const fill = (): void => {
+            if (exhausted || loading) return;
+            if (shown.length - cursor <= 3 || (query && shown.length < visibleRows)) void loadPage();
+        };
+        list.onSelectionChange = (item) => {
+            const at = shown.indexOf(item);
+            if (at >= 0) cursor = at;
+            fill();
+        };
+        fill();
 
         // Printable chars + backspace drive the query; everything else
         // (arrows, Enter, Esc) falls through to the focused list.

@@ -84,6 +84,21 @@ export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): str
   }
 }
 
+export function addProjectRemoteSourcePathHint(source: AddProjectRemoteSource): string {
+  switch (source) {
+    case "github":
+      return "owner/repo";
+    case "gitlab":
+      return "group/project";
+    case "bitbucket":
+      return "workspace/repository";
+    case "azure-devops":
+      return "project/repository";
+    case "url":
+      return "URL";
+  }
+}
+
 export function addProjectRemoteSourceProvider(
   source: AddProjectRemoteSource,
 ): AddProjectRemoteProviderKind | null {

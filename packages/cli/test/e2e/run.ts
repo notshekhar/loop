@@ -21,7 +21,8 @@
  *
  * Run: bun packages/cli/test/e2e/run.ts [name ...]
  */
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Session, withSession, type SessionOptions } from "./harness";
 
@@ -1683,7 +1684,200 @@ async function testClickSelectsAnEntry(): Promise<void> {
     });
 }
 
+/**
+ * /hosts: this loop drives a session on ANOTHER loop. The other one is a real
+ * `loop serve` in its own HOME, and it alone has a model — this TUI has none —
+ * so a reply on screen can only have come from a turn that ran over there.
+ */
+async function testHosts(): Promise<void> {
+    const TOKEN = "e2e".repeat(16);
+    const model = Bun.serve({
+        port: 0,
+        fetch: async (req) => {
+            const body = (await req.json().catch(() => ({}))) as { messages?: { content: unknown }[] };
+            const said = JSON.stringify(body.messages ?? []);
+            return streamedReply(said.includes("from the phone") ? "PHONE-REPLY from the host." : "REMOTE-REPLY from the host.");
+        },
+    });
+    const remoteHome = mkdtempSync(join(tmpdir(), "loop-remote-home-"));
+    const remoteProject = mkdtempSync(join(tmpdir(), "loop-remote-project-"));
+    mkdirSync(join(remoteHome, ".loop", "agent"), { recursive: true });
+    writeFileSync(join(remoteHome, ".loop", "settings.json"), JSON.stringify({ serve: true }));
+    writeFileSync(
+        join(remoteHome, ".loop", "auth.json"),
+        JSON.stringify({
+            serveToken: TOKEN,
+            active: "custom:fixture",
+            customProviders: {
+                fixture: {
+                    name: "fixture",
+                    sdk: "anthropic",
+                    baseURL: `http://127.0.0.1:${model.port}/v1`,
+                    apiKey: "fixture",
+                    auth: { kind: "apikey", apiKey: "fixture" },
+                    models: [{ id: "fixture", contextWindow: 100000, maxOutput: 4096 }],
+                },
+            },
+        }),
+    );
+    const port = 47000 + Math.floor(Math.random() * 2000);
+    const base = `http://127.0.0.1:${port}`;
+    const serve = Bun.spawn(["bun", join(import.meta.dir, "..", "..", "src", "cli.ts"), "serve", "--host", "127.0.0.1", "--port", String(port)], {
+        cwd: remoteProject,
+        env: { ...process.env, HOME: remoteHome, LOOP_SKIP_VERSION_CHECK: "1", LOOP_SOUND: "0" },
+        stdout: "ignore",
+        stderr: "ignore",
+    });
+    try {
+        let label = "";
+        for (let i = 0; i < 100 && !label; i++) {
+            label = await fetch(`${base}/.well-known/loop/environment`)
+                .then((r) => r.json())
+                .then((b: { label: string }) => b.label)
+                .catch(() => "");
+            if (!label) await Bun.sleep(100);
+        }
+        check(label !== "", "the other loop is serving", base);
+
+        await withSession({ settings: NOIR, envExtra: { LOOP_SKIP_VERSION_CHECK: "1" } }, async (s) => {
+            const screen = () => s.screenRows().join("\n");
+            await s.pump(7);
+
+            await s.send(`/hosts add ${base}/?token=${TOKEN}\r`, 2.5);
+            check(screen().includes(`paired ${label}`), "/hosts add pairs with the printed link", s.screenRows());
+
+            await s.send("/hosts\r", 3.0);
+            check(screen().includes("This machine") && screen().includes("online"), "/hosts lists this machine and the paired one, online", s.screenRows());
+            await s.send("\x1b[B", 0.4);
+            await s.send("\r", 2.0);
+            check(screen().includes(`${label} · 0 sessions`) && screen().includes("+ New session"), "picking it lists its sessions", s.screenRows());
+            await s.send("\r", 1.0);
+            check(screen().includes(`Model to use on ${label}`), "a host with no sessions asks for a model", s.screenRows());
+            await s.send("custom:fixture/fixture\r", 1.0);
+            check(screen().includes(`Folder on ${label}`), "then for the folder there", s.screenRows());
+            await s.send("\r", 2.5);
+            check(screen().includes(`${label} ·`) && screen().includes("loop-remote-project-"), "the session opens headed by its machine and its folder there", s.screenRows());
+
+            await s.send("hello from the tui\r", 5.0);
+            check(screen().includes("REMOTE-REPLY from the host."), "a message sent here runs THERE and streams back", s.screenRows());
+
+            await s.send("/model\r", 1.0);
+            check(screen().includes("acts on this machine"), "a command for this machine is refused, not misapplied", s.screenRows());
+
+            // Another device sends into the same session: it streams here too.
+            const ticket = await fetch(`${base}/api/auth/websocket-ticket`, {
+                method: "POST",
+                headers: { authorization: `Bearer ${TOKEN}` },
+            }).then((r) => r.json() as Promise<{ ticket: string }>);
+            const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?wsTicket=${ticket.ticket}`);
+            await new Promise((r) => (ws.onopen = r));
+            const rpc = (id: number, method: string, params: unknown) =>
+                new Promise<unknown>((resolve) => {
+                    const on = (e: MessageEvent) => {
+                        const msg = JSON.parse(String(e.data));
+                        if (msg.id === id) {
+                            ws.removeEventListener("message", on);
+                            resolve(msg.result);
+                        }
+                    };
+                    ws.addEventListener("message", on);
+                    ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+                });
+            const rows = (await rpc(1, "session.list", {})) as { id: string }[];
+            await rpc(2, "session.send", { sessionId: rows[0]!.id, input: "hello from the phone" });
+            await s.pump(5);
+            check(screen().includes("from another device"), "a turn started elsewhere is announced", s.screenRows());
+            check(screen().includes("PHONE-REPLY from the host."), "and streams into this screen too", s.screenRows());
+            ws.close();
+
+            await s.send("\x13", 1.0);
+            check(
+                s.screenRows().some((r) => r.includes("hello from the tui") && r.includes(`on ${label.slice(0, 12)}`)),
+                "ctrl+s lists the remote session with its machine",
+                s.screenRows(),
+            );
+            await s.send("\x1b", 0.6);
+
+            await s.send("/hosts\r", 3.0);
+            await s.send("\r", 1.5);
+            check(!screen().includes("REMOTE-REPLY"), "/hosts → This machine goes back to a local session", s.screenRows());
+        });
+    } finally {
+        serve.kill();
+        await serve.exited;
+        model.stop(true);
+        rmSync(remoteHome, { recursive: true, force: true });
+        rmSync(remoteProject, { recursive: true, force: true });
+    }
+}
+
+/** /rc: this loop becomes pairable, prints its link and QR, and stops again. */
+async function testRemoteControl(): Promise<void> {
+    await withSession({ settings: NOIR, envExtra: { LOOP_SKIP_VERSION_CHECK: "1" } }, async (s) => {
+        const screen = () => s.screenRows().join("\n");
+        await s.pump(7);
+        await s.send("/rc --local\r", 1.5);
+        check(screen().includes("Turn on remote control"), "/rc asks before exposing the machine", s.screenRows());
+        await s.send("\r", 3.0);
+        // The link is above the fold by now (the QR is tall), and the alt
+        // screen keeps no scrollback: read what loop wrote instead.
+        const all = s.raw.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+        const url = /local\s+(http:\/\/127\.0\.0\.1:\d+)\/\?token=([0-9a-f]+)/.exec(all);
+        check(url !== null, "it prints the link", s.screenRows());
+        check(all.includes("▀") || all.includes("▄"), "and a QR code for the phone", s.screenRows());
+        if (!url) return;
+        const env = await fetch(`${url[1]}/.well-known/loop/environment`).then((r) => r.json()).catch(() => null);
+        check(env?.environmentId, "another device can pair with it", env);
+        const exchange = await fetch(`${url[1]}/oauth/token`, {
+            method: "POST",
+            headers: { "content-type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+                subject_token: url[2]!,
+            }),
+        });
+        check(exchange.status === 200, "with the printed token", exchange.status);
+        await s.send("/rc off\r", 1.5);
+        check(screen().includes("remote control off"), "/rc off stops it", s.screenRows());
+        const after = await fetch(`${url[1]}/.well-known/loop/environment`).then(() => "up", () => "down");
+        check(after === "down", "and the port is closed", after);
+    });
+}
+
+/**
+ * /resume over more sessions than one page: it opens on the first page and
+ * fetches the rest as the cursor nears the end — infinite scroll, not one
+ * read of the whole history.
+ */
+async function testResumePaging(): Promise<void> {
+    await withSession({ settings: NOIR, envExtra: { LOOP_SKIP_VERSION_CHECK: "1" } }, async (s) => {
+        // 130 sessions in this project, written by a loop of its own HOME.
+        const seed = Bun.spawnSync(
+            [
+                "bun",
+                "-e",
+                `const { SessionManager } = await import(${JSON.stringify(join(import.meta.dir, "..", "..", "..", "core", "src", "sessions", "index.ts"))});
+                 const m = new SessionManager();
+                 for (let i = 0; i < 130; i++) await m.create({ cwd: ${JSON.stringify(realpathSync(s.project))}, provider: "xai", model: "xai/grok-" + i });`,
+            ],
+            { env: { ...process.env, HOME: s.home } },
+        );
+        check(seed.exitCode === 0, "130 sessions seeded", seed.stderr.toString());
+        const screen = () => s.screenRows().join("\n");
+        await s.pump(7);
+        await s.send("/resume\r", 2.0);
+        check(screen().includes("Resume session · 100+"), "/resume opens on the first page and says there is more", s.screenRows());
+        // Up from the top wraps to the last row — the end of the first page.
+        await s.send("\x1b[A", 1.5);
+        check(/\(\d+\/131\)/.test(screen()), "reaching its end loads the rest (130 sessions + the date row)", s.screenRows());
+        await s.send("\x1b", 0.6);
+    });
+}
+
 const SCENARIOS: Record<string, () => Promise<void>> = {
+    "resume-paging": testResumePaging,
+    rc: testRemoteControl,
+    hosts: testHosts,
     "context-after-compact": testContextAfterCompact,
     handoff: testHandoff,
     recipes: testRecipes,

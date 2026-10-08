@@ -34,7 +34,11 @@ export interface AppDeps {
     getSelectorDepth: () => number;
     selectOnce: (items: SelectItem[], title?: string, opts?: { initialIndex?: number }) => Promise<SelectItem | null>;
     /** Single-select with a type-to-filter search box (long lists). */
-    searchOnce: (items: SelectItem[], title?: string, opts?: { initialIndex?: number }) => Promise<SelectItem | null>;
+    searchOnce: (
+        items: SelectItem[],
+        title?: string,
+        opts?: { initialIndex?: number; loadMore?: () => Promise<SelectItem[]> },
+    ) => Promise<SelectItem | null>;
     /** Multi-select toggle list (Enter/Space toggles, done confirms, Esc → null). */
     toggleOnce: (values: string[], initial: Set<string>, title?: string) => Promise<string[] | null>;
     promptOnce: (label?: string, initial?: string) => Promise<string>;
@@ -61,6 +65,8 @@ export interface AppDeps {
      * out of sight. */
     settleTurn: (failed: boolean) => void;
     cleanExit: (code?: number) => void;
+    /** `/hosts` and `/rc` (remote-sessions.ts); set once the roster exists. */
+    remote?: { manageHosts(args: string): Promise<void>; remoteControl(args: string): Promise<void> };
     /** App version (undefined in dev runs). */
     version?: string;
     /** Undo the console→chat bridge before handing the terminal to a child process. */

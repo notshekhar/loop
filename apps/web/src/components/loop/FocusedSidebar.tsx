@@ -15,6 +15,8 @@
  * until you switch. "Needs you" is deliberately the one section that stays
  * cross-project, so nothing can sit blocked in a folder you are not looking at.
  */
+import { LoadMoreSentinel } from "./LoadMoreSentinel";
+import { useSessionPaging } from "../../loop/useSessionPaging";
 import { scopeProjectRef } from "@loop/runtime/environment";
 import {
   ChevronsUpDownIcon,
@@ -33,6 +35,7 @@ import { isDesktopShell } from "../../env";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useClientSettings } from "../../hooks/useSettings";
 import { useProjects, useThreadShells } from "../../state/entities";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useUiStateStore } from "../../uiStateStore";
 import { cn } from "../../lib/utils";
 import { SidebarChromeFooter, SidebarChromeHeader } from "../sidebar/SidebarChrome";
@@ -44,7 +47,11 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "../ui/sidebar";
-import { resolveActiveProjectId } from "./ProjectSidebar.logic";
+import {
+  orderProjectsForSidebar,
+  pickSidebarProject,
+  resolveActiveProjectId,
+} from "./ProjectSidebar.logic";
 import { decodeProjectRouteId } from "./projectRoute";
 import { ProjectHeaderMenu } from "./ProjectHeaderMenu";
 import { ProjectTitleEditor } from "./ProjectRowMenu";
@@ -122,6 +129,14 @@ export default function FocusedSidebar() {
   const draftProjectId = useComposerDraftStore((store) =>
     params.draftId ? (store.draftThreadsByThreadKey[params.draftId]?.projectId ?? null) : null,
   );
+  const draftEnvironmentId = useComposerDraftStore((store) =>
+    params.draftId ? (store.draftThreadsByThreadKey[params.draftId]?.environmentId ?? null) : null,
+  );
+  const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  // Which machine the route is on: a thread names it, a draft carries it. A
+  // `/project/:id` route names only the folder.
+  const routeEnvironmentId = params.environmentId ?? draftEnvironmentId ?? null;
   const routeProjectId = useMemo(
     () =>
       resolveActiveProjectId({
@@ -141,19 +156,29 @@ export default function FocusedSidebar() {
   // at all (the root, settings) would otherwise drop the panel back to the
   // first project alphabetically — which reads as the sidebar forgetting where
   // you were the moment you close a thread.
-  const [lastProjectId, setLastProjectId] = useState<string | null>(null);
+  const [lastProject, setLastProject] = useState<{
+    readonly projectId: string;
+    readonly environmentId: string | null;
+  } | null>(null);
   useEffect(() => {
-    if (routeProjectId) setLastProjectId(routeProjectId);
-  }, [routeProjectId]);
+    if (routeProjectId) setLastProject({ projectId: routeProjectId, environmentId: routeEnvironmentId });
+  }, [routeEnvironmentId, routeProjectId]);
 
   const orderedProjects = useMemo(
-    () => projects.toSorted((left, right) => left.title.localeCompare(right.title)),
-    [projects],
+    () => orderProjectsForSidebar(projects, primaryEnvironmentId),
+    [primaryEnvironmentId, projects],
   );
-  const currentProject =
-    orderedProjects.find((project) => project.id === (routeProjectId ?? lastProjectId)) ??
-    orderedProjects[0] ??
-    null;
+  const currentProject = pickSidebarProject(orderedProjects, {
+    projectId: routeProjectId ?? lastProject?.projectId ?? null,
+    environmentId: routeProjectId ? routeEnvironmentId : (lastProject?.environmentId ?? null),
+    primaryEnvironmentId,
+  });
+  // Named only once there is more than one machine to tell apart.
+  const currentMachineLabel =
+    currentProject && environments.length > 1
+      ? (environments.find((environment) => environment.environmentId === currentProject.environmentId)
+          ?.label ?? null)
+      : null;
 
   // Sections come from the whole thread list, not the project's slice: "Needs
   // you" stays cross-project, and only the other three narrow.
@@ -167,12 +192,20 @@ export default function FocusedSidebar() {
     [autoSettleAfterDays, lastVisitedAtByKey, threads],
   );
   const mine = useMemo(
-    () => (currentProject ? sectionsForProject(sections, currentProject.id) : null),
+    () =>
+      currentProject
+        ? sectionsForProject(sections, currentProject.id, currentProject.environmentId)
+        : null,
     [currentProject, sections],
   );
 
   const [settledVisible, setSettledVisible] = useState(SETTLED_PAGE);
   const startNewThread = useNewThreadHandler();
+  // This project's own newest page, then the next as the list nears its end.
+  const sessionPaging = useSessionPaging({
+    environmentIds: [],
+    folders: currentProject ? [{ environmentId: currentProject.environmentId, cwd: currentProject.id }] : null,
+  });
 
   // The same actions the project rows carry in the other styles — with one
   // project in the panel there is no row to hang them off, so they ride the
@@ -244,6 +277,11 @@ export default function FocusedSidebar() {
                   <span className="min-w-0 flex-1 truncate font-medium text-[13px]">
                     {currentProject?.title ?? "No projects yet"}
                   </span>
+                  {currentMachineLabel ? (
+                    <span className="max-w-[45%] shrink truncate text-[11px] text-sidebar-muted-foreground/70">
+                      {currentMachineLabel}
+                    </span>
+                  ) : null}
                   <ChevronsUpDownIcon
                     aria-hidden
                     className="size-3.5 shrink-0 text-sidebar-muted-foreground/60"
@@ -333,17 +371,15 @@ export default function FocusedSidebar() {
                   label="Settled"
                   rows={settled}
                 />
-                {settledRemaining > 0 ? (
-                  <button
-                    className={cn(
-                      "mt-1 ml-2 w-fit cursor-pointer rounded-md px-1 py-0.5 text-[11px] text-sidebar-muted-foreground/60",
-                      "outline-hidden ring-ring hover:text-sidebar-foreground focus-visible:ring-2",
-                    )}
-                    onClick={() => setSettledVisible((count) => count + SETTLED_PAGE)}
-                    type="button"
-                  >
-                    Show {Math.min(settledRemaining, SETTLED_PAGE)} more
-                  </button>
+                {settledRemaining > 0 || sessionPaging.hasMore || sessionPaging.loading ? (
+                  <LoadMoreSentinel
+                    itemCount={settled.length}
+                    loading={sessionPaging.loading}
+                    onVisible={() => {
+                      if (settledRemaining > 0) setSettledVisible((count) => count + SETTLED_PAGE);
+                      else if (sessionPaging.hasMore) sessionPaging.loadMore();
+                    }}
+                  />
                 ) : null}
                 {mine.needsYou.length === 0 &&
                 mine.working.length === 0 &&

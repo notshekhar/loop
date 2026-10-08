@@ -5,7 +5,7 @@ import { debugLog } from "../debug";
 import type { Entry, ProviderId, SessionInfoData } from "../types";
 import { Session, generateEntryId } from "./session";
 import { stripSessionHookContext } from "./hook-context";
-import { getSessionStore, type SessionRecord, type SessionScope } from "./sqlite-store";
+import { getSessionStore, type SessionFolder, type SessionPage, type SessionRecord, type SessionScope } from "./sqlite-store";
 
 export function slugCwd(cwd: string): string {
     // slug convention: "--Users-notshekhar-Documents-foo--"
@@ -72,8 +72,13 @@ export class SessionManager {
      * Sessions, newest first. Defaults to `active` — the working set, which is
      * what every caller predating the archive means by "the sessions".
      */
-    list(cwd?: string, scope: SessionScope = "active"): SessionInfo[] {
-        return getSessionStore().listSessions(cwd, scope).map(toSessionInfo);
+    list(cwd?: string, scope: SessionScope = "active", page?: SessionPage): SessionInfo[] {
+        return getSessionStore().listSessions(cwd, scope, page).map(toSessionInfo);
+    }
+
+    /** Every folder with a session in `scope`, newest first — see SessionFolder. */
+    folders(scope: SessionScope = "active"): SessionFolder[] {
+        return getSessionStore().listSessionFolders(scope);
     }
 
     /**

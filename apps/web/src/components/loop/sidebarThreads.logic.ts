@@ -223,9 +223,16 @@ export function rollupForProject(
 export function sectionsForProject(
   sections: SidebarThreadSections,
   projectId: string,
+  /** The project's machine. A project id is a folder, the same on every
+   * machine paired, so without this one project shows every machine's threads. */
+  environmentId?: string,
 ): SidebarThreadSections {
   const mine = (rows: readonly SidebarThreadRow[]) =>
-    rows.filter((row) => row.projectId === projectId);
+    rows.filter(
+      (row) =>
+        row.projectId === projectId &&
+        (environmentId === undefined || row.environmentId === environmentId),
+    );
   return {
     needsYou: mine(sections.needsYou),
     working: mine(sections.working),

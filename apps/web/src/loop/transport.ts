@@ -498,7 +498,9 @@ type ConnectionState = "connecting" | "open" | "closed";
  */
 function resolveSocketUrl(): string {
   const params = new URLSearchParams(globalThis.location?.search ?? "");
-  const override = params.get("rpc") ?? (import.meta.env?.VITE_LOOP_RPC_URL as string | undefined);
+  // Read defensively: this module also runs outside Vite (the mobile app).
+  const env = (import.meta as { env?: { VITE_LOOP_RPC_URL?: string } }).env;
+  const override = params.get("rpc") ?? env?.VITE_LOOP_RPC_URL;
   const token = params.get("token") ?? "";
   const base =
     override ??
@@ -508,6 +510,7 @@ function resolveSocketUrl(): string {
 }
 
 class LoopSocket {
+  readonly #resolveUrl: () => string;
   #socket: WebSocket | null = null;
   #state: ConnectionState = "closed";
   #nextId = 1;
@@ -518,15 +521,24 @@ class LoopSocket {
   #reconnectDelay = RECONNECT_MIN_MS;
   /** Calls made before the socket opens wait here rather than failing. */
   #openWaiters: Array<() => void> = [];
+  /** Set by `close()`: a host the app forgot must not keep redialing. */
+  #closed = false;
+  readonly #reconnect: boolean;
+
+  /** A resolver rather than a string so the same-origin URL is read when dialing. */
+  constructor(resolveUrl: () => string, options: { reconnect?: boolean } = {}) {
+    this.#resolveUrl = resolveUrl;
+    this.#reconnect = options.reconnect ?? true;
+  }
 
   get state(): ConnectionState {
     return this.#state;
   }
 
   connect(): void {
-    if (this.#state !== "closed") return;
+    if (this.#closed || this.#state !== "closed") return;
     this.#setState("connecting");
-    const socket = new WebSocket(resolveSocketUrl());
+    const socket = new WebSocket(this.#resolveUrl());
     this.#socket = socket;
     socket.onopen = () => {
       this.#reconnectDelay = RECONNECT_MIN_MS;
@@ -625,6 +637,12 @@ class LoopSocket {
     }
   }
 
+  /** Hang up for good: no reconnect, and every waiting call fails. */
+  close(): void {
+    this.#closed = true;
+    this.#socket?.close();
+  }
+
   #handleClose(): void {
     this.#socket = null;
     this.#setState("closed");
@@ -633,26 +651,95 @@ class LoopSocket {
       pending.reject(new Error("connection to loop closed"));
     }
     this.#pending.clear();
+    // A one-use URL (a paired host's ticket) cannot be redialed: the owner
+    // learns of the close and connects again with a fresh one.
+    if (!this.#reconnect) this.#closed = true;
+    if (this.#closed) return;
     const delay = this.#reconnectDelay;
     this.#reconnectDelay = Math.min(delay * 2, RECONNECT_MAX_MS);
     setTimeout(() => this.connect(), delay);
   }
 }
 
-const socket = new LoopSocket();
+/**
+ * One loop host: a machine running `loop serve` (or, in the desktop shell, the
+ * app's own `loop rpc` children).
+ *
+ * The handlers act on a host rather than on "the" connection so one app can
+ * hold several at once — the mobile app's host list, or a browser tab with a
+ * second machine added. Everything below this interface is per host: its
+ * socket, its event stream, its workspace (files, terminals, git live on the
+ * host's disk, not the client's).
+ */
+export interface LoopHost {
+  /** Stable for the host's life; keys per-host state held outside it. */
+  readonly id: string;
+  /**
+   * One loop JSON-RPC call. `cwd` identifies the project: over a socket it is
+   * a parameter the server applies; in Electron it selects which `loop rpc`
+   * process answers.
+   */
+  call<T = unknown>(method: string, params?: Record<string, unknown>, cwd?: string): Promise<T>;
+  /** loop's `session.event` notifications. Returns an unsubscribe. */
+  onEvent(listener: (event: LoopEvent) => void): () => void;
+  /** See `onLoopConnectionChange`. */
+  onConnectionChange(listener: (state: ConnectionState) => void): () => void;
+  filesystem(): LoopFilesystemBridge | null;
+  pty(): LoopPtyBridge | null;
+  git(): LoopGitBridge | null;
+  shell(): LoopShellBridge | null;
+  sourceControl(): LoopSourceControlBridge | null;
+}
+
+export type LoopConnectionState = ConnectionState;
 
 /**
- * The workspace over the socket: `loop serve` hosts the same handler table as
- * the desktop's utility process, so a browser gets files, terminals and git
- * too. Built on first use — a desktop shell never touches it.
+ * A host reached over a WebSocket — `loop serve`'s `/ws?token=…`. The URL
+ * carries the token; nothing is dialed until the first call or subscription.
  */
-let socketWorkspace: WorkspaceBridges | null = null;
-function browserWorkspace(): WorkspaceBridges {
-  socketWorkspace ??= createWorkspaceBridges(
-    (name, params) => socket.call(`workspace.${name}`, params ?? {}),
-    (channel, listener) => socket.onChannel(channel, listener),
-  );
-  return socketWorkspace;
+export function createSocketHost(
+  id: string,
+  url: string | (() => string),
+  options: {
+    /**
+     * Redial on its own after a drop. Off for a URL that works once — a paired
+     * host's `?wsTicket=` — whose owner must mint a new one instead (see
+     * LoopHostResolver in runtime/rpc/session.ts).
+     */
+    reconnect?: boolean;
+  } = {},
+): LoopHost & {
+  close(): void;
+} {
+  const socket = new LoopSocket(typeof url === "string" ? () => url : url, options);
+  let workspace: WorkspaceBridges | null = null;
+  // serve hosts the same workspace handler table as the desktop's utility
+  // process, so every bridge exists. Built on first use.
+  const bridges = (): WorkspaceBridges =>
+    (workspace ??= createWorkspaceBridges(
+      (name, params) => socket.call(`workspace.${name}`, params ?? {}),
+      (channel, listener) => socket.onChannel(channel, listener),
+    ));
+  return {
+    id,
+    async call<T>(method: string, params: Record<string, unknown> = {}, cwd?: string) {
+      // The server holds every cwd, so the folder rides along as a parameter
+      // instead of picking a process.
+      const withCwd = cwd === undefined ? params : { cwd, ...params };
+      return (await socket.call(method, withCwd)) as T;
+    },
+    onEvent(listener) {
+      socket.connect();
+      return socket.onEvent(listener);
+    },
+    onConnectionChange: (listener) => socket.onStateChange(listener),
+    filesystem: () => bridges().fs,
+    pty: () => bridges().pty,
+    git: () => bridges().git,
+    shell: () => bridges().shell,
+    sourceControl: () => bridges().sourceControl,
+    close: () => socket.close(),
+  };
 }
 
 /** True when running inside the Electron shell rather than a browser. */
@@ -660,34 +747,92 @@ export function isDesktopShell(): boolean {
   return typeof window !== "undefined" && window.loop !== undefined;
 }
 
+/** The preload's bridge, read at call time: tests (and a reloaded preload) swap it. */
+function desktopBridge(): LoopDesktopBridge | undefined {
+  return typeof window !== "undefined" ? window.loop : undefined;
+}
+
+/** Where `loop serve` is, for a page served by it. */
+let sameOriginHost: ReturnType<typeof createSocketHost> | null = null;
+function servingHost(): LoopHost {
+  // No page, no page host: a native shell (the mobile app) has no
+  // `location` to dial, and every host it talks to is one it was given.
+  if (globalThis.location === undefined) return noHost;
+  return (sameOriginHost ??= createSocketHost("primary", resolveSocketUrl));
+}
+
 /**
- * One loop JSON-RPC call.
- *
- * `cwd` identifies the project. Over `loop serve` it is a filter the server
- * applies; in Electron it selects which `loop rpc` process answers.
+ * The default host of a shell that has none. Calls fail; subscriptions are
+ * inert rather than throwing, because module-level code subscribes on load.
  */
+const noHost: LoopHost = {
+  id: "none",
+  call: (method) => Promise.reject(new LoopTransportError(method, "this app has no default loop host")),
+  onEvent: () => () => {},
+  onConnectionChange: () => () => {},
+  filesystem: () => null,
+  pty: () => null,
+  git: () => null,
+  shell: () => null,
+  sourceControl: () => null,
+};
+
+/**
+ * The host this page belongs to: the desktop's own loop in Electron, the
+ * `loop serve` that served the page in a browser.
+ *
+ * Decided per call, not once, because the preload bridge is what decides and
+ * it can appear after this module loads (and tests install their own).
+ */
+export const defaultLoopHost: LoopHost = {
+  id: "primary",
+  async call<T>(method: string, params: Record<string, unknown> = {}, cwd?: string) {
+    const bridge = desktopBridge();
+    if (bridge) return (await bridge.call(method, params, cwd)) as T;
+    return servingHost().call<T>(method, params, cwd);
+  },
+  onEvent(listener) {
+    const bridge = desktopBridge();
+    if (bridge) return bridge.onEvent(listener);
+    return servingHost().onEvent(listener);
+  },
+  onConnectionChange(listener) {
+    const bridge = desktopBridge();
+    if (bridge) {
+      // A preload that predates the status channel leaves this undefined; there
+      // is nothing to report and nothing to recover from, as before.
+      if (!bridge.onStatus) return () => {};
+      return bridge.onStatus((running) => listener(running ? "open" : "closed"));
+    }
+    return servingHost().onConnectionChange(listener);
+  },
+  filesystem: () => (isDesktopShell() ? preloadBridge("fs") : servingHost().filesystem()),
+  pty: () => (isDesktopShell() ? preloadBridge("pty") : servingHost().pty()),
+  git: () => (isDesktopShell() ? preloadBridge("git") : servingHost().git()),
+  shell: () => (isDesktopShell() ? preloadBridge("shell") : servingHost().shell()),
+  sourceControl: () =>
+    isDesktopShell() ? preloadBridge("sourceControl") : servingHost().sourceControl(),
+};
+
+/** One of the preload's workspace bridges: the same interfaces, each optional. */
+function preloadBridge<K extends keyof WorkspaceBridges>(key: K): WorkspaceBridges[K] | null {
+  return (window.loop as Partial<WorkspaceBridges> | undefined)?.[key] ?? null;
+}
+
+/** One JSON-RPC call to the default host. See `LoopHost.call`. */
 export async function loopCall<T = unknown>(
   method: string,
   params: Record<string, unknown> = {},
   cwd?: string,
 ): Promise<T> {
-  const bridge = typeof window !== "undefined" ? window.loop : undefined;
-  if (bridge) return (await bridge.call(method, params, cwd)) as T;
-  // Over a socket the server holds every cwd, so the folder rides along as a
-  // parameter instead of picking a process.
-  const withCwd = cwd === undefined ? params : { cwd, ...params };
-  return (await socket.call(method, withCwd)) as T;
+  return defaultLoopHost.call<T>(method, params, cwd);
 }
 
-/** Subscribe to loop's `session.event` notifications. Returns an unsubscribe. */
+/** Subscribe to the default host's `session.event` notifications. Returns an unsubscribe. */
 export function onLoopEvent(listener: (event: LoopEvent) => void): () => void {
-  const bridge = typeof window !== "undefined" ? window.loop : undefined;
-  if (bridge) return bridge.onEvent(listener);
-  socket.connect();
-  return socket.onEvent(listener);
+  return defaultLoopHost.onEvent(listener);
 }
 
-/** Connection state, for the shells that show a disconnected banner. */
 /**
  * Connection state, for the shells that show a disconnected banner — and for
  * the thread view, which re-attaches on every `open`.
@@ -704,24 +849,7 @@ export function onLoopEvent(listener: (event: LoopEvent) => void): () => void {
  * re-attach path acts on.
  */
 export function onLoopConnectionChange(listener: (state: ConnectionState) => void): () => void {
-  const bridge = typeof window !== "undefined" ? window.loop : undefined;
-  if (bridge) {
-    // A preload that predates the status channel leaves this undefined; there
-    // is nothing to report and nothing to recover from, as before.
-    if (!bridge.onStatus) return () => {};
-    return bridge.onStatus((running) => listener(running ? "open" : "closed"));
-  }
-  return socket.onStateChange(listener);
-}
-
-/**
- * One workspace bridge: the preload's in the desktop shell, the socket's in a
- * browser (where every one exists, because serve hosts the whole table).
- */
-function workspaceBridge<K extends keyof WorkspaceBridges>(key: K): WorkspaceBridges[K] | null {
-  // The preload's bridges are the same interfaces, each optional.
-  if (isDesktopShell()) return (window.loop as Partial<WorkspaceBridges> | undefined)?.[key] ?? null;
-  return browserWorkspace()[key];
+  return defaultLoopHost.onConnectionChange(listener);
 }
 
 /**
@@ -735,25 +863,25 @@ function workspaceBridge<K extends keyof WorkspaceBridges>(key: K): WorkspaceBri
  * project.
  */
 export function loopFilesystem(): LoopFilesystemBridge | null {
-  return workspaceBridge("fs");
+  return defaultLoopHost.filesystem();
 }
 
 /** The PTY bridge. See loopFilesystem for where it comes from. */
 export function loopPty(): LoopPtyBridge | null {
-  return workspaceBridge("pty");
+  return defaultLoopHost.pty();
 }
 
 /** The git bridge. See loopFilesystem for where it comes from. */
 export function loopGit(): LoopGitBridge | null {
-  return workspaceBridge("git");
+  return defaultLoopHost.git();
 }
 
 export function loopShell(): LoopShellBridge | null {
-  return workspaceBridge("shell");
+  return defaultLoopHost.shell();
 }
 
 export function loopSourceControl(): LoopSourceControlBridge | null {
-  return workspaceBridge("sourceControl");
+  return defaultLoopHost.sourceControl();
 }
 
 /** The host window, or null in a browser — a tab has no traffic lights. */

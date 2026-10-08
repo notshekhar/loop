@@ -293,6 +293,34 @@ describe("adding a project", () => {
   });
 });
 
+// loop has no runtime or interaction modes. Refusing the commands that set
+// them wedged the phone's outbox: it sets both before every send, retried the
+// refusal forever, and the message never left the queue.
+describe("modes loop does not have", () => {
+  it("accepts runtime- and interaction-mode changes, then sends the turn", async () => {
+    const id = freshIds();
+    const calls = await dispatchWith([
+      threadCreate(id.thread, "/Users/someone/project"),
+      {
+        type: "thread.runtime-mode.set",
+        commandId: "cmd-runtime",
+        threadId: id.thread,
+        runtimeMode: "full-access",
+        createdAt: "2026-10-08T00:00:00.000Z",
+      } as unknown as ClientOrchestrationCommand,
+      {
+        type: "thread.interaction-mode.set",
+        commandId: "cmd-interaction",
+        threadId: id.thread,
+        interactionMode: "default",
+        createdAt: "2026-10-08T00:00:00.000Z",
+      } as unknown as ClientOrchestrationCommand,
+      turnStart(id.thread),
+    ]);
+    expect(calls.some((call) => call.method === "session.send")).toBe(true);
+  });
+});
+
 describe("the composer's effort as loop's thinking level", () => {
   it("passes through the levels both vocabularies share", () => {
     for (const level of ["minimal", "low", "medium", "high"]) {

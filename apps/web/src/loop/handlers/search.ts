@@ -21,8 +21,9 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { clientThreadIdFor } from "./dispatch.ts";
+import { setSearchPins } from "./sessionPaging.ts";
 import type { LoopSessionRow } from "./shell.ts";
-import { loopCall } from "../transport.ts";
+import { defaultLoopHost, type LoopHost } from "../transport.ts";
 
 /** The contract caps a snippet at 240 characters. */
 const SNIPPET_MAX = 240;
@@ -87,20 +88,29 @@ export function matchSessions(
 
 const decodeResult = Schema.decodeUnknownEffect(OrchestrationSearchThreadsResultSchema);
 
-export const searchThreads = Effect.fnUntraced(function* (input: {
-  readonly query: string;
-  readonly limit?: number | undefined;
-}) {
+export const searchThreads = Effect.fnUntraced(function* (
+  input: {
+    readonly query: string;
+    readonly limit?: number | undefined;
+  },
+  host: LoopHost = defaultLoopHost,
+) {
   const rows = yield* Effect.promise(() =>
-    loopCall<readonly LoopSessionRow[]>("session.list").catch(
+    host.call<readonly LoopSessionRow[]>("session.list").catch(
       () => [] as readonly LoopSessionRow[],
     ),
   );
+  const matches = matchSessions(rows, input.query, input.limit ?? DEFAULT_LIMIT);
+  // The shell lists a page of sessions; a match older than that page would be
+  // found here and then filtered out of a list that does not hold it.
+  const matched = new Set(matches.map((match) => match.threadId));
+  setSearchPins(
+    host.id,
+    rows.filter((row) => matched.has(clientThreadIdFor(row.id))).map((row) => row.id),
+  );
   // Decoded rather than hand-built: `ThreadId` and `ProjectId` are branded, and
   // the schema is the only thing that can mint them.
-  return yield* decodeResult({
-    matches: matchSessions(rows, input.query, input.limit ?? DEFAULT_LIMIT),
-  }).pipe(
+  return yield* decodeResult({ matches }).pipe(
     Effect.mapError(
       () =>
         new EnvironmentAuthorizationError({

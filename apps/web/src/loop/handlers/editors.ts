@@ -19,7 +19,7 @@ import {
 } from "@loop/contracts";
 import * as Effect from "effect/Effect";
 
-import { loopShell } from "../transport.ts";
+import { defaultLoopHost, type LoopHost } from "../transport.ts";
 
 /** Every command any editor might be installed as, asked for in one round trip. */
 const ALL_COMMANDS = [...new Set(EDITORS.flatMap((editor) => editor.commands ?? []))];
@@ -31,11 +31,12 @@ const ALL_COMMANDS = [...new Set(EDITORS.flatMap((editor) => editor.commands ?? 
  * short enough that a fresh install shows up without a restart.
  */
 const DETECT_TTL_MS = 5 * 60_000;
-let cached: { at: number; editors: readonly EditorId[] } | null = null;
+/** Per host: each machine has its own editors installed. */
+const cached = new Map<string, { at: number; editors: readonly EditorId[] }>();
 
 /** Forget the cache — for tests, and for an explicit rescan. */
 export function resetEditorDetection(): void {
-  cached = null;
+  cached.clear();
 }
 
 /**
@@ -45,12 +46,13 @@ export function resetEditorDetection(): void {
  * probe means "no editors detected", which shows an empty menu rather than
  * taking down the whole config the rest of the app is waiting on.
  */
-export const detectEditors = Effect.fnUntraced(function* () {
-  const shell = loopShell();
+export const detectEditors = Effect.fnUntraced(function* (host: LoopHost = defaultLoopHost) {
+  const shell = host.shell();
   // A browser cannot launch a local editor, so offering one would be a lie.
   if (!shell) return [] as readonly EditorId[];
 
-  if (cached && Date.now() - cached.at < DETECT_TTL_MS) return cached.editors;
+  const hit = cached.get(host.id);
+  if (hit && Date.now() - hit.at < DETECT_TTL_MS) return hit.editors;
 
   const found = yield* Effect.promise(() =>
     // Swallowed here rather than as an Effect failure: a probe that could not
@@ -63,7 +65,7 @@ export const detectEditors = Effect.fnUntraced(function* () {
     if (editor.commands === null) return [editor.id as EditorId];
     return editor.commands.some((command) => found[command]) ? [editor.id as EditorId] : [];
   });
-  cached = { at: Date.now(), editors };
+  cached.set(host.id, { at: Date.now(), editors });
   return editors;
 });
 
@@ -74,16 +76,19 @@ export const detectEditors = Effect.fnUntraced(function* () {
  * "pass the path": `--goto` and `--line` only differ once there is a line to
  * point at. Pretending otherwise would add flags for information we do not have.
  */
-export const openInEditor = Effect.fnUntraced(function* (input: {
-  readonly cwd: string;
-  readonly editor: EditorId;
-}) {
+export const openInEditor = Effect.fnUntraced(function* (
+  input: {
+    readonly cwd: string;
+    readonly editor: EditorId;
+  },
+  host: LoopHost = defaultLoopHost,
+) {
   const definition = EDITORS.find((entry) => entry.id === input.editor);
   if (!definition) {
     return yield* Effect.fail(new ExternalLauncherUnknownEditorError({ editor: input.editor }));
   }
 
-  const shell = loopShell();
+  const shell = host.shell();
   if (!shell) {
     return yield* Effect.fail(
       new ExternalLauncherCommandNotFoundError({

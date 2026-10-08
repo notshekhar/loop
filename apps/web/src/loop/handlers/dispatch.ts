@@ -26,7 +26,7 @@ import {
   readLiveTurn,
 } from "./liveTurn.ts";
 import { useQueuedTurnsStore, type QueuedTurn } from "../../queuedTurnsStore.ts";
-import { loopCall, loopFilesystem } from "../transport.ts";
+import { defaultLoopHost, type LoopHost } from "../transport.ts";
 
 /**
  * client threadId -> loop sessionId, for threads this client created.
@@ -293,7 +293,7 @@ export async function sendQueuedTurnNow(id: string): Promise<void> {
   const turn = useQueuedTurnsStore.getState().take(id);
   if (!turn) return;
   try {
-    await loopCall("session.cancel", { sessionId: turn.sessionId });
+    await turn.interrupt();
     await turn.send();
   } catch (error) {
     useQueuedTurnsStore.getState().requeueFirst(turn);
@@ -363,7 +363,7 @@ async function drainQueuedTurns(sessionId: string): Promise<void> {
  * the sidebar with empty sessions every time someone clicked "New thread". So
  * the intent is recorded and the session is only minted on the first turn.
  */
-async function ensureSession(threadId: string): Promise<string> {
+async function ensureSession(threadId: string, host: LoopHost): Promise<string> {
   const bound = bindings.get(threadId);
   if (bound) return bound;
 
@@ -374,7 +374,7 @@ async function ensureSession(threadId: string): Promise<string> {
   const intent = pending.get(threadId);
   if (!intent) return threadId;
 
-  const created = await loopCall<{ sessionId: string }>(
+  const created = await host.call<{ sessionId: string }>(
     "session.create",
     { cwd: intent.cwd, provider: intent.provider, model: intent.model },
     intent.cwd,
@@ -475,6 +475,7 @@ async function sendTurn(
   sessionId: string,
   message: TurnStartCommand["message"],
   selection: TurnStartCommand["modelSelection"],
+  host: LoopHost,
 ): Promise<void> {
   // Begin the live turn BEFORE sending: loop can emit its first delta while
   // `session.send` is still in flight, and an event that arrives before the
@@ -485,7 +486,7 @@ async function sendTurn(
     messageId: message.messageId,
     text: message.text,
   });
-  const speculativeTurn = beginLiveTurn(sessionId);
+  const speculativeTurn = beginLiveTurn(sessionId, host);
   // `model` carries the provider (`xai/composer-2.5`) — loop has no separate
   // provider parameter, and runTurn resolves it from the id, so this is also
   // how a provider switch reaches loop.
@@ -499,7 +500,7 @@ async function sendTurn(
   rememberTurnOptions(sessionId, selection?.options as readonly TurnOption[] | undefined);
   const images = attachmentPayloads(message.attachments);
   try {
-    await loopCall("session.send", {
+    await host.call("session.send", {
       sessionId,
       input: message.text,
       ...(images.length === 0 ? {} : { images }),
@@ -546,11 +547,15 @@ function projectFolderFor(projectId: string): string {
  * fail: the folder was never made, and the browse below then rejected the path
  * for not existing.
  */
-async function resolveWorkspaceRoot(workspaceRoot: string, create: boolean): Promise<string> {
+async function resolveWorkspaceRoot(
+  workspaceRoot: string,
+  create: boolean,
+  host: LoopHost,
+): Promise<string> {
   const trimmed = workspaceRoot.trim();
   if (trimmed === "") throw new Error("A project needs a folder.");
 
-  const filesystem = loopFilesystem();
+  const filesystem = host.filesystem();
   // Over `loop serve` there is no filesystem to ask and loop cannot validate
   // a cwd, so the typed path is all there is.
   if (!filesystem) return trimmed;
@@ -573,11 +578,17 @@ async function resolveWorkspaceRoot(workspaceRoot: string, create: boolean): Pro
   return reBrowsed?.parentPath ?? created.path;
 }
 
-export const dispatchCommand = Effect.fnUntraced(function* (command: ClientOrchestrationCommand) {
-  return yield* Effect.promise(() => run(command));
+export const dispatchCommand = Effect.fnUntraced(function* (
+  command: ClientOrchestrationCommand,
+  host: LoopHost = defaultLoopHost,
+) {
+  return yield* Effect.promise(() => run(command, host));
 });
 
-async function run(command: ClientOrchestrationCommand): Promise<{ sequence: number }> {
+async function run(
+  command: ClientOrchestrationCommand,
+  host: LoopHost,
+): Promise<{ sequence: number }> {
   switch (command.type) {
     case "project.create": {
       // Nothing is created in loop: it has no project record, and a folder
@@ -588,9 +599,10 @@ async function run(command: ClientOrchestrationCommand): Promise<{ sequence: num
       const folder = await resolveWorkspaceRoot(
         command.workspaceRoot,
         command.createWorkspaceRootIfMissing === true,
+        host,
       );
       projectFolders.set(command.projectId, folder);
-      rememberAddedProject(command.projectId, folder);
+      rememberAddedProject(host.id, command.projectId, folder);
       return { sequence: 0 };
     }
 
@@ -618,8 +630,8 @@ async function run(command: ClientOrchestrationCommand): Promise<{ sequence: num
           model: bootstrap.modelSelection.model,
         });
       }
-      const sessionId = await ensureSession(command.threadId);
-      const send = () => sendTurn(sessionId, command.message, selection);
+      const sessionId = await ensureSession(command.threadId, host);
+      const send = () => sendTurn(sessionId, command.message, selection, host);
       try {
         await send();
       } catch (error) {
@@ -635,6 +647,9 @@ async function run(command: ClientOrchestrationCommand): Promise<{ sequence: num
           attachmentCount: command.message.attachments?.length ?? 0,
           queuedAt: new Date().toISOString(),
           send,
+          interrupt: async () => {
+            await host.call("session.cancel", { sessionId });
+          },
         });
       }
       return { sequence: 0 };
@@ -646,7 +661,7 @@ async function run(command: ClientOrchestrationCommand): Promise<{ sequence: num
       // on the assumption it would finish; firing it the instant the user
       // cancelled would be the opposite of what the button says.
       discardQueuedTurns(sessionId);
-      await loopCall("session.cancel", { sessionId });
+      await host.call("session.cancel", { sessionId });
       return { sequence: 0 };
     }
 
@@ -656,7 +671,7 @@ async function run(command: ClientOrchestrationCommand): Promise<{ sequence: num
       // stops appearing in the sidebar. loop keeps it as a timestamp on the
       // session row, so unarchiving is the same call with `archived: false`.
       const sessionId = loopSessionIdFor(command.threadId);
-      await loopCall("session.archive", {
+      await host.call("session.archive", {
         sessionId,
         archived: command.type === "thread.archive",
       });
@@ -671,7 +686,7 @@ async function run(command: ClientOrchestrationCommand): Promise<{ sequence: num
 
     case "thread.delete": {
       const sessionId = loopSessionIdFor(command.threadId);
-      await loopCall("session.delete", { sessionId });
+      await host.call("session.delete", { sessionId });
       forgetThread(command.threadId);
       // Same reason as archive above: loop broadcasts nothing for a client's
       // own removal, and the sidebar is rebuilt from `session.list`. Without
@@ -688,12 +703,12 @@ async function run(command: ClientOrchestrationCommand): Promise<{ sequence: num
       // Anything the user added but never used is only remembered in-process,
       // and forgetting that is the whole removal.
       const folder = projectFolderFor(command.projectId);
-      forgetAddedProject(command.projectId);
+      forgetAddedProject(host.id, command.projectId);
       // `archived: "all"` because the archive is part of the project too: the
       // default scope is the working set, so an archived conversation would
       // survive the folder it belongs to being removed and reappear the next
       // time the user opened the Archive panel.
-      const listed = await loopCall<unknown>("session.list", {
+      const listed = await host.call<unknown>("session.list", {
         cwd: folder,
         archived: "all",
       }).catch(() => []);
@@ -703,7 +718,7 @@ async function run(command: ClientOrchestrationCommand): Promise<{ sequence: num
       const rows = Array.isArray(listed) ? (listed as readonly { id: string; cwd: string }[]) : [];
       for (const row of rows) {
         if (row.cwd !== folder) continue;
-        await loopCall("session.delete", { sessionId: row.id }).catch(() => undefined);
+        await host.call("session.delete", { sessionId: row.id }).catch(() => undefined);
       }
       // The project disappears when its last session does, so the shell has to
       // be rebuilt for the row to go — `forgetAddedProject` only notifies for
@@ -722,7 +737,7 @@ async function run(command: ClientOrchestrationCommand): Promise<{ sequence: num
         .map(([, value]) => ({
           answers: Array.isArray(value) ? value.map(String) : [String(value)],
         }));
-      await loopCall("session.answer", {
+      await host.call("session.answer", {
         askId: (command as { requestId: string }).requestId,
         answers: ordered,
       });
@@ -733,13 +748,22 @@ async function run(command: ClientOrchestrationCommand): Promise<{ sequence: num
     case "thread.meta.update": {
       const title = command.title;
       if (typeof title === "string" && title.trim() !== "") {
-        await loopCall("session.rename", {
+        await host.call("session.rename", {
           sessionId: loopSessionIdFor(command.threadId),
           name: title,
         });
       }
       return { sequence: 0 };
     }
+
+    // loop has no runtime or interaction modes (access is the bashApprove
+    // setting, planning the plan agent), so there is nothing to change — but
+    // refusing them wedged clients that set them before every send: the
+    // phone's outbox retried the refused command forever and never reached
+    // the turn. Accepted as no-ops.
+    case "thread.runtime-mode.set":
+    case "thread.interaction-mode.set":
+      return { sequence: 0 };
 
     default:
       throw new UnsupportedCommandError(command.type);

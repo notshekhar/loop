@@ -142,19 +142,30 @@ export function buildProjectActionItems(input: {
   runProject: (project: Project) => Promise<void>;
   searchTerms?: (project: Project) => ReadonlyArray<string>;
   shortcutCommand?: KeybindingCommand;
+  /** The machine a project is on, when more than one is paired — the same
+   * folder on two machines is otherwise two identical rows. */
+  machineLabel?: (project: Project) => string | null;
 }): CommandPaletteActionItem[] {
-  return input.projects.map((project) => ({
+  return input.projects.map((project) => {
+    const machine = input.machineLabel?.(project) ?? null;
+    return {
     kind: "action",
     value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
-    searchTerms: [project.title, project.workspaceRoot, ...(input.searchTerms?.(project) ?? [])],
+    searchTerms: [
+      project.title,
+      project.workspaceRoot,
+      ...(machine ? [machine] : []),
+      ...(input.searchTerms?.(project) ?? []),
+    ],
     title: project.title,
-    description: project.workspaceRoot,
+    description: machine ? `${machine} · ${project.workspaceRoot}` : project.workspaceRoot,
     icon: input.icon(project),
     ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
     run: async () => {
       await input.runProject(project);
     },
-  }));
+    } satisfies CommandPaletteActionItem;
+  });
 }
 
 export type BuildThreadActionItemsThread = Pick<

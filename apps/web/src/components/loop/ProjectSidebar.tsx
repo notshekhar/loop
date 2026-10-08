@@ -29,6 +29,8 @@
  * See `sidebarThreads.logic.ts` for the classification both this and the
  * focused sidebar run on.
  */
+import { LoadMoreSentinel } from "./LoadMoreSentinel";
+import { useSessionPaging } from "../../loop/useSessionPaging";
 import { scopeProjectRef } from "@loop/runtime/environment";
 import {
   ChevronDownIcon,
@@ -100,7 +102,10 @@ const ProjectThreadList = memo(function ProjectThreadList({
   activeThreadId,
   onThreadContextMenu,
   onArchiveThread,
+  folder,
 }: {
+  /** The folder this list is, for paging its sessions (useSessionPaging). */
+  folder: { readonly environmentId: string; readonly cwd: string };
   sections: SidebarThreadSections;
   settledVisible: number;
   settledOpen: boolean;
@@ -113,6 +118,8 @@ const ProjectThreadList = memo(function ProjectThreadList({
   const open = [...sections.needsYou, ...sections.working, ...sections.recent];
   const settled = sections.settled.slice(0, settledVisible);
   const remaining = sections.settled.length - settled.length;
+  // An open folder lists its own newest page, then the next as you scroll.
+  const sessionPaging = useSessionPaging({ environmentIds: [], folders: [folder] });
   if (open.length === 0 && sections.settled.length === 0) return null;
 
   return (
@@ -148,14 +155,15 @@ const ProjectThreadList = memo(function ProjectThreadList({
               row={row}
             />
           ))}
-          {remaining > 0 ? (
-            <button
-              className="ml-2 w-fit cursor-pointer rounded-md px-1 py-0.5 text-[11px] text-sidebar-muted-foreground/60 outline-hidden ring-ring hover:text-sidebar-foreground focus-visible:ring-2"
-              onClick={onShowMoreSettled}
-              type="button"
-            >
-              Show {Math.min(remaining, SIDEBAR_SETTLED_PAGE)} more
-            </button>
+          {remaining > 0 || sessionPaging.hasMore || sessionPaging.loading ? (
+            <LoadMoreSentinel
+              itemCount={settled.length}
+              loading={sessionPaging.loading}
+              onVisible={() => {
+                if (remaining > 0) onShowMoreSettled();
+                else if (sessionPaging.hasMore) sessionPaging.loadMore();
+              }}
+            />
           ) : null}
         </>
       ) : null}
@@ -327,6 +335,7 @@ const ProjectRowItem = memo(function ProjectRowItem({
       )}
       {expanded && sections ? (
         <ProjectThreadList
+          folder={{ environmentId: project.environmentId, cwd: project.id }}
           activeThreadId={activeThreadId}
           onArchiveThread={onArchiveThread}
           onShowMoreSettled={onShowMoreSettled}
@@ -551,7 +560,11 @@ export default function ProjectSidebar() {
                       // Derived only for the folders that are open: slicing
                       // every project's threads on every render would walk the
                       // whole history for rows nobody is looking at.
-                      sections={expanded ? sectionsForProject(sections, project.id) : null}
+                      sections={
+                        expanded
+                          ? sectionsForProject(sections, project.id, project.environmentId)
+                          : null
+                      }
                     />
                   );
                 })

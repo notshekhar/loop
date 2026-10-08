@@ -48,6 +48,37 @@ function shouldPersistThread(thread: OrchestrationThread): boolean {
   return status !== "starting" && status !== "running";
 }
 
+/**
+ * Whether two snapshots of a thread say the same thing. A cheap signature
+ * first — what changes when a turn moves (counts, the last message and its
+ * length, the turn's state) — so a live turn never pays for more; only a
+ * snapshot that passes it is compared in full.
+ */
+function sameThreadContent(a: OrchestrationThread, b: OrchestrationThread): boolean {
+  if (a === b) return true;
+  const signature = (t: OrchestrationThread) => {
+    const m = t.messages.at(-1);
+    const act = t.activities.at(-1);
+    return [
+      t.updatedAt,
+      t.title,
+      t.messages.length,
+      m?.id,
+      m?.updatedAt,
+      m?.text.length,
+      m?.streaming,
+      t.activities.length,
+      act?.id,
+      t.latestTurn?.state,
+      t.latestTurn?.completedAt,
+      t.session?.status,
+      t.archivedAt,
+    ].join("\u0000");
+  };
+  if (signature(a) !== signature(b)) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
   threadId: ThreadIdType,
 ) {
@@ -145,9 +176,25 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     thread: OrchestrationThread,
   ) {
     const waiting = yield* Ref.get(awaitingCompletion);
+    const status = waiting ? ("synchronizing" as const) : ("live" as const);
+    // A snapshot identical to the one already held is not news. They arrive
+    // whenever loop rebuilds the thread for a reason that did not touch it
+    // (another session's turn, a reconnect), each as brand-new objects — and
+    // a new object re-derives and re-renders the whole transcript. MEASURED
+    // on the phone: an idle thread re-rendering every few seconds, 100ms+
+    // per pass on a long session.
+    const current = yield* SubscriptionRef.get(state);
+    if (
+      Option.isSome(current.data) &&
+      current.status === status &&
+      Option.isNone(current.error) &&
+      sameThreadContent(current.data.value, thread)
+    ) {
+      return;
+    }
     yield* SubscriptionRef.set(state, {
       data: Option.some(thread),
-      status: waiting ? "synchronizing" : "live",
+      status,
       error: Option.none(),
     });
     // Active threads can update many times per second and retain large tool

@@ -10,6 +10,7 @@ const turn = (id: string, sessionId = "s1", threadId = "t1") => ({
   attachmentCount: 0,
   queuedAt: "2026-08-08T00:00:00.000Z",
   send: () => Promise.resolve(),
+  interrupt: () => Promise.resolve(),
 });
 
 describe("the queued-turns store", () => {

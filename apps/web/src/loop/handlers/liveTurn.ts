@@ -13,7 +13,7 @@
  */
 import { formatError } from "./formatError.ts";
 import { toolStreamsItsInput } from "./streamingInput.ts";
-import { onLoopEvent } from "../transport.ts";
+import { defaultLoopHost, type LoopHost } from "../transport.ts";
 
 /**
  * One thing a subagent did, as it happens.
@@ -276,7 +276,35 @@ export interface LiveTurn {
  * the conversation IS can now ignore the ones that only change how much of it
  * has been written.
  */
-type Listener = (sessionId: string, structural: boolean) => void;
+type Listener = (sessionId: string, structural: boolean, lifecycle: boolean) => void;
+
+/*
+ * `lifecycle` is narrower still: true only when what a session list shows can
+ * have changed — a turn started or ended, a question opened or closed, or a
+ * caller said the session itself changed (rename, archive, delete).
+ *
+ * MEASURED in the desktop app: the shell listener rebuilt the sidebar on every
+ * STRUCTURAL event, and with a few hundred sessions each rebuild invalidated
+ * every thread's atom and re-rendered the sidebar — 200–300ms of blocked main
+ * thread per tool call. A tool-heavy reply hit that several times a second,
+ * which is the typing lag. A tool call changes nothing the sidebar draws.
+ */
+
+/** What the session list shows of a turn, to tell a lifecycle change from content. */
+const lifecycleShown = new Map<string, string>();
+function lifecycleOf(turn: LiveTurn | undefined): string {
+  return turn === undefined ? "none" : `${turn.running ? "running" : "ended"}:${turn.ask ? "ask" : ""}`;
+}
+/** Record what is shown now; true when it differs from what was shown before. */
+function lifecycleMoved(sessionId: string): boolean {
+  const now = lifecycleOf(turns.get(sessionId));
+  const moved = lifecycleShown.get(sessionId) !== now;
+  lifecycleShown.set(sessionId, now);
+  return moved;
+}
+function notify(sessionId: string, structural: boolean, lifecycle: boolean): void {
+  for (const listener of listeners) listener(sessionId, structural, lifecycle);
+}
 
 /**
  * The highest `session.event` seq applied per session.
@@ -290,7 +318,9 @@ const lastSeqs = new Map<string, number>();
 
 const turns = new Map<string, LiveTurn>();
 const listeners = new Set<Listener>();
-let subscribed = false;
+/** Hosts whose event stream feeds the turns above. Session ids are unique
+ * across hosts, so one table serves them all. */
+const subscribedHosts = new Set<string>();
 
 /** Everything the turn has said, for comparing against the transcript. */
 export function liveTurnText(turn: LiveTurn): string {
@@ -338,7 +368,7 @@ function touch(
   existing.lastEventAt = Date.now();
   if (structural) existing.historyRevision += 1;
   turns.set(sessionId, existing);
-  for (const listener of listeners) listener(sessionId, structural);
+  notify(sessionId, structural, lifecycleMoved(sessionId));
 }
 
 /**
@@ -785,10 +815,11 @@ function apply(sessionId: string, part: LoopTurnPart): void {
   }
 }
 
-function ensureSubscribed(): void {
-  if (subscribed) return;
-  subscribed = true;
-  onLoopEvent((event) => {
+/** Feed `host`'s turn events into the live turns. Idempotent per host. */
+export function subscribeLiveTurns(host: LoopHost = defaultLoopHost): void {
+  if (subscribedHosts.has(host.id)) return;
+  subscribedHosts.add(host.id);
+  host.onEvent((event) => {
     const part = event.part as LoopTurnPart | undefined;
     if (!part || typeof part.type !== "string") return;
     if (typeof event.seq === "number") {
@@ -839,12 +870,12 @@ export function forgetEventSeq(sessionId: string): void {
  * race with the send that is about to start one, and acting on it would freeze
  * every tool row in the turn as interrupted a moment before it began.
  */
-export function adoptRunningTurn(sessionId: string): void {
-  ensureSubscribed();
+export function adoptRunningTurn(sessionId: string, host: LoopHost = defaultLoopHost): void {
+  subscribeLiveTurns(host);
   const existing = turns.get(sessionId);
   if (existing === undefined) {
     turns.set(sessionId, emptyTurn());
-    for (const listener of listeners) listener(sessionId, true);
+    notify(sessionId, true, lifecycleMoved(sessionId));
     return;
   }
   if (existing.running) return;
@@ -908,12 +939,13 @@ const abandoned = new WeakSet<LiveTurn>();
  * call, so a delta that beats the reply has somewhere to land. Returns the
  * turn so a refused send can take back exactly this one (abandonLiveTurn).
  */
-export function beginLiveTurn(sessionId: string): LiveTurn {
-  ensureSubscribed();
+export function beginLiveTurn(sessionId: string, host: LoopHost = defaultLoopHost): LiveTurn {
+  subscribeLiveTurns(host);
   const created = emptyTurn();
   displacedBy.set(created, turns.get(sessionId));
   turns.set(sessionId, created);
-  for (const listener of listeners) listener(sessionId, true);
+  lifecycleMoved(sessionId);
+  notify(sessionId, true, true);
   return created;
 }
 
@@ -937,7 +969,7 @@ export function abandonLiveTurn(sessionId: string, turn: LiveTurn): void {
 
 /** The live turn for a session, if one has been seen. */
 export function readLiveTurn(sessionId: string): LiveTurn | undefined {
-  ensureSubscribed();
+  subscribeLiveTurns();
   return turns.get(sessionId);
 }
 
@@ -957,7 +989,8 @@ export function readLiveTurn(sessionId: string): LiveTurn | undefined {
 export function restoreLiveTurn(sessionId: string, turn: LiveTurn | undefined): void {
   if (turn === undefined) turns.delete(sessionId);
   else turns.set(sessionId, turn);
-  for (const listener of listeners) listener(sessionId, true);
+  lifecycleMoved(sessionId);
+  notify(sessionId, true, true);
 }
 
 /**
@@ -987,12 +1020,12 @@ export function clearLiveAsk(sessionId: string): void {
  * would move underneath a transcript that kept rendering the old branch.
  */
 export function notifyThreadChanged(sessionId: string): void {
-  for (const listener of listeners) listener(sessionId, true);
+  notify(sessionId, true, true);
 }
 
 /** Notified whenever any live turn changes. Returns an unsubscribe. */
 export function onLiveTurnChange(listener: Listener): () => void {
-  ensureSubscribed();
+  subscribeLiveTurns();
   listeners.add(listener);
   return () => listeners.delete(listener);
 }

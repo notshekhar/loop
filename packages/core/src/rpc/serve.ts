@@ -18,6 +18,7 @@ import { RpcServer } from "./server";
 import { loadWebApp, serveWebApp, webAppMissing } from "./serve-web-app";
 import { createServeWorkspace, WORKSPACE_EVENT, WORKSPACE_PREFIX } from "./serve-workspace";
 import { getStoredServeToken, storeServeToken } from "./serve-token-store";
+import { bearerToken, createPairing } from "./serve-pairing";
 
 /** The cookie a token page load leaves, so the app's own asset and socket
  * requests are authorised without the token in every URL. */
@@ -133,6 +134,8 @@ export function startWebServer(
          * across the network is a separate, deliberate choice.
          */
         remoteTerminal?: boolean;
+        /** Reported to pairing clients (see serve-pairing.ts). */
+        version?: string;
     } = {},
 ): ServeHandle {
     const hostname = opts.host ?? "127.0.0.1";
@@ -155,6 +158,13 @@ export function startWebServer(
         }
     });
 
+    // How other devices add this machine — see serve-pairing.ts.
+    const pairing = createPairing({
+        token,
+        version: opts.version?.trim() || "dev",
+        tokenMatches: (candidate) => tokenMatches(candidate, token),
+    });
+
     const unauthorized = () =>
         new Response("Unauthorized: token required (start with `serve` and use the printed URL)", { status: 401 });
 
@@ -162,9 +172,16 @@ export function startWebServer(
         hostname,
         port,
         async fetch(req, srv) {
+            const paired = await pairing.handle(req);
+            if (paired) return paired;
             const url = new URL(req.url);
             const fromQuery = tokenMatches(url.searchParams.get("token"), token);
-            if (!fromQuery && !tokenMatches(cookieToken(req), token)) return unauthorized();
+            // A paired device's socket carries a one-use ticket instead of the
+            // token; its other requests carry the token as a bearer.
+            const fromTicket = url.pathname === "/ws" && pairing.redeemTicket(url.searchParams.get("wsTicket"));
+            if (!fromQuery && !fromTicket && !tokenMatches(cookieToken(req), token) && !tokenMatches(bearerToken(req), token)) {
+                return unauthorized();
+            }
             if (url.pathname === "/ws") {
                 const local = isLoopbackHost(srv.requestIP(req)?.address ?? "");
                 const data: WsData = { terminal: local || opts.remoteTerminal === true, feed: null, close: null };

@@ -168,3 +168,93 @@ describe("partial output is persisted when a turn is aborted mid-stream", () => 
         expect(JSON.stringify(last.content)).toContain("interrupted this response");
     });
 });
+
+// A native agent (Claude Code, Cursor) runs its tools itself, inside ONE model
+// call: the whole turn is a single step. Interrupting it used to keep only the
+// trailing text and lose every tool that had already run.
+describe("an interrupted native-agent turn keeps the tools that completed", () => {
+    let dir: string;
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "loop-abort-native-"));
+    });
+    afterEach(() => {
+        currentModel = null;
+        mock.restore();
+    });
+
+    const marker = { nativeAgent: { provider: "claude-code" } };
+    function nativeTurn() {
+        const events: any[] = [
+            { type: "text-start", id: "t0" },
+            { type: "text-delta", id: "t0", delta: "Looking around." },
+            { type: "text-end", id: "t0" },
+            { type: "tool-input-start", id: "c1", toolName: "bash", providerExecuted: true, dynamic: true },
+            { type: "tool-input-end", id: "c1" },
+            {
+                type: "tool-call",
+                toolCallId: "c1",
+                toolName: "bash",
+                input: JSON.stringify({ command: "ls" }),
+                providerExecuted: true,
+                dynamic: true,
+                providerMetadata: marker,
+            },
+            { type: "tool-result", toolCallId: "c1", toolName: "bash", result: "README.md", dynamic: true, providerMetadata: marker },
+            { type: "text-start", id: "t1" },
+            { type: "text-delta", id: "t1", delta: "Now the tests." },
+            { type: "text-end", id: "t1" },
+            { type: "tool-input-start", id: "c2", toolName: "bash", providerExecuted: true, dynamic: true },
+            { type: "tool-input-end", id: "c2" },
+            {
+                type: "tool-call",
+                toolCallId: "c2",
+                toolName: "bash",
+                input: JSON.stringify({ command: "bun test" }),
+                providerExecuted: true,
+                dynamic: true,
+                providerMetadata: marker,
+            },
+            // Interrupted here: c2 never gets a result.
+            { type: "tool-result", toolCallId: "c2", toolName: "bash", result: "never seen", dynamic: true, providerMetadata: marker },
+            { type: "finish", finishReason: { unified: "stop", raw: "end_turn" }, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        ];
+        let i = 0;
+        return {
+            stream: new ReadableStream({
+                async pull(controller) {
+                    await new Promise((r) => setTimeout(r, 4));
+                    if (i < events.length) controller.enqueue(events[i++]);
+                    else controller.close();
+                },
+            }),
+        };
+    }
+
+    test("completed tool calls survive Esc in place; the one still running does not", async () => {
+        currentModel = new MockLanguageModelV3({ doStream: async () => nativeTurn() });
+        const { runTurn, CostTracker } = await import("../src/agent");
+        const session = mkSession(dir, MODEL);
+        const abort = new AbortController();
+        const em = new EventEmitter() as any;
+        em.on("tool-call", (part: { toolCallId?: string }) => {
+            if (part.toolCallId === "c2") abort.abort();
+        });
+        await runTurn({
+            session,
+            modelId: MODEL,
+            userInput: "look around and run the tests",
+            cwd: dir,
+            abortSignal: abort.signal,
+            tracker: new CostTracker(),
+            emitter: em,
+        });
+
+        const assistant = session.entries().find((e: any) => e.type === "message" && e.role === "assistant") as any;
+        expect(assistant.interrupted).toBe(true);
+        const parts = assistant.content as Array<{ type: string; toolCallId?: string; text?: string; output?: unknown }>;
+        expect(parts.map((p) => p.type)).toEqual(["text", "tool-call", "tool-result", "text"]);
+        expect(parts[1]).toMatchObject({ toolCallId: "c1", toolName: "bash", input: { command: "ls" }, providerExecuted: true });
+        expect(parts[2]).toMatchObject({ toolCallId: "c1", output: { type: "text", value: "README.md" } });
+        expect(parts.some((p) => p.toolCallId === "c2")).toBe(false);
+    });
+});

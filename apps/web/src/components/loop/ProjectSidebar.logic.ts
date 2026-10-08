@@ -128,3 +128,50 @@ export function resolveActiveProjectId(input: {
   );
   return thread?.projectId ?? null;
 }
+
+/**
+ * Projects for a sidebar: this machine's first, then by title.
+ *
+ * A loop project id is its folder, so the same repository paired from two
+ * machines is two projects with one id. Ordering this machine's ahead is what
+ * makes it the default — nothing should start on another machine unless the
+ * user asked for that machine.
+ */
+export function orderProjectsForSidebar<P extends { readonly environmentId: string; readonly title: string }>(
+  projects: readonly P[],
+  primaryEnvironmentId: string | null,
+): P[] {
+  const local = (project: P) => (project.environmentId === primaryEnvironmentId ? 0 : 1);
+  return projects.toSorted(
+    (left, right) => local(left) - local(right) || left.title.localeCompare(right.title),
+  );
+}
+
+/**
+ * The project a sidebar is showing, matched on machine AND folder.
+ *
+ * Matching on the folder alone picked whichever machine's copy sorted first —
+ * which could be another machine, so a new thread silently started there. The
+ * machine comes from the route (a thread or draft names it); when the route
+ * names only a folder, this machine's copy wins, then any.
+ */
+export function pickSidebarProject<P extends { readonly id: string; readonly environmentId: string }>(
+  ordered: readonly P[],
+  wanted: {
+    readonly projectId: string | null;
+    readonly environmentId: string | null;
+    readonly primaryEnvironmentId: string | null;
+  },
+): P | null {
+  if (wanted.projectId !== null) {
+    const sameFolder = ordered.filter((project) => project.id === wanted.projectId);
+    const match =
+      (wanted.environmentId !== null
+        ? sameFolder.find((project) => project.environmentId === wanted.environmentId)
+        : undefined) ??
+      sameFolder.find((project) => project.environmentId === wanted.primaryEnvironmentId) ??
+      sameFolder[0];
+    if (match) return match;
+  }
+  return ordered[0] ?? null;
+}

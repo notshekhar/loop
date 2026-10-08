@@ -138,6 +138,7 @@ const RPC_METHODS = [
     "server.info",
     "session.create",
     "session.list",
+    "session.projects",
     "session.history",
     "session.open",
     "session.send",
@@ -569,7 +570,15 @@ export class RpcServer {
                         : params.archived === true || params.archived === "true"
                           ? "archived"
                           : "active";
-                return this.manager.list(params.cwd as string | undefined, scope).map((row) => {
+                // `limit`/`offset` page it, newest first (`session.projects`
+                // still lists every folder). Absent, it is the whole list, as
+                // every client predating paging expects.
+                const page = {
+                    ...(typeof params.limit === "number" ? { limit: params.limit } : {}),
+                    ...(typeof params.offset === "number" ? { offset: params.offset } : {}),
+                    ...(Array.isArray(params.ids) ? { ids: params.ids.map(String) } : {}),
+                };
+                return this.manager.list(params.cwd as string | undefined, scope, page).map((row) => {
                     const ctx = this.sessions.get(row.id);
                     // `model`/`provider` on the row are the session's CREATION
                     // model. `lastModel` is what it is actually running now, so
@@ -583,6 +592,13 @@ export class RpcServer {
                         attached: ctx?.subscribers.size ?? 0,
                     };
                 });
+            },
+            "session.projects": (params) => {
+                // Every folder with a session, with counts — so a paged
+                // session list still draws the whole project list.
+                const scope: SessionScope =
+                    params.archived === "all" ? "all" : params.archived === true ? "archived" : "active";
+                return this.manager.folders(scope);
             },
             "session.history": async (params) => {
                 // Full transcript along the current branch so a (re)connecting

@@ -1,0 +1,288 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "paths": {
+      "@loop/contracts": [
+        "../web/src/loop/contracts/index.ts"
+      ],
+      "@loop/contracts/relay": [
+        "../web/src/loop/contracts/relay.ts"
+      ],
+      "@loop/contracts/settings": [
+        "../web/src/loop/contracts/settings.ts"
+      ],
+      "@loop/runtime/authorization": [
+        "../web/src/loop/runtime/authorization/index.ts"
+      ],
+      "@loop/runtime/connection": [
+        "../web/src/loop/runtime/connection/index.ts"
+      ],
+      "@loop/runtime/environment": [
+        "../web/src/loop/runtime/environment/index.ts"
+      ],
+      "@loop/runtime/errors": [
+        "../web/src/loop/runtime/errors/index.ts"
+      ],
+      "@loop/runtime/operations": [
+        "../web/src/loop/runtime/operations/index.ts"
+      ],
+      "@loop/runtime/operations/projects": [
+        "../web/src/loop/runtime/operations/projects.ts"
+      ],
+      "@loop/runtime/platform": [
+        "../web/src/loop/runtime/platform/index.ts"
+      ],
+      "@loop/runtime/relay": [
+        "../web/src/loop/runtime/relay/index.ts"
+      ],
+      "@loop/runtime/rpc": [
+        "../web/src/loop/runtime/rpc/index.ts"
+      ],
+      "@loop/providers/presentation": [
+        "../web/src/loop/providers/presentation.ts"
+      ],
+      "@loop/handlers/ids": [
+        "../web/src/loop/handlers/ids.ts"
+      ],
+      "@loop/handlers/sessionPaging": [
+        "../web/src/loop/handlers/sessionPaging.ts"
+      ],
+      "@loop/ui/verbGroup": [
+        "../web/src/components/loop/loopVerbGroup.ts"
+      ],
+      "@loop/runtime/state/assets": [
+        "../web/src/loop/runtime/state/assets.ts"
+      ],
+      "@loop/runtime/state/auth": [
+        "../web/src/loop/runtime/state/auth.ts"
+      ],
+      "@loop/runtime/state/connections": [
+        "../web/src/loop/runtime/state/connections.ts"
+      ],
+      "@loop/runtime/state/entities": [
+        "../web/src/loop/runtime/state/entities.ts"
+      ],
+      "@loop/runtime/state/filesystem": [
+        "../web/src/loop/runtime/state/filesystem.ts"
+      ],
+      "@loop/runtime/state/git": [
+        "../web/src/loop/runtime/state/git.ts"
+      ],
+      "@loop/runtime/state/models": [
+        "../web/src/loop/runtime/state/models.ts"
+      ],
+      "@loop/runtime/state/orchestration": [
+        "../web/src/loop/runtime/state/orchestration.ts"
+      ],
+      "@loop/runtime/state/presentation": [
+        "../web/src/loop/runtime/state/presentation.ts"
+      ],
+      "@loop/runtime/state/preview": [
+        "../web/src/loop/runtime/state/preview.ts"
+      ],
+      "@loop/runtime/state/project-grouping": [
+        "../web/src/loop/runtime/state/projectGrouping.ts"
+      ],
+      "@loop/runtime/state/projects": [
+        "../web/src/loop/runtime/state/projects.ts"
+      ],
+      "@loop/runtime/state/relay": [
+        "../web/src/loop/runtime/state/relayDiscovery.ts"
+      ],
+      "@loop/runtime/state/review": [
+        "../web/src/loop/runtime/state/review.ts"
+      ],
+      "@loop/runtime/state/runtime": [
+        "../web/src/loop/runtime/state/runtime.ts"
+      ],
+      "@loop/runtime/state/server": [
+        "../web/src/loop/runtime/state/server.ts"
+      ],
+      "@loop/runtime/state/session": [
+        "../web/src/loop/runtime/state/session.ts"
+      ],
+      "@loop/runtime/state/shell": [
+        "../web/src/loop/runtime/state/shell.ts"
+      ],
+      "@loop/runtime/state/source-control": [
+        "../web/src/loop/runtime/state/sourceControl.ts"
+      ],
+      "@loop/runtime/state/terminal": [
+        "../web/src/loop/runtime/state/terminal.ts"
+      ],
+      "@loop/runtime/state/thread-search": [
+        "../web/src/loop/runtime/state/threadSearch.ts"
+      ],
+      "@loop/runtime/state/thread-settled": [
+        "../web/src/loop/runtime/state/threadSettled.ts"
+      ],
+      "@loop/runtime/state/thread-sort": [
+        "../web/src/loop/runtime/state/threadSort.ts"
+      ],
+      "@loop/runtime/state/threads": [
+        "../web/src/loop/runtime/state/threads.ts"
+      ],
+      "@loop/runtime/state/vcs": [
+        "../web/src/loop/runtime/state/vcs.ts"
+      ],
+      "@loop/shared/DrainableWorker": [
+        "../web/src/loop/shared/DrainableWorker.ts"
+      ],
+      "@loop/shared/KeyedCoalescingWorker": [
+        "../web/src/loop/shared/KeyedCoalescingWorker.ts"
+      ],
+      "@loop/shared/Net": [
+        "../web/src/loop/shared/Net.ts"
+      ],
+      "@loop/shared/String": [
+        "../web/src/loop/shared/String.ts"
+      ],
+      "@loop/shared/Struct": [
+        "../web/src/loop/shared/Struct.ts"
+      ],
+      "@loop/shared/advertisedEndpoint": [
+        "../web/src/loop/shared/advertisedEndpoint.ts"
+      ],
+      "@loop/shared/agentAwareness": [
+        "../web/src/loop/shared/agentAwareness.ts"
+      ],
+      "@loop/shared/backgroundActivitySettings": [
+        "../web/src/loop/shared/backgroundActivitySettings.ts"
+      ],
+      "@loop/shared/chatList": [
+        "../web/src/loop/shared/chatList.ts"
+      ],
+      "@loop/shared/cliArgs": [
+        "../web/src/loop/shared/cliArgs.ts"
+      ],
+      "@loop/shared/composerInlineTokens": [
+        "../web/src/loop/shared/composerInlineTokens.ts"
+      ],
+      "@loop/shared/composerTrigger": [
+        "../web/src/loop/shared/composerTrigger.ts"
+      ],
+      "@loop/shared/composerFileLink": [
+        "../web/src/loop/shared/composerFileLink.ts"
+      ],
+      "@loop/shared/connectAuth": [
+        "../web/src/loop/shared/connectAuth.ts"
+      ],
+      "@loop/shared/devHome": [
+        "../web/src/loop/shared/devHome.ts"
+      ],
+      "@loop/shared/devProxy": [
+        "../web/src/loop/shared/devProxy.ts"
+      ],
+      "@loop/shared/dpop": [
+        "../web/src/loop/shared/dpop.ts"
+      ],
+      "@loop/shared/dpopCommon": [
+        "../web/src/loop/shared/dpopCommon.ts"
+      ],
+      "@loop/shared/filePreview": [
+        "../web/src/loop/shared/filePreview.ts"
+      ],
+      "@loop/shared/git": [
+        "../web/src/loop/shared/git.ts"
+      ],
+      "@loop/shared/hostProcess": [
+        "../web/src/loop/shared/hostProcess.ts"
+      ],
+      "@loop/shared/httpObservability": [
+        "../web/src/loop/shared/httpObservability.ts"
+      ],
+      "@loop/shared/httpReadiness": [
+        "../web/src/loop/shared/httpReadiness.ts"
+      ],
+      "@loop/shared/keybindings": [
+        "../web/src/loop/shared/keybindings.ts"
+      ],
+      "@loop/shared/logging": [
+        "../web/src/loop/shared/logging.ts"
+      ],
+      "@loop/shared/model": [
+        "../web/src/loop/shared/model.ts"
+      ],
+      "@loop/shared/oauthScope": [
+        "../web/src/loop/shared/oauthScope.ts"
+      ],
+      "@loop/shared/observability": [
+        "../web/src/loop/shared/observability.ts"
+      ],
+      "@loop/shared/orchestrationTiming": [
+        "../web/src/loop/shared/orchestrationTiming.ts"
+      ],
+      "@loop/shared/path": [
+        "../web/src/loop/shared/path.ts"
+      ],
+      "@loop/shared/preview": [
+        "../web/src/loop/shared/preview.ts"
+      ],
+      "@loop/shared/previewViewport": [
+        "../web/src/loop/shared/previewViewport.ts"
+      ],
+      "@loop/shared/projectFavicon": [
+        "../web/src/loop/shared/projectFavicon.ts"
+      ],
+      "@loop/shared/projectScripts": [
+        "../web/src/loop/shared/projectScripts.ts"
+      ],
+      "@loop/shared/qrCode": [
+        "../web/src/loop/shared/qrCode.ts"
+      ],
+      "@loop/shared/relayAuth": [
+        "../web/src/loop/shared/relayAuth.ts"
+      ],
+      "@loop/shared/relayClient": [
+        "../web/src/loop/shared/relayClient.ts"
+      ],
+      "@loop/shared/relayJwt": [
+        "../web/src/loop/shared/relayJwt.ts"
+      ],
+      "@loop/shared/relaySigning": [
+        "../web/src/loop/shared/relaySigning.ts"
+      ],
+      "@loop/shared/relayTracing": [
+        "../web/src/loop/shared/relayTracing.ts"
+      ],
+      "@loop/shared/relayUrl": [
+        "../web/src/loop/shared/relayUrl.ts"
+      ],
+      "@loop/shared/remote": [
+        "../web/src/loop/shared/remote.ts"
+      ],
+      "@loop/shared/schemaJson": [
+        "../web/src/loop/shared/schemaJson.ts"
+      ],
+      "@loop/shared/schemaYaml": [
+        "../web/src/loop/shared/schemaYaml.ts"
+      ],
+      "@loop/shared/searchRanking": [
+        "../web/src/loop/shared/searchRanking.ts"
+      ],
+      "@loop/shared/semver": [
+        "../web/src/loop/shared/semver.ts"
+      ],
+      "@loop/shared/serverSettings": [
+        "../web/src/loop/shared/serverSettings.ts"
+      ],
+      "@loop/shared/shell": [
+        "../web/src/loop/shared/shell.ts"
+      ],
+      "@loop/shared/sourceControl": [
+        "../web/src/loop/shared/sourceControl.ts"
+      ],
+      "@loop/shared/loopProjectFile": [
+        "../web/src/loop/shared/loopProjectFile.ts"
+      ],
+      "@loop/shared/terminalLabels": [
+        "../web/src/loop/shared/terminalLabels.ts"
+      ],
+      "@loop/shared/toolActivity": [
+        "../web/src/loop/shared/toolActivity.ts"
+      ]
+    }
+  }
+}

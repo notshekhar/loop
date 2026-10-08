@@ -1,4 +1,5 @@
 import type { EnvironmentThreadShell } from "@loop/runtime/state/models";
+import type { SidebarThreadRow, SidebarThreadSections } from "./sidebarThreads.logic";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -231,5 +232,25 @@ describe("what a collapsed project row says", () => {
     const mine = sectionsForProject(sections, "proj-oboe");
     expect(mine.needsYou.map((row) => row.id)).toEqual(["other-project"]);
     expect(mine.working).toHaveLength(0);
+  });
+});
+
+describe("one folder on two paired machines", () => {
+  const row = (id: string, environmentId: string) =>
+    ({ id, environmentId, projectId: "/work/app" }) as unknown as SidebarThreadRow;
+  const sections = {
+    needsYou: [],
+    working: [row("on-mac", "mac"), row("on-devbox", "devbox")],
+    recent: [],
+    settled: [],
+  } as unknown as SidebarThreadSections;
+
+  it("keeps each machine's threads under its own project", () => {
+    expect(sectionsForProject(sections, "/work/app", "mac").working.map((r) => r.id)).toEqual([
+      "on-mac",
+    ]);
+    expect(sectionsForProject(sections, "/work/app", "devbox").working.map((r) => r.id)).toEqual([
+      "on-devbox",
+    ]);
   });
 });

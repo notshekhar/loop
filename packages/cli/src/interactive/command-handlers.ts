@@ -58,5 +58,7 @@ export function createCommandContext(state: AppState, deps: AppDeps): CommandCon
         ...createRecipeHandlers(state, deps),
         ...createHandoffHandlers(state, deps),
         manageGoalMode: (args: string) => goalModeEngine(state, deps).manageGoalMode(args),
+        manageHosts: (args: string) => deps.remote?.manageHosts(args),
+        remoteControl: (args: string) => deps.remote?.remoteControl(args),
     };
 }

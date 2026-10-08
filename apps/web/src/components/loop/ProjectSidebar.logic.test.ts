@@ -7,6 +7,8 @@ import {
   resolveActiveProjectId,
   type ProjectSidebarProjectInput,
   type ProjectSidebarThreadInput,
+  orderProjectsForSidebar,
+  pickSidebarProject,
 } from "./ProjectSidebar.logic";
 
 const LOCAL = "local" as EnvironmentId;
@@ -153,5 +155,34 @@ describe("the active project row", () => {
   it("highlights nothing on a route that names no project", () => {
     expect(resolveActiveProjectId({ threads })).toBeNull();
     expect(resolveActiveProjectId({ routeThreadId: "gone", threads })).toBeNull();
+  });
+});
+
+describe("projects across paired machines", () => {
+  // The same folder on two machines: one id, two projects.
+  const mac = { id: "/work/app", environmentId: "mac", title: "app" };
+  const devbox = { id: "/work/app", environmentId: "devbox", title: "app" };
+  const other = { id: "/work/zeta", environmentId: "mac", title: "zeta" };
+
+  it("puts this machine's projects first", () => {
+    expect(orderProjectsForSidebar([devbox, other, mac], "mac")).toEqual([mac, other, devbox]);
+  });
+
+  it("opens this machine's copy of a folder when the route names no machine", () => {
+    const ordered = orderProjectsForSidebar([devbox, mac], "mac");
+    expect(
+      pickSidebarProject(ordered, { projectId: "/work/app", environmentId: null, primaryEnvironmentId: "mac" }),
+    ).toBe(mac);
+  });
+
+  it("follows the route to the other machine's copy", () => {
+    const ordered = orderProjectsForSidebar([devbox, mac], "mac");
+    expect(
+      pickSidebarProject(ordered, {
+        projectId: "/work/app",
+        environmentId: "devbox",
+        primaryEnvironmentId: "mac",
+      }),
+    ).toBe(devbox);
   });
 });

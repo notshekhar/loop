@@ -36,6 +36,7 @@ import {
 } from "./dispatch.ts";
 import { formatError } from "./formatError.ts";
 import { toInstanceId } from "./ids.ts";
+import { pinSession } from "./sessionPaging.ts";
 import {
   adoptRunningTurn,
   clearLiveTurn,
@@ -50,7 +51,7 @@ import {
   type LiveSubagentStep,
 } from "./liveTurn.ts";
 import { parsePartialInput } from "./streamingInput.ts";
-import { loopCall, onLoopConnectionChange } from "../transport.ts";
+import { defaultLoopHost, type LoopHost } from "../transport.ts";
 
 /** `kind` the work log turns into a thinking-toned row. */
 const THINKING_ACTIVITY_KIND = "task.progress";
@@ -1341,7 +1342,10 @@ const emptyThread = (threadId: string, intent: { cwd: string; provider: string; 
  */
 const historyCache = new Map<string, { revision: number; history: LoopHistory }>();
 
-export const buildThread = Effect.fnUntraced(function* (loopSessionId: string) {
+export const buildThread = Effect.fnUntraced(function* (
+  loopSessionId: string,
+  host: LoopHost = defaultLoopHost,
+) {
   const intent = draftIntent(loopSessionId);
   if (intent) return yield* emptyThread(loopSessionId, intent);
 
@@ -1366,7 +1370,7 @@ export const buildThread = Effect.fnUntraced(function* (loopSessionId: string) {
   const history = reusable
     ? cached.history
     : yield* Effect.promise(() =>
-        loopCall<LoopHistory>("session.history", { sessionId: loopSessionId }),
+        host.call<LoopHistory>("session.history", { sessionId: loopSessionId }),
       );
   if (!reusable) {
     if (revision === undefined) historyCache.delete(loopSessionId);
@@ -1515,9 +1519,9 @@ const authFailure = (message: string) =>
  * is the subscription, and is a separate call precisely so history can be
  * rendered first and no event can slip in between and apply twice.
  */
-const attach = (loopSessionId: string) =>
+const attach = (loopSessionId: string, host: LoopHost) =>
   Effect.promise(async () => {
-    await loopCall("session.open", { sessionId: loopSessionId }).catch(() => undefined);
+    await host.call("session.open", { sessionId: loopSessionId }).catch(() => undefined);
     // `afterSeq` is the difference between watching a turn and missing it.
     //
     // loop persists a turn only once it ends and broadcasts only to clients
@@ -1530,7 +1534,7 @@ const attach = (loopSessionId: string) =>
     // far; `running` from the response is what marks it as still going, since
     // a `finish` left in the ring by an EARLIER turn would otherwise say the
     // opposite.
-    const attached = await loopCall<{ running?: boolean; resync?: boolean }>("session.attach", {
+    const attached = await host.call<{ running?: boolean; resync?: boolean }>("session.attach", {
       sessionId: loopSessionId,
       afterSeq: lastEventSeq(loopSessionId),
     }).catch(() => null);
@@ -1542,7 +1546,7 @@ const attach = (loopSessionId: string) =>
       forgetEventSeq(loopSessionId);
       clearLiveTurn(loopSessionId);
     }
-    if (attached.running === true) adoptRunningTurn(loopSessionId);
+    if (attached.running === true) adoptRunningTurn(loopSessionId, host);
   });
 
 const snapshotItem = (thread: unknown): OrchestrationThreadStreamItem =>
@@ -1554,6 +1558,7 @@ const snapshotItem = (thread: unknown): OrchestrationThreadStreamItem =>
  */
 export function threadStream(
   threadId: string,
+  host: LoopHost = defaultLoopHost,
 ): Stream.Stream<OrchestrationThreadStreamItem, EnvironmentAuthorizationError> {
   /**
    * Resolved on every use, never captured.
@@ -1569,8 +1574,8 @@ export function threadStream(
   const initial = Effect.gen(function* () {
     const sessionId = currentSessionId();
     // A draft has nothing to attach to yet; the first rebuild does it.
-    if (draftIntent(sessionId) === undefined) yield* attach(sessionId);
-    const thread = yield* buildThread(sessionId);
+    if (draftIntent(sessionId) === undefined) yield* attach(sessionId, host);
+    const thread = yield* buildThread(sessionId, host);
     return [snapshotItem(thread), { kind: "synchronized" as const }];
   }).pipe(Effect.mapError(() => authFailure(`loop could not open thread ${threadId}`)));
 
@@ -1602,11 +1607,11 @@ export function threadStream(
           const ready =
             attached === sessionId
               ? Promise.resolve()
-              : Effect.runPromise(attach(sessionId)).then(() => {
+              : Effect.runPromise(attach(sessionId, host)).then(() => {
                   attached = sessionId;
                 });
           void ready
-            .then(() => Effect.runPromise(buildThread(sessionId)))
+            .then(() => Effect.runPromise(buildThread(sessionId, host)))
             .then((thread) => Queue.offerUnsafe(queue, snapshotItem(thread)))
             .catch(() => undefined)
             .finally(() => {
@@ -1677,11 +1682,16 @@ export function threadStream(
          * asking for a rebuild re-subscribes, and `afterSeq` replays whatever
          * was missed while the socket was down.
          */
-        const unwatchConnection = onLoopConnectionChange((state) => {
+        const unwatchConnection = host.onConnectionChange((state) => {
           if (state !== "open") return;
           attached = null;
           schedule();
         });
+
+        // The shell lists a page of sessions, and this one may be older than
+        // it (opened from search, or a link). The view is merged with its
+        // shell row, so it is kept in the shell for as long as it is open.
+        const unpin = pinSession(host.id, currentSessionId());
 
         return () => {
           if (timer !== null) clearTimeout(timer);
@@ -1689,6 +1699,7 @@ export function threadStream(
           pending = false;
           unsubscribe();
           unwatchConnection();
+          unpin();
         };
       }),
       (dispose) => Effect.sync(dispose),

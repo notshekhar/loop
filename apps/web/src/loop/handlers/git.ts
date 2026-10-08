@@ -30,10 +30,11 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import {
-  loopGit,
+  defaultLoopHost,
   type GitStackedAction,
   type GitStackedActionOutcome,
   type GitStatus,
+  type LoopHost,
 } from "../transport.ts";
 
 const decodeRefs = Schema.decodeUnknownEffect(VcsListRefsResultSchema);
@@ -58,13 +59,16 @@ const NOT_A_REPO = {
   totalCount: 0,
 };
 
-export const listRefs = Effect.fnUntraced(function* (input: {
-  readonly cwd: string;
-  readonly query?: string | undefined;
-  readonly refKind?: "all" | "local" | "remote" | undefined;
-  readonly limit?: number | undefined;
-}) {
-  const git = loopGit();
+export const listRefs = Effect.fnUntraced(function* (
+  input: {
+    readonly cwd: string;
+    readonly query?: string | undefined;
+    readonly refKind?: "all" | "local" | "remote" | undefined;
+    readonly limit?: number | undefined;
+  },
+  host: LoopHost = defaultLoopHost,
+) {
+  const git = host.git();
   if (!git) return yield* decodeRefs(NOT_A_REPO).pipe(Effect.mapError(() => malformed("ref list")));
 
   const result = yield* Effect.promise(() => git.refs(input.cwd));
@@ -97,8 +101,11 @@ const toStatusResult = (status: GitStatus) => ({
   pr: null,
 });
 
-export const refreshStatus = Effect.fnUntraced(function* (input: { readonly cwd: string }) {
-  const git = loopGit();
+export const refreshStatus = Effect.fnUntraced(function* (
+  input: { readonly cwd: string },
+  host: LoopHost = defaultLoopHost,
+) {
+  const git = host.git();
   if (!git) {
     return yield* decodeStatus({
       ...NOT_A_REPO,
@@ -129,8 +136,9 @@ export const refreshStatus = Effect.fnUntraced(function* (input: { readonly cwd:
  */
 export function statusStream(
   cwd: string,
+  host: LoopHost = defaultLoopHost,
 ): Stream.Stream<VcsStatusStreamEvent, EnvironmentAuthorizationError> {
-  const git = loopGit();
+  const git = host.git();
   if (!git) return Stream.never;
 
   return Stream.callback<VcsStatusStreamEvent>((queue) =>
@@ -180,13 +188,16 @@ export function statusStream(
  * and keeps its tabs, which is what a folder that is not a repository should
  * look like. Only a shell too old to have the bridge fails.
  */
-export const diffPreview = Effect.fnUntraced(function* (input: {
-  readonly cwd: string;
-  readonly baseRef?: string | undefined;
-  readonly ignoreWhitespace?: boolean | undefined;
-  readonly contextLines?: number | undefined;
-}) {
-  const git = loopGit();
+export const diffPreview = Effect.fnUntraced(function* (
+  input: {
+    readonly cwd: string;
+    readonly baseRef?: string | undefined;
+    readonly ignoreWhitespace?: boolean | undefined;
+    readonly contextLines?: number | undefined;
+  },
+  host: LoopHost = defaultLoopHost,
+) {
+  const git = host.git();
   if (!git?.diffPreview) {
     return yield* Effect.fail(
       new VcsUnsupportedOperationError({
@@ -237,15 +248,18 @@ export const diffPreview = Effect.fnUntraced(function* (input: {
  * The stream stays open until one of those two arrives — the UI's toast is
  * driven by them, so ending early would leave a spinner up forever.
  */
-export const runStackedAction = (input: {
-  readonly actionId: string;
-  readonly cwd: string;
-  readonly action: GitStackedAction;
-  readonly commitMessage?: string | undefined;
-  readonly featureBranch?: boolean | undefined;
-  readonly filePaths?: readonly string[] | undefined;
-}): Stream.Stream<GitActionProgressEvent, GitManagerError> => {
-  const git = loopGit();
+export const runStackedAction = (
+  input: {
+    readonly actionId: string;
+    readonly cwd: string;
+    readonly action: GitStackedAction;
+    readonly commitMessage?: string | undefined;
+    readonly featureBranch?: boolean | undefined;
+    readonly filePaths?: readonly string[] | undefined;
+  },
+  host: LoopHost = defaultLoopHost,
+): Stream.Stream<GitActionProgressEvent, GitManagerError> => {
+  const git = host.git();
   if (!git?.runStackedAction) {
     return Stream.fail(
       new GitManagerError({
@@ -377,8 +391,10 @@ function buildToast(result: GitStackedActionOutcome): {
  * failing: the panel then says "Nothing detected yet", which is true, instead of
  * showing an error the user cannot act on.
  */
-export const discoverSourceControl = Effect.fnUntraced(function* () {
-  const git = loopGit();
+export const discoverSourceControl = Effect.fnUntraced(function* (
+  host: LoopHost = defaultLoopHost,
+) {
+  const git = host.git();
   if (!git?.discover) {
     return { versionControlSystems: [], sourceControlProviders: [] };
   }
@@ -423,8 +439,11 @@ export const discoverSourceControl = Effect.fnUntraced(function* () {
  * rather than being swallowed — an init that quietly did nothing would leave
  * the button looking broken in exactly the same way.
  */
-export const initRepo = Effect.fnUntraced(function* (input: { readonly cwd: string }) {
-  const git = loopGit();
+export const initRepo = Effect.fnUntraced(function* (
+  input: { readonly cwd: string },
+  host: LoopHost = defaultLoopHost,
+) {
+  const git = host.git();
   // A browser has no filesystem to init in, and an older shell has no `init`
   // on its bridge — both are honestly "this surface cannot do that".
   if (!git?.init) {

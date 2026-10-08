@@ -73,6 +73,12 @@ const appIconPath = resolve(distDirectory, "icon.png");
  * The app ships every asset it uses, so nothing needs to be fetched from the
  * network. `wasm-unsafe-eval` stays for the bundled WebAssembly modules, and
  * inline styles for the bundled CSS-in-JS.
+ *
+ * Connections are the exception: Settings → Connections pairs other machines
+ * running loop (`loop serve`, `/rc`) and then talks to them directly, at
+ * whatever http/ws address or tailnet name the user gave. Scripts still come
+ * only from the bundle, so this widens where the app's own code may connect,
+ * not what code runs. Same policy as upstream's desktop.
  */
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -80,7 +86,7 @@ const CONTENT_SECURITY_POLICY = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
-  "connect-src 'self' data: blob:",
+  "connect-src 'self' data: blob: http: https: ws: wss:",
   "worker-src 'self' blob:",
 ].join("; ");
 

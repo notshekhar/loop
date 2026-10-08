@@ -942,8 +942,11 @@ function OpenCommandPaletteDialog(props: {
           />
         ),
         runProject: openProjectFromSearch,
+        ...(environments.length > 1
+          ? { machineLabel: (project) => environmentLabelById.get(project.environmentId) ?? null }
+          : {}),
       }),
-    [openProjectFromSearch, pickerProjects, projectGroupByTargetKey],
+    [environmentLabelById, environments.length, openProjectFromSearch, pickerProjects, projectGroupByTargetKey],
   );
 
   const projectThreadItems = useMemo(

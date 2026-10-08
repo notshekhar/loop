@@ -231,13 +231,19 @@ export function HostedBrowserWebview(props: {
     wrapper.scrollTo({ left: 0, top: 0 });
   }, [runtimeTabId, viewport._tag, viewportHeight, viewportWidth]);
 
-  if (!config) return null;
-
   // A parked guest is put to sleep unless something is still reading it: a
   // recording draws its frames, and automation measures tabs that are not on
   // screen. See resolveHostedBrowserWebviewWrapperStyle.
+  //
+  // Read BEFORE the config guard below. These are hooks, and they used to sit
+  // after it: the first render (config still loading) returned early with two
+  // fewer hooks than the next, React threw #310, and with nothing to catch it
+  // the whole window went blank the moment the Browser tab was opened.
   const recordingTabIds = useActiveBrowserRecordingTabIds();
   const automationHeld = usePreviewAutomationHold(threadRef);
+
+  if (!config) return null;
+
   const keepLive = automationHeld || recordingTabIds.has(runtimeTabId);
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
     active,

@@ -16,7 +16,7 @@
 import { AssetWorkspaceContextNotFoundError, type AssetResource } from "@loop/contracts";
 import * as Effect from "effect/Effect";
 
-import { loopFilesystem } from "../transport.ts";
+import { defaultLoopHost, type LoopHost } from "../transport.ts";
 
 /**
  * How long the caller may treat the URL as good for. A blob URL lives until
@@ -32,6 +32,7 @@ const ASSET_TTL_MS = 60 * 60_000;
  * leak the old one for the life of the window, and a folder of screenshots
  * would grow the renderer's memory without bound.
  */
+/** Keyed by host and path: the same path on two machines is two files. */
 const blobUrlsByPath = new Map<string, string>();
 
 function assetPath(resource: AssetResource): string | null {
@@ -40,11 +41,14 @@ function assetPath(resource: AssetResource): string | null {
   return resource._tag === "workspace-file" ? resource.path : null;
 }
 
-export const createAssetUrl = Effect.fnUntraced(function* (input: {
-  readonly resource: AssetResource;
-}) {
+export const createAssetUrl = Effect.fnUntraced(function* (
+  input: {
+    readonly resource: AssetResource;
+  },
+  host: LoopHost = defaultLoopHost,
+) {
   const path = assetPath(input.resource);
-  const filesystem = loopFilesystem();
+  const filesystem = host.filesystem();
   if (path === null || !filesystem?.readAsset) {
     return yield* Effect.fail(
       new AssetWorkspaceContextNotFoundError({ resource: input.resource }),
@@ -58,14 +62,15 @@ export const createAssetUrl = Effect.fnUntraced(function* (input: {
     );
   }
 
-  const previous = blobUrlsByPath.get(path);
+  const key = `${host.id}\0${path}`;
+  const previous = blobUrlsByPath.get(key);
   if (previous) URL.revokeObjectURL(previous);
   // Copied into an own-buffer view: what crosses IPC is typed as a view over
   // `ArrayBufferLike`, which `Blob` will not take.
   const bytes = new Uint8Array(result.data.byteLength);
   bytes.set(result.data);
   const url = URL.createObjectURL(new Blob([bytes], { type: result.mimeType }));
-  blobUrlsByPath.set(path, url);
+  blobUrlsByPath.set(key, url);
 
   return { relativeUrl: url, expiresAt: Date.now() + ASSET_TTL_MS };
 });

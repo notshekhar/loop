@@ -97,7 +97,7 @@ describe("the shell snapshot", () => {
   });
 
   it("shows an added folder before it has any session", async () => {
-    rememberAddedProject("01PROJECTULID", "/w/fresh");
+    rememberAddedProject("primary", "01PROJECTULID", "/w/fresh");
     const snapshot = await snapshotOf([row({ id: "a", cwd: "/w/one" })]);
     const fresh = snapshot.projects.find((project) => project.id === "01PROJECTULID");
     expect(fresh?.workspaceRoot).toBe("/w/fresh");
@@ -107,7 +107,7 @@ describe("the shell snapshot", () => {
   });
 
   it("hands an added folder over to its sessions without doubling the row", async () => {
-    rememberAddedProject("01OTHERULID", "/w/claimed");
+    rememberAddedProject("primary", "01OTHERULID", "/w/claimed");
     const snapshot = await snapshotOf([row({ id: "a", cwd: "/w/claimed" })]);
     // One row for that folder, under the folder — not one under the folder and
     // one under the id the palette minted. (Asserted per-folder rather than
@@ -121,7 +121,7 @@ describe("the shell snapshot", () => {
   it("gives every project loop's configured default model", async () => {
     // A null here sent every new thread to the first provider in the list —
     // a fresh install ran xai/composer-2.5 whatever defaultModel said.
-    rememberAddedProject("added-1", "/w/added");
+    rememberAddedProject("primary", "added-1", "/w/added");
     const snapshot = await snapshotOf([row({ id: "a", cwd: "/w/one" })], {
       defaults: { model: "custom:fixture/fixture", provider: "custom:fixture" },
     });

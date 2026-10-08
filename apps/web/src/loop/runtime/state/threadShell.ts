@@ -35,12 +35,39 @@ export function createEnvironmentThreadShellAtoms(input: {
     environmentId: EnvironmentId,
   ) => Atom.Atom<OrchestrationShellSnapshot | null>;
 }) {
-  const environmentThreadsAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make(
-      (get): ReadonlyArray<OrchestrationThreadShell> =>
-        get(input.snapshotAtom(environmentId))?.threads ?? EMPTY_THREADS,
-    ).pipe(Atom.withLabel(`environment-threads:${environmentId}`)),
-  );
+  /**
+   * The environment's threads, sharing structure with the previous snapshot.
+   *
+   * Every shell snapshot arrives as brand-new objects, so without this a
+   * rebuild that changed one thread invalidated all of them: each thread's
+   * atom saw a new source, rebuilt its scoped shell, and the sidebar
+   * re-rendered every row. MEASURED in the desktop app with ~380 sessions:
+   * 200–300ms of blocked main thread per rebuild. A thread whose content is
+   * unchanged now keeps its previous object, and an unchanged list keeps its
+   * previous array, so the identity checks below short-circuit.
+   */
+  const environmentThreadsAtom = Atom.family((environmentId: EnvironmentId) => {
+    let previous: ReadonlyArray<OrchestrationThreadShell> = EMPTY_THREADS;
+    let previousById = new Map<ThreadId, { thread: OrchestrationThreadShell; encoded: string }>();
+    return Atom.make((get): ReadonlyArray<OrchestrationThreadShell> => {
+      const threads = get(input.snapshotAtom(environmentId))?.threads ?? EMPTY_THREADS;
+      if (threads === previous) return previous;
+      const nextById = new Map<ThreadId, { thread: OrchestrationThreadShell; encoded: string }>();
+      let changed = threads.length !== previous.length;
+      const next = threads.map((thread, index) => {
+        const encoded = JSON.stringify(thread);
+        const kept = previousById.get(thread.id);
+        const shared = kept !== undefined && kept.encoded === encoded ? kept.thread : thread;
+        nextById.set(thread.id, { thread: shared, encoded });
+        if (shared !== previous[index]) changed = true;
+        return shared;
+      });
+      previousById = nextById;
+      if (!changed) return previous;
+      previous = next;
+      return previous;
+    }).pipe(Atom.withLabel(`environment-threads:${environmentId}`));
+  });
 
   const environmentThreadIndexAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get): ReadonlyMap<ThreadId, OrchestrationThreadShell> => {

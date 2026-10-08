@@ -13,12 +13,12 @@ import { ServerConfig, type ServerProvider } from "@loop/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { APP_VERSION } from "../../branding.ts";
+import { APP_VERSION } from "../appVersion.ts";
 import { resolveModelAttachmentSupport } from "../modelAttachments.ts";
-import { providerPresentation, rememberCustomProviderShapes } from "../providers/index.ts";
+import { providerPresentation, rememberCustomProviderShapes } from "../providers/presentation.ts";
 import { detectEditors } from "./editors.ts";
 import { toInstanceId } from "./ids.ts";
-import { loopCall } from "../transport.ts";
+import { defaultLoopHost, type LoopHost } from "../transport.ts";
 
 /**
  * Shapes loop's RPC actually returns; measured against a live `loop serve`,
@@ -290,6 +290,8 @@ export interface BuildServerConfigOptions {
   readonly cwd: string;
   readonly environmentId: string;
   readonly label: string;
+  /** The machine this environment is. Absent: the page's own (see defaultLoopHost). */
+  readonly host?: LoopHost;
 }
 
 /**
@@ -345,22 +347,23 @@ export function serverConfigFingerprint(config: unknown): string {
 }
 
 export const buildServerConfig = Effect.fnUntraced(function* (options: BuildServerConfigOptions) {
+  const host = options.host ?? defaultLoopHost;
   const [catalog, auth, info, agentList, descriptors] = yield* Effect.promise(() =>
     Promise.all([
-      loopCall<readonly LoopCatalogModel[]>("catalog.list", {}, options.cwd).catch(
+      host.call<readonly LoopCatalogModel[]>("catalog.list", {}, options.cwd).catch(
         () => [] as readonly LoopCatalogModel[],
       ),
-      loopCall<LoopAuthStatus>("auth.status", {}, options.cwd).catch(() => ({}) as LoopAuthStatus),
-      loopCall<LoopServerInfo>("server.info", {}, options.cwd).catch(() => ({}) as LoopServerInfo),
+      host.call<LoopAuthStatus>("auth.status", {}, options.cwd).catch(() => ({}) as LoopAuthStatus),
+      host.call<LoopServerInfo>("server.info", {}, options.cwd).catch(() => ({}) as LoopServerInfo),
       // Empty on an older loop, which collapses the agent control to nothing
       // rather than offering agents the backend cannot run.
-      loopCall<readonly { name?: string }[]>("agent.list", {}, options.cwd).catch(
+      host.call<readonly { name?: string }[]>("agent.list", {}, options.cwd).catch(
         () => [] as readonly { name?: string }[],
       ),
       // Only for the gateway marks below — a custom provider has no brand of
       // its own, so its icon is the icon of the API it speaks, and this is the
       // only call that reports that.
-      loopCall<{ providers?: readonly LoopProviderDescriptor[] }>(
+      host.call<{ providers?: readonly LoopProviderDescriptor[] }>(
         "auth.providers",
         {},
         options.cwd,
@@ -382,7 +385,7 @@ export const buildServerConfig = Effect.fnUntraced(function* (options: BuildServ
   // The folder loop is actually running in beats whatever the shell guessed.
   const cwd = info.defaults?.cwd ?? options.cwd;
   // Cached behind a TTL, so the 30s poll does not re-probe PATH every time.
-  const availableEditors = yield* detectEditors();
+  const availableEditors = yield* detectEditors(host);
 
   return yield* decodeConfig({
     environment: {

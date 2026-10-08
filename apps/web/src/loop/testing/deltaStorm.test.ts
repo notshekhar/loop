@@ -26,6 +26,31 @@ let seed = 0;
 const session = () => `01STORM${(seed += 1)}`;
 
 describe("a delta storm", () => {
+  it("only calls a turn starting, asking or ending a lifecycle change", () => {
+    const id = session();
+    const lifecycle: boolean[] = [];
+    const stop = onLiveTurnChange((changed, _structural, isLifecycle) => {
+      if (changed === id) lifecycle.push(isLifecycle);
+    });
+    beginLiveTurn(id);
+    expect(lifecycle).toEqual([true]);
+    lifecycle.length = 0;
+    // A tool-heavy reply: structural, but nothing a session list shows.
+    applyLoopEvent(id, { type: "text-delta", data: "Looking." });
+    applyLoopEvent(id, { type: "tool-input-start", data: { toolCallId: "c1", toolName: "bash" } });
+    applyLoopEvent(id, { type: "tool-call", data: { toolCallId: "c1", toolName: "bash", input: {} } });
+    applyLoopEvent(id, { type: "tool-result", data: { toolCallId: "c1", output: "ok" } });
+    applyLoopEvent(id, { type: "reasoning-start" });
+    expect(lifecycle.every((value) => value === false)).toBe(true);
+    // A question opening is shown ("needs you"), and so is the turn ending.
+    applyLoopEvent(id, { type: "ask", data: { askId: "a1", questions: [] } });
+    expect(lifecycle.at(-1)).toBe(true);
+    applyLoopEvent(id, { type: "finish", data: {} });
+    expect(lifecycle.at(-1)).toBe(true);
+    stop();
+    clearLiveTurn(id);
+  });
+
   it("tells subscribers a delta is not a structural change", () => {
     const id = session();
     const structural: boolean[] = [];

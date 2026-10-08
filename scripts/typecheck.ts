@@ -30,6 +30,9 @@ const TARGETS: readonly Target[] = [
     { label: "build scripts", cwd: ROOT, bin: "tsc", project: "tsconfig.build-scripts.json" },
     { label: "apps/web", cwd: join(ROOT, "apps/web"), bin: "tsgo" },
     { label: "apps/desktop", cwd: join(ROOT, "apps/desktop"), bin: "tsgo" },
+    // Also typechecks the apps/web client code it runs on the phone, through
+    // the same @loop/* aliases — a change there that breaks mobile fails here.
+    { label: "apps/mobile", cwd: join(ROOT, "apps/mobile"), bin: "tsc" },
 ];
 
 const failed: string[] = [];

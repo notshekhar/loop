@@ -44,6 +44,7 @@ import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/http";
 
 import { APP_BASE_NAME } from "../branding";
+import { isDesktopShell } from "../loop/transport";
 import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
 import {
   readPrimaryEnvironmentTarget,
@@ -294,13 +295,26 @@ const capabilitiesLayer = Layer.effectContext(
  * expects them, but nothing dials them: RPC is answered in-process (see
  * `src/loop/runtime/rpc/session.ts`).
  */
+/**
+ * What the page's own loop is called beside paired ones — shown once there is
+ * more than one machine. In the desktop app it is this computer. In a browser
+ * opened from `loop serve` it is the server, which may well be another
+ * computer than the one holding the browser, so it is named by the address
+ * the page was opened at.
+ */
+function primaryEnvironmentLabel(): string {
+  if (isDesktopShell()) return "This machine";
+  const host = globalThis.location?.hostname?.trim();
+  return host ? host : APP_BASE_NAME;
+}
+
 const loadPrimaryConnectionRegistration = Effect.fn(
   "web.connectionPlatform.loadPrimaryConnectionRegistration",
 )(function* (resolved: PrimaryEnvironmentTarget) {
   return new PrimaryConnectionRegistration({
     target: new PrimaryConnectionTarget({
       environmentId: EnvironmentId.make(PRIMARY_LOCAL_ENVIRONMENT_ID),
-      label: APP_BASE_NAME,
+      label: primaryEnvironmentLabel(),
       httpBaseUrl: resolved.target.httpBaseUrl,
       wsBaseUrl: resolved.target.wsBaseUrl,
     }),

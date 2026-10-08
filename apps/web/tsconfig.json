@@ -67,6 +67,18 @@
       "@loop/runtime/rpc": [
         "./src/loop/runtime/rpc/index.ts"
       ],
+      "@loop/providers/presentation": [
+        "./src/loop/providers/presentation.ts"
+      ],
+      "@loop/handlers/ids": [
+        "./src/loop/handlers/ids.ts"
+      ],
+      "@loop/handlers/sessionPaging": [
+        "./src/loop/handlers/sessionPaging.ts"
+      ],
+      "@loop/ui/verbGroup": [
+        "./src/components/loop/loopVerbGroup.ts"
+      ],
       "@loop/runtime/state/assets": [
         "./src/loop/runtime/state/assets.ts"
       ],
@@ -174,6 +186,9 @@
       ],
       "@loop/shared/composerInlineTokens": [
         "./src/loop/shared/composerInlineTokens.ts"
+      ],
+      "@loop/shared/composerTrigger": [
+        "./src/loop/shared/composerTrigger.ts"
       ],
       "@loop/shared/composerFileLink": [
         "./src/loop/shared/composerFileLink.ts"

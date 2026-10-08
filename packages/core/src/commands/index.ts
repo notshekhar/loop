@@ -21,6 +21,10 @@ export interface CommandContext {
     /** /steak — GitHub-style token-usage heatmap; arg is an optional year. */
     showSteak(args: string): void;
     showSessions(): Promise<void>;
+    /** /hosts — other machines running loop: switch to one, pair (`add <link>`), `remove <name>`. */
+    manageHosts(args: string): Promise<void> | void;
+    /** /rc — let other devices control this loop (`/rc off` stops). */
+    remoteControl(args: string): Promise<void> | void;
     exit(): void;
     cwd: string;
     setCwd(p: string): void;
@@ -250,6 +254,20 @@ export async function registerBuiltins(reg: CommandRegistry, opts: { cwd?: strin
             description: "Alias for /resume",
             handler: async (ctx) => {
                 await ctx.showSessions();
+            },
+        },
+        {
+            name: "hosts",
+            description: "Other machines: switch to one, pair one (/hosts add <link>), /hosts remove <name>",
+            handler: async (ctx, args) => {
+                await ctx.manageHosts(args);
+            },
+        },
+        {
+            name: "rc",
+            description: "Remote control: let your phone or another loop drive this one (/rc off to stop)",
+            handler: async (ctx, args) => {
+                await ctx.remoteControl(args);
             },
         },
         {

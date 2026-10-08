@@ -26,7 +26,8 @@ import { listUnclaimedProjects, onAddedProjectsChange } from "./addedProjects.ts
 import { clientThreadIdFor } from "./dispatch.ts";
 import { onLiveTurnChange } from "./liveTurn.ts";
 import { toInstanceId } from "./ids.ts";
-import { loopCall } from "../transport.ts";
+import { onSessionWindowChange, pinnedSessionIds, reportSessionPage, sessionScopes } from "./sessionPaging.ts";
+import { defaultLoopHost, type LoopHost } from "../transport.ts";
 import type { LoopServerInfo } from "./serverConfig.ts";
 
 /** A row of loop's `session.list`; see packages/core/src/sessions/manager.ts. */
@@ -49,7 +50,54 @@ export interface LoopSessionRow {
   readonly archivedAt?: number;
 }
 
+/** A row of loop's `session.projects`: every folder with a session. */
+interface LoopSessionFolder {
+  readonly cwd: string;
+  readonly count: number;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
 const decodeSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshotSchema);
+
+/**
+ * The working set, paged (sessionPaging.ts): the newest page of the host, of
+ * each folder a client is watching, and every session someone has open —
+ * plus the whole folder list, which a paged session list cannot derive.
+ *
+ * `folders` is null when the host predates `session.projects`; such a host
+ * also ignores `limit`, so its rows are already the complete list.
+ */
+async function fetchWorkingSet(
+  host: LoopHost,
+): Promise<{ rows: LoopSessionRow[]; folders: readonly LoopSessionFolder[] | null }> {
+  const scopes = sessionScopes(host.id);
+  const pins = pinnedSessionIds(host.id);
+  const [pages, pinnedRows, folders] = await Promise.all([
+    Promise.all(
+      scopes.map((scope) =>
+        host
+          .call<readonly LoopSessionRow[]>("session.list", {
+            limit: scope.limit,
+            ...(scope.cwd === null ? {} : { cwd: scope.cwd }),
+          })
+          .catch(() => [] as readonly LoopSessionRow[]),
+      ),
+    ),
+    pins.length === 0
+      ? Promise.resolve([] as readonly LoopSessionRow[])
+      : host.call<readonly LoopSessionRow[]>("session.list", { ids: pins }).catch(() => [] as readonly LoopSessionRow[]),
+    // Anything but a list (an older host, a stand-in) means "derive them".
+    host
+      .call<unknown>("session.projects", {})
+      .then((value) => (Array.isArray(value) ? (value as readonly LoopSessionFolder[]) : null))
+      .catch(() => null),
+  ]);
+  scopes.forEach((scope, i) => reportSessionPage(host.id, scope.cwd, scope.limit, pages[i]!.length));
+  const byId = new Map<string, LoopSessionRow>();
+  for (const row of [...pages.flat(), ...pinnedRows]) byId.set(row.id, row);
+  return { rows: [...byId.values()], folders };
+}
 
 const iso = (epochMs: number) => new Date(epochMs).toISOString();
 
@@ -76,13 +124,20 @@ function threadTitle(row: LoopSessionRow): string {
  * panel asks for the other side. Filtering client-side instead would mean
  * shipping every archived session to draw a list that excludes them.
  */
-export const buildShellSnapshot = Effect.fnUntraced(function* (archived = false) {
-  const [rows, info] = yield* Effect.promise(() =>
+export const buildShellSnapshot = Effect.fnUntraced(function* (
+  archived = false,
+  host: LoopHost = defaultLoopHost,
+) {
+  // The archive is read whole by its settings panel; the working set pages.
+  const [{ rows, folders }, info] = yield* Effect.promise(() =>
     Promise.all([
-      loopCall<readonly LoopSessionRow[]>("session.list", archived ? { archived: true } : {}).catch(
-        () => [] as readonly LoopSessionRow[],
-      ),
-      loopCall<LoopServerInfo>("server.info").catch(() => ({}) as LoopServerInfo),
+      archived
+        ? host
+            .call<readonly LoopSessionRow[]>("session.list", { archived: true })
+            .catch(() => [] as readonly LoopSessionRow[])
+            .then((all) => ({ rows: [...all], folders: null }))
+        : fetchWorkingSet(host),
+      host.call<LoopServerInfo>("server.info").catch(() => ({}) as LoopServerInfo),
     ]),
   );
   // A project's default model is loop's own `defaultModel`. loop keeps no
@@ -102,6 +157,10 @@ export const buildShellSnapshot = Effect.fnUntraced(function* (archived = false)
   const usable = rows.filter((row) => typeof row.cwd === "string" && row.cwd.trim() !== "");
 
   const projects = new Map<string, { created: number; updated: number }>();
+  for (const folder of folders ?? []) {
+    if (typeof folder.cwd !== "string" || folder.cwd.trim() === "") continue;
+    projects.set(folder.cwd, { created: folder.createdAt, updated: folder.updatedAt });
+  }
   for (const row of usable) {
     const existing = projects.get(row.cwd);
     if (existing) {
@@ -117,7 +176,7 @@ export const buildShellSnapshot = Effect.fnUntraced(function* (archived = false)
   // A folder someone just added has no session yet, so nothing above sees it.
   // It is reported until one exists, then the session-derived project takes
   // over under the folder as its id.
-  const unclaimed = listUnclaimedProjects(new Set(projects.keys()));
+  const unclaimed = listUnclaimedProjects(host.id, new Set(projects.keys()));
 
   return yield* decodeSnapshot({
     // One derived snapshot per read; there is no incremental sequence to
@@ -195,8 +254,8 @@ export const buildShellSnapshot = Effect.fnUntraced(function* (archived = false)
  * The items a fresh `orchestration.subscribeShell` emits: the snapshot, then
  * the completion marker the client waits on before it will render.
  */
-export const initialShellItems = Effect.fnUntraced(function* () {
-  const snapshot: OrchestrationShellSnapshot = yield* buildShellSnapshot();
+export const initialShellItems = Effect.fnUntraced(function* (host: LoopHost = defaultLoopHost) {
+  const snapshot: OrchestrationShellSnapshot = yield* buildShellSnapshot(false, host);
   return [
     { kind: "snapshot" as const, snapshot },
     { kind: "synchronized" as const },
@@ -214,7 +273,7 @@ const SHELL_COALESCE_MS = 120;
  * what changes its title and timestamp. Rebuilding the whole snapshot is
  * cheap enough (one `session.list`) and cannot drift from a partial update.
  */
-export function shellStream(): Stream.Stream<
+export function shellStream(host: LoopHost = defaultLoopHost): Stream.Stream<
   OrchestrationShellStreamItem,
   EnvironmentAuthorizationError
 > {
@@ -224,7 +283,7 @@ export function shellStream(): Stream.Stream<
       requiredScope: AuthOrchestrationReadScope,
     });
 
-  const initial = initialShellItems().pipe(Effect.mapError(failed));
+  const initial = initialShellItems(host).pipe(Effect.mapError(failed));
 
   const updates = Stream.callback<OrchestrationShellStreamItem>((queue) =>
     Effect.acquireRelease(
@@ -243,7 +302,7 @@ export function shellStream(): Stream.Stream<
 
         const run = () => {
           building = true;
-          void Effect.runPromise(buildShellSnapshot())
+          void Effect.runPromise(buildShellSnapshot(false, host))
             .then((snapshot) => Queue.offerUnsafe(queue, { kind: "snapshot" as const, snapshot }))
             .catch(() => undefined)
             .finally(() => {
@@ -270,15 +329,21 @@ export function shellStream(): Stream.Stream<
         // Turn activity is not the only thing that changes the shell: adding a
         // folder creates a project before any turn has happened.
         //
-        // Structural changes only. A text or tool-input delta cannot change
-        // which sessions exist or when they were last touched, and rebuilding
-        // the sidebar for each one is what froze the renderer for the whole of
-        // a streaming write (MEASURED: ~2600 deltas for one file).
+        // Lifecycle changes only: a turn starting or ending, a question
+        // opening or closing, a session renamed or removed. Neither a delta
+        // (MEASURED: ~2600 for one streamed file) nor a tool call changes
+        // which sessions exist or how they are listed, and each rebuild costs
+        // a re-render of every session row — 200–300ms with a few hundred.
         const unsubscribes = [
-          onLiveTurnChange((_sessionId, structural) => {
-            if (structural) rebuild();
+          onLiveTurnChange((_sessionId, _structural, lifecycle) => {
+            if (lifecycle) rebuild();
           }),
           onAddedProjectsChange(rebuild),
+          // The list scrolled for more, a folder view opened, a thread was
+          // opened from search: the window changed, so does the shell.
+          onSessionWindowChange((hostId) => {
+            if (hostId === host.id) rebuild();
+          }),
         ];
         return () => {
           if (timer !== null) clearTimeout(timer);

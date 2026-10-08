@@ -38,3 +38,18 @@ export {
     type CustomProviderSummary,
 } from "./custom-providers";
 export * from "./protocol";
+export { tailnetIdentity, terminalQr, type TailnetIdentity } from "./serve-reach";
+export {
+    listRemoteHosts,
+    pairRemoteHost,
+    parsePairingLink,
+    probeRemoteHost,
+    removeRemoteHost,
+    renameRemoteHost,
+    RemoteHostClient,
+    type PairingLink,
+    type RemoteEnvironment,
+    type RemoteHostRecord,
+    type RemoteHostStatus,
+    type RemoteSessionEvent,
+} from "./remote-host";

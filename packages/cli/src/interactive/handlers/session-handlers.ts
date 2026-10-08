@@ -91,6 +91,9 @@ export async function resumeSessionById(state: AppState, deps: AppDeps, idOrPath
     tui.requestRender();
 }
 
+/** Sessions per page in /resume. */
+const RESUME_PAGE = 100;
+
 export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHandlers {
     const {
         tui,
@@ -236,7 +239,19 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
             tui.requestRender();
         },
         async showSessions() {
-            const sessions = manager.list(state.cwd);
+            // A page at a time, newest first: the picker asks for the next as
+            // the cursor nears the end (or a search runs short of matches),
+            // so a folder with thousands of sessions opens as fast as one
+            // with ten.
+            const sessions = manager.list(state.cwd, "active", { limit: RESUME_PAGE });
+            let more = sessions.length === RESUME_PAGE;
+            const nextPage = () => {
+                if (!more) return [];
+                const page = manager.list(state.cwd, "active", { limit: RESUME_PAGE, offset: sessions.length });
+                more = page.length === RESUME_PAGE;
+                sessions.push(...page);
+                return page;
+            };
             if (sessions.length === 0) {
                 history.addSystem("no sessions in this cwd");
                 tui.requestRender();
@@ -272,14 +287,8 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
                     .filter((s) => filter.test(s.mtime))
                     .sort((a, b) => rank(a.id) - rank(b.id));
                 const liveCount = filtered.filter((s) => live.get(s.id)).length;
-                const items: SelectItem[] = [
-                    {
-                        value: FILTER_ROW,
-                        label: `⏷ date: ${filter.label}`,
-                        description: "Enter cycles · all → today → yesterday → last 7 days → last 30 days",
-                    },
-                    ...filtered.map((s) => {
-                        const slot = live.get(s.id);
+                const row = (s: (typeof sessions)[number]): SelectItem => {
+                        const slot = live.get(s.id) ?? deps.sessions.findLive(s.id);
                         // Not-live rows get a blank where the glyph goes, so
                         // every title starts in the same column.
                         const badge = slot ? liveGlyph(slot) : " ";
@@ -292,10 +301,31 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
                             label: `${badge} ${title}`,
                             description: `${here}${slot ? liveActivity(slot) : ""}${formatSessionTime(s.mtime)}  ·  ${s.firstUserMessage?.slice(0, 80) ?? "(no messages)"}`,
                         };
-                    }),
+                };
+                const items: SelectItem[] = [
+                    {
+                        value: FILTER_ROW,
+                        label: `⏷ date: ${filter.label}`,
+                        description: "Enter cycles · all → today → yesterday → last 7 days → last 30 days",
+                    },
+                    ...filtered.map(row),
                 ];
                 const liveNote = liveCount > 0 ? ` · ${liveCount} live` : "";
-                pick = await searchOnce(items, `Resume session · ${filtered.length}/${sessions.length}${liveNote}`);
+                pick = await searchOnce(
+                    items,
+                    `Resume session · ${filtered.length}${more ? "+" : `/${sessions.length}`}${liveNote}`,
+                    {
+                        // An empty answer means "no more", so a page the date
+                        // filter empties is skipped, not returned.
+                        loadMore: async () => {
+                            for (let page = nextPage(); page.length > 0; page = nextPage()) {
+                                const matching = page.filter((s) => filter.test(s.mtime));
+                                if (matching.length > 0) return matching.map(row);
+                            }
+                            return [];
+                        },
+                    },
+                );
                 if (!pick) return;
                 if (pick.value === FILTER_ROW) {
                     filterIndex = (filterIndex + 1) % dateFilters.length;

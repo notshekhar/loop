@@ -30,8 +30,10 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import { onConfigReloaded } from "../reload.ts";
+import type { LoopHost } from "../transport.ts";
 import { createAssetUrl } from "./assets.ts";
 import { dispatchCommand } from "./dispatch.ts";
+import { registerEnvironmentHost } from "./sessionPaging.ts";
 import { formatError } from "./formatError.ts";
 import { browse, listEntries, readFile, searchEntries, writeFile } from "./files.ts";
 import { openInEditor } from "./editors.ts";
@@ -71,6 +73,7 @@ import {
   writeTerminal,
 } from "./terminal.ts";
 import { threadStream } from "./thread.ts";
+import { subscribeLiveTurns } from "./liveTurn.ts";
 
 const notPorted = (method: string) =>
   new EnvironmentAuthorizationError({
@@ -92,10 +95,19 @@ const SERVER_CONFIG_POLL = "30 seconds";
 /** A subscription that stays open and never emits. */
 const idle = () => Stream.never;
 
-export interface HandlerOptions extends BuildServerConfigOptions {}
+export interface HandlerOptions extends BuildServerConfigOptions {
+  /** The machine these handlers answer for. Required here, unlike the config
+   * options, so a new shell cannot quietly fall back to the page's own host. */
+  readonly host: LoopHost;
+}
 
-export const makeHandlers = (options: HandlerOptions) =>
-  WsRpcGroup.toLayer({
+export const makeHandlers = (options: HandlerOptions) => {
+  const { host } = options;
+  // Turn events from this host feed the live turns before any thread asks.
+  subscribeLiveTurns(host);
+  // The UI asks for more sessions by environment; the shell pages by host.
+  registerEnvironmentHost(options.environmentId, host.id);
+  return WsRpcGroup.toLayer({
     "server.probe": () => Effect.succeed({}),
 
     "server.getConfig": () =>
@@ -197,7 +209,7 @@ export const makeHandlers = (options: HandlerOptions) =>
   "server.updateServerWithProgress": () => failStream("server.updateServerWithProgress"),
   "server.getSettings": () => fail("server.getSettings"),
   "server.updateSettings": () => fail("server.updateSettings"),
-  "server.discoverSourceControl": () => discoverSourceControl(),
+  "server.discoverSourceControl": () => discoverSourceControl(host),
   "server.getTraceDiagnostics": () => fail("server.getTraceDiagnostics"),
   "server.getProcessDiagnostics": () => fail("server.getProcessDiagnostics"),
   "server.getProcessResourceHistory": () => fail("server.getProcessResourceHistory"),
@@ -209,37 +221,37 @@ export const makeHandlers = (options: HandlerOptions) =>
   "server.reportClientActivity": () => fail("server.reportClientActivity"),
   "server.reportHostPowerState": () => fail("server.reportHostPowerState"),
   "server.getBackgroundPolicy": () => fail("server.getBackgroundPolicy"),
-  "sourceControl.lookupRepository": (input) => lookupRepository(input),
-  "sourceControl.cloneRepository": (input) => cloneRepository(input),
-  "sourceControl.publishRepository": (input) => publishRepository(input),
-    "projects.searchEntries": (input) => searchEntries(input),
+  "sourceControl.lookupRepository": (input) => lookupRepository(input, host),
+  "sourceControl.cloneRepository": (input) => cloneRepository(input, host),
+  "sourceControl.publishRepository": (input) => publishRepository(input, host),
+    "projects.searchEntries": (input) => searchEntries(input, host),
   "projects.searchContents": () => fail("projects.searchContents"),
-    "projects.listEntries": (input) => listEntries(input.cwd),
-    "projects.readFile": (input) => readFile(input),
-    "projects.writeFile": (input) => writeFile(input),
-  "shell.openInEditor": (input) => openInEditor(input),
-    "filesystem.browse": (input) => browse(input),
-    "assets.createUrl": (input) => createAssetUrl(input),
-    "subscribeVcsStatus": (input) => statusStream(input.cwd),
+    "projects.listEntries": (input) => listEntries(input.cwd, host),
+    "projects.readFile": (input) => readFile(input, host),
+    "projects.writeFile": (input) => writeFile(input, host),
+  "shell.openInEditor": (input) => openInEditor(input, host),
+    "filesystem.browse": (input) => browse(input, host),
+    "assets.createUrl": (input) => createAssetUrl(input, host),
+    "subscribeVcsStatus": (input) => statusStream(input.cwd, host),
   "vcs.pull": () => fail("vcs.pull"),
-    "vcs.refreshStatus": (input) => refreshStatus(input),
-  "git.runStackedAction": (input) => runStackedAction(input),
+    "vcs.refreshStatus": (input) => refreshStatus(input, host),
+  "git.runStackedAction": (input) => runStackedAction(input, host),
   "git.resolvePullRequest": () => fail("git.resolvePullRequest"),
   "git.preparePullRequestThread": () => fail("git.preparePullRequestThread"),
-    "vcs.listRefs": (input) => listRefs(input),
+    "vcs.listRefs": (input) => listRefs(input, host),
   "vcs.createWorktree": () => fail("vcs.createWorktree"),
   "vcs.removeWorktree": () => fail("vcs.removeWorktree"),
   "vcs.createRef": () => fail("vcs.createRef"),
   "vcs.switchRef": () => fail("vcs.switchRef"),
-    "vcs.init": (input) => initRepo(input),
-    "review.getDiffPreview": (input) => diffPreview(input),
-    "terminal.open": (input) => openTerminal(input),
-    "terminal.attach": (input) => attachTerminal(input),
-    "terminal.write": (input) => writeTerminal(input),
-    "terminal.resize": (input) => resizeTerminal(input),
-    "terminal.clear": (input) => clearTerminal(input),
+    "vcs.init": (input) => initRepo(input, host),
+    "review.getDiffPreview": (input) => diffPreview(input, host),
+    "terminal.open": (input) => openTerminal(input, host),
+    "terminal.attach": (input) => attachTerminal(input, host),
+    "terminal.write": (input) => writeTerminal(input, host),
+    "terminal.resize": (input) => resizeTerminal(input, host),
+    "terminal.clear": (input) => clearTerminal(input, host),
   "terminal.restart": () => fail("terminal.restart"),
-    "terminal.close": (input) => closeTerminal(input),
+    "terminal.close": (input) => closeTerminal(input, host),
     // The browser panel's tabs. Pure per-window UI state — see preview.ts for
     // why this is served here rather than from loop.
     "preview.open": (input) => openPreview(input),
@@ -261,7 +273,7 @@ export const makeHandlers = (options: HandlerOptions) =>
     // "loop could not run project.create" and the actual sentence — which
     // folder, and what was wrong with it — was thrown away.
     "orchestration.dispatchCommand": (command) =>
-      dispatchCommand(command).pipe(
+      dispatchCommand(command, host).pipe(
         Effect.catchCause((cause) =>
           Effect.fail(
             new OrchestrationDispatchCommandError({
@@ -276,11 +288,11 @@ export const makeHandlers = (options: HandlerOptions) =>
     // Titles and opening messages, out of the shell's own `session.list`.
     // loop has no search index, and reading every transcript to build one
     // would cost a round trip per session before the first result appeared.
-    "orchestration.searchThreads": (input) => searchThreads(input),
+    "orchestration.searchThreads": (input) => searchThreads(input, host),
     // The same snapshot, asked for the other side of the archive. The
     // Archive settings panel reads this; the sidebar reads the working set.
     "orchestration.getArchivedShellSnapshot": () =>
-      buildShellSnapshot(true).pipe(
+      buildShellSnapshot(true, host).pipe(
         Effect.mapError(
           () =>
             new EnvironmentAuthorizationError({
@@ -294,14 +306,14 @@ export const makeHandlers = (options: HandlerOptions) =>
     // turn moves. That refresh is not cosmetic — a draft only becomes a real
     // thread once the shell reports it, so without it the composer would sit
     // on "Working" while the turn completed underneath.
-    "orchestration.subscribeShell": () => shellStream(),
+    "orchestration.subscribeShell": () => shellStream(host),
     // A snapshot now, then a fresh one whenever the live turn moves. loop's
     // event vocabulary (text-delta, tool-call, reasoning) does not line up
     // one-for-one with the contract's command-echo events, so re-deriving the
     // whole thread is both simpler and impossible to get subtly out of sync.
     // The rebuild is coalesced, or a fast model would rebuild per token.
-    "orchestration.subscribeThread": (input) => threadStream(input.threadId),
-    "subscribeTerminalEvents": () => terminalEventStream(),
+    "orchestration.subscribeThread": (input) => threadStream(input.threadId, host),
+    "subscribeTerminalEvents": () => terminalEventStream(host),
   // Deliberately idle. Serving real summaries here looks like an improvement —
   // tab labels, an id allocator that can see which terminals exist — but the
   // panel derives `cwd` and `worktreePath` from the summary, and both are
@@ -315,3 +327,4 @@ export const makeHandlers = (options: HandlerOptions) =>
   "subscribeBackgroundPolicy": idle,
   "subscribeResourceTelemetry": idle,
   });
+};

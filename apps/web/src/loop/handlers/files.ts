@@ -19,7 +19,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { loopFilesystem, type WorkspaceEntry } from "../transport.ts";
+import { type WorkspaceEntry, defaultLoopHost, type LoopHost } from "../transport.ts";
 
 const decodeEntries = Schema.decodeUnknownEffect(ProjectListEntriesResultSchema);
 const decodeSearch = Schema.decodeUnknownEffect(ProjectSearchEntriesResultSchema);
@@ -42,8 +42,11 @@ const failed = (what: string, detail: string) =>
 /** `ProjectEntry.path` is a non-empty string, so the root itself is dropped. */
 const usable = (entry: WorkspaceEntry) => entry.path.trim() !== "";
 
-export const listEntries = Effect.fnUntraced(function* (cwd: string) {
-  const files = loopFilesystem();
+export const listEntries = Effect.fnUntraced(function* (
+  cwd: string,
+  host: LoopHost = defaultLoopHost,
+) {
+  const files = host.filesystem();
   if (!files) return yield* Effect.fail(unavailable("Listing project files"));
   const result = yield* Effect.promise(() => files.list(cwd));
   return yield* decodeEntries({
@@ -60,13 +63,16 @@ export const listEntries = Effect.fnUntraced(function* (cwd: string) {
  * from a fuzzy file picker — with shorter paths winning ties because they are
  * closer to the root and more likely to be what was meant.
  */
-export const searchEntries = Effect.fnUntraced(function* (input: {
-  readonly cwd: string;
-  readonly query: string;
-  readonly limit: number;
-  readonly kind?: "file" | "directory" | undefined;
-}) {
-  const files = loopFilesystem();
+export const searchEntries = Effect.fnUntraced(function* (
+  input: {
+    readonly cwd: string;
+    readonly query: string;
+    readonly limit: number;
+    readonly kind?: "file" | "directory" | undefined;
+  },
+  host: LoopHost = defaultLoopHost,
+) {
+  const files = host.filesystem();
   if (!files) return yield* Effect.fail(unavailable("Searching project files"));
   const result = yield* Effect.promise(() => files.list(input.cwd));
 
@@ -93,11 +99,14 @@ function isSubsequence(needle: string, haystack: string): boolean {
   return index === needle.length;
 }
 
-export const readFile = Effect.fnUntraced(function* (input: {
-  readonly cwd: string;
-  readonly relativePath: string;
-}) {
-  const files = loopFilesystem();
+export const readFile = Effect.fnUntraced(function* (
+  input: {
+    readonly cwd: string;
+    readonly relativePath: string;
+  },
+  host: LoopHost = defaultLoopHost,
+) {
+  const files = host.filesystem();
   if (!files) return yield* Effect.fail(unavailable("Reading a file"));
   const result = yield* Effect.promise(() => files.read(input.cwd, input.relativePath));
   if (!result.ok) return yield* Effect.fail(failed("Reading a file", result.failure));
@@ -118,12 +127,15 @@ export const readFile = Effect.fnUntraced(function* (input: {
  * one asked for when the request repeated the tail of the workspace root. The
  * caller keys its cache by that path, so the resolved one is what comes back.
  */
-export const writeFile = Effect.fnUntraced(function* (input: {
-  readonly cwd: string;
-  readonly relativePath: string;
-  readonly contents: string;
-}) {
-  const files = loopFilesystem();
+export const writeFile = Effect.fnUntraced(function* (
+  input: {
+    readonly cwd: string;
+    readonly relativePath: string;
+    readonly contents: string;
+  },
+  host: LoopHost = defaultLoopHost,
+) {
+  const files = host.filesystem();
   if (!files) return yield* Effect.fail(unavailable("Saving a file"));
   if (!files.write) return yield* Effect.fail(unavailable("Saving a file"));
   const result = yield* Effect.promise(() =>
@@ -135,11 +147,14 @@ export const writeFile = Effect.fnUntraced(function* (input: {
   );
 });
 
-export const browse = Effect.fnUntraced(function* (input: {
-  readonly partialPath: string;
-  readonly cwd?: string | undefined;
-}) {
-  const files = loopFilesystem();
+export const browse = Effect.fnUntraced(function* (
+  input: {
+    readonly partialPath: string;
+    readonly cwd?: string | undefined;
+  },
+  host: LoopHost = defaultLoopHost,
+) {
+  const files = host.filesystem();
   if (!files) return yield* Effect.fail(unavailable("Browsing folders"));
   const result = yield* Effect.promise(() => files.browse(input.partialPath, input.cwd));
   if (!result) return yield* Effect.fail(failed("Browsing folders", "read_directory_failed"));

@@ -80,6 +80,7 @@ export function liveActivity(slot: SessionSlot): string {
 
 /** What a slot is called in the roster: its name, else what it was first asked. */
 export function slotTitle(slot: SessionSlot): string {
+    if (slot.remote) return slot.remote.title || "new session";
     const name = slot.session?.getName();
     if (name) return name;
     if (slot.firstPrompt) return slot.firstPrompt.replace(/\s+/g, " ").trim();
@@ -136,6 +137,8 @@ export interface SessionRoster {
      * screen; `declined()` is the answer if its turn is cancelled first.
      */
     gated<T>(label: string, signal: AbortSignal | undefined, show: () => Promise<T>, declined: () => T): Promise<T>;
+    /** Who answers what is typed into a session on another machine (remote-sessions.ts). */
+    setRemoteRunner(factory: (slot: SessionSlot) => (raw: string) => Promise<void>): void;
 }
 
 export function createSessionRoster(host: SessionRosterHost): SessionRoster {
@@ -144,6 +147,7 @@ export function createSessionRoster(host: SessionRosterHost): SessionRoster {
     const pinned = new WeakMap<SessionSlot, AppDeps>();
     const runners = new WeakMap<SessionSlot, (raw: string) => Promise<void>>();
     const drafts = new WeakMap<SessionSlot, string>();
+    let remoteRunner: ((slot: SessionSlot) => (raw: string) => Promise<void>) | null = null;
 
     const viewOf = (slot: SessionSlot): AppState => {
         let v = views.get(slot);
@@ -253,7 +257,10 @@ export function createSessionRoster(host: SessionRosterHost): SessionRoster {
     const runnerFor = (slot: SessionSlot): ((raw: string) => Promise<void>) => {
         let run = runners.get(slot);
         if (!run) {
-            const runner = createTurnRunner(viewOf(slot), depsFor(slot), host.ctx);
+            // A session on another machine runs its turns there; this side
+            // only forwards what is typed and renders what comes back.
+            const runner =
+                slot.remote && remoteRunner ? remoteRunner(slot) : createTurnRunner(viewOf(slot), depsFor(slot), host.ctx);
             run = (raw: string) => {
                 const text = raw.trim();
                 if (!slot.firstPrompt && text && !text.startsWith("/") && !text.startsWith("!")) {
@@ -268,7 +275,8 @@ export function createSessionRoster(host: SessionRosterHost): SessionRoster {
 
     /** A session nobody typed into and nothing is running in is not worth keeping. */
     const isEmpty = (slot: SessionSlot): boolean =>
-        !slot.session && !slot.busy && slot.queue.length === 0 && slot.waiters.size === 0;
+        !slot.session &&
+        !slot.remote && !slot.busy && slot.queue.length === 0 && slot.waiters.size === 0;
 
     // The screen follows the foreground. Everything here is repaint: the
     // per-session components already hold their own content.
@@ -280,14 +288,15 @@ export function createSessionRoster(host: SessionRosterHost): SessionRoster {
         statusLine.setModel(to.modelId);
         statusLine.setAgent(to.agent);
         statusLine.setThinking(to.thinkingLevel);
-        statusLine.setCwd(to.cwd);
-        statusLine.setSession(to.session?.id ?? "unsaved");
+        // A remote session says which machine its folder is on.
+        statusLine.setCwd(to.remote ? `${to.remote.host.label}:${to.cwd}` : to.cwd);
+        statusLine.setSession(to.remote?.sessionId ?? to.session?.id ?? "unsaved");
         deps.refreshStatusLine();
         if (to.busy) indicator.show(to.activity || "Generating");
         else indicator.hide();
         deps.renderPending();
         host.refreshShells();
-        setTabName(deps, to.session?.getName() || defaultTabName());
+        setTabName(deps, (to.remote ? slotTitle(to) : to.session?.getName()) || defaultTabName());
 
         deps.scrollTranscriptToEnd();
         tui.invalidate();
@@ -307,7 +316,12 @@ export function createSessionRoster(host: SessionRosterHost): SessionRoster {
     });
 
     const openNew = async (): Promise<SessionSlot> => {
-        const from = slots.foreground;
+        // A new session is a session on THIS machine: when another machine's
+        // is on screen, its folder and model say nothing about here, so the
+        // most recent local session is the template instead.
+        const from = slots.foreground.remote
+            ? ([...slots.all()].reverse().find((s) => !s.remote) ?? slots.all()[0]!)
+            : slots.foreground;
         const slot = slots.add({
             cwd: from.cwd,
             modelId: from.modelId,
@@ -349,7 +363,9 @@ export function createSessionRoster(host: SessionRosterHost): SessionRoster {
                 return {
                     value: String(slot.key),
                     label: `${liveGlyph(slot)} ${slotTitle(slot)}`,
-                    description: `${slots.isForeground(slot) ? HERE : ""}${liveActivity(slot)}${formatAge(now - slot.lastActivityAt)}`,
+                    // The machine leads the description: a host name is long,
+                    // and the label column is cut to fit.
+                    description: `${slots.isForeground(slot) ? HERE : ""}${slot.remote ? `on ${slot.remote.host.label} · ` : ""}${liveActivity(slot)}${formatAge(now - slot.lastActivityAt)}`,
                 };
             }),
         ];
@@ -390,5 +406,8 @@ export function createSessionRoster(host: SessionRosterHost): SessionRoster {
         openNew,
         showSwitcher,
         gated,
+        setRemoteRunner: (factory) => {
+            remoteRunner = factory;
+        },
     };
 }

@@ -34,14 +34,25 @@
     "patchedDependencies": {
         "@effect/vitest@4.0.0": "patches/@effect__vitest@4.0.0.patch",
         "@pierre/diffs@1.3.0-beta.10": "patches/@pierre%2Fdiffs@1.3.0-beta.10.patch",
-        "@pierre/trees@1.0.0-beta.4": "patches/@pierre%2Ftrees@1.0.0-beta.4.patch"
+        "@pierre/trees@1.0.0-beta.4": "patches/@pierre%2Ftrees@1.0.0-beta.4.patch",
+        "@expo/metro-config@56.0.14": "patches/@expo%2Fmetro-config@56.0.14.patch",
+        "@legendapp/list@3.3.3": "patches/@legendapp__list@3.3.3.patch",
+        "@react-native-menu/menu@2.0.0": "patches/@react-native-menu__menu@2.0.0.patch",
+        "@react-navigation/native-stack@7.17.6": "patches/@react-navigation%2Fnative-stack@7.17.6.patch",
+        "expo-modules-jsi@56.0.10": "patches/expo-modules-jsi@56.0.10.patch",
+        "react-native-gesture-handler@2.31.2": "patches/react-native-gesture-handler@2.31.2.patch",
+        "react-native-keyboard-controller@1.21.13": "patches/react-native-keyboard-controller@1.21.13.patch",
+        "react-native-nitro-modules@0.35.9": "patches/react-native-nitro-modules@0.35.9.patch",
+        "react-native-screens@4.25.2": "patches/react-native-screens@4.25.2.patch"
     },
     "overrides": {
         "@effect/atom-react": "4.0.0",
         "@effect/platform-node": "4.0.0",
         "@effect/vitest": "4.0.0",
         "effect": "4.0.0",
-        "vite": "npm:@voidzero-dev/vite-plus-core@0.2.2"
+        "vite": "npm:@voidzero-dev/vite-plus-core@0.2.2",
+        "@expo/metro-config": "56.0.14",
+        "expo-modules-jsi": "56.0.10"
     },
     "scripts": {
         "dev": "bun packages/cli/src/cli.ts",
@@ -56,8 +67,8 @@
         "//typecheck": "Every bundler here transpiles without checking, so a type error reaches a release unless this runs. tsgo for the two app packages, tsc for the rest.",
         "typecheck": "bun scripts/typecheck.ts",
         "//test": "Scoped: a bare `bun test` also collects apps/web, whose suite is vitest-only and hangs the process under bun. The web app has its own `test` script.",
-        "test": "bun run typecheck && bun test packages apps/desktop && bun run --filter @loop/web test",
-        "//test:screens": "Runs loop in a real pty and asserts on the screen — the only tests that catch a correct frame drawn in the wrong place.",
+        "test": "bun run typecheck && bun test packages apps/desktop && bun run --filter @loop/web test && bun run --filter @loop/mobile test",
+        "//test:screens": "Runs loop in a real pty and asserts on the screen \u2014 the only tests that catch a correct frame drawn in the wrong place.",
         "test:screens": "bun packages/cli/test/e2e/run.ts"
     },
     "devDependencies": {

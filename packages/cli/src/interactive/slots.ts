@@ -22,7 +22,7 @@
  * that finishes in the background writes its ending into its own transcript
  * instead of whatever you are looking at by then.
  */
-import type { CostTracker, LiveStatus } from "@notshekhar/loop-core";
+import type { CostTracker, LiveStatus, RemoteHostClient, RemoteHostRecord } from "@notshekhar/loop-core";
 import type { ChatHistory } from "./components/chat-history";
 import type { TodoPanel } from "./components/todo-panel";
 import type { AppState } from "./state";
@@ -67,6 +67,27 @@ export interface SessionSlot extends SlotState {
     firstPrompt?: string;
     /** Agent-driven prompts parked until this session is on screen again. */
     readonly waiters: Set<Waiter>;
+    /**
+     * Set when this session lives on ANOTHER machine (`/hosts`): its turns run
+     * there, and this slot only renders the host's event stream and forwards
+     * what is typed. `session` stays null — there is no local transcript.
+     */
+    remote?: RemoteLink;
+}
+
+/** A slot's tie to a session on another machine (remote-sessions.ts). */
+export interface RemoteLink {
+    readonly host: RemoteHostRecord;
+    readonly client: RemoteHostClient;
+    readonly sessionId: string;
+    /** The session's name on the host, else its first message. */
+    title: string;
+    /** The model its turns run on there. */
+    model: string;
+    /** Last event seq applied — what a reconnect resumes from. */
+    seq: number;
+    /** Stop listening (the slot was dropped). */
+    dispose(): void;
 }
 
 interface Waiter {
@@ -138,7 +159,7 @@ export function makeStateView(shared: SharedState, slot: () => SessionSlot): App
     return view;
 }
 
-export type SlotInit = SlotState & Pick<SessionSlot, "history" | "todoPanel" | "tracker">;
+export type SlotInit = SlotState & Pick<SessionSlot, "history" | "todoPanel" | "tracker" | "remote">;
 
 export class SlotManager {
     private readonly list: SessionSlot[] = [];
@@ -207,6 +228,7 @@ export class SlotManager {
         this.list.splice(i, 1);
         for (const w of slot.waiters) w.resolve(false);
         slot.waiters.clear();
+        slot.remote?.dispose();
         this.changed();
         return true;
     }

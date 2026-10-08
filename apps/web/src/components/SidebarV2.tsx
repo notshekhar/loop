@@ -159,6 +159,8 @@ import { Input } from "./ui/input";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
+import { LoadMoreSentinel } from "./loop/LoadMoreSentinel";
+import { useSessionPaging } from "../loop/useSessionPaging";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -1731,6 +1733,16 @@ export default function SidebarV2() {
     () => setSettledVisibleCount((count) => count + SETTLED_TAIL_PAGE_COUNT),
     [],
   );
+  // Infinite scroll: past the settled tail already loaded, the next page of
+  // sessions comes from loop (useSessionPaging).
+  const sessionPaging = useSessionPaging({
+    environmentIds: environments.map((environment) => environment.environmentId),
+    folders:
+      scopedProjectGroup?.memberProjectRefs.map((projectRef) => ({
+        environmentId: projectRef.environmentId,
+        cwd: projectRef.projectId,
+      })) ?? null,
+  });
   const [settledShelfExpanded, setSettledShelfExpanded] = useState(true);
   const toggleSettledShelf = useCallback(() => setSettledShelfExpanded((value) => !value), []);
   const renderedSettledThreads = useMemo(() => {
@@ -3035,16 +3047,17 @@ export default function SidebarV2() {
                   }
                   return items;
                 })()}
-                {settledShelfExpanded && hiddenSettledCount > 0 ? (
+                {settledShelfExpanded &&
+                (hiddenSettledCount > 0 || sessionPaging.hasMore || sessionPaging.loading) ? (
                   <li className="list-none">
-                    <button
-                      type="button"
-                      onClick={showMoreSettled}
-                      className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-                    >
-                      <PlusIcon aria-hidden className="size-4 shrink-0" />
-                      Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
-                    </button>
+                    <LoadMoreSentinel
+                      itemCount={renderedSettledThreads.length + activeThreads.length}
+                      loading={sessionPaging.loading}
+                      onVisible={() => {
+                        if (hiddenSettledCount > 0) showMoreSettled();
+                        else if (sessionPaging.hasMore) sessionPaging.loadMore();
+                      }}
+                    />
                   </li>
                 ) : null}
               </ul>

@@ -11,6 +11,7 @@ const turn = (id: string, text: string, attachmentCount = 0) => ({
   attachmentCount,
   queuedAt: "2026-08-08T00:00:00.000Z",
   send: () => Promise.resolve(),
+  interrupt: () => Promise.resolve(),
 });
 
 describe("ComposerQueuedTurns", () => {
