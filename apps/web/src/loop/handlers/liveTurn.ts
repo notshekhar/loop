@@ -318,9 +318,17 @@ const lastSeqs = new Map<string, number>();
 
 const turns = new Map<string, LiveTurn>();
 const listeners = new Set<Listener>();
-/** Hosts whose event stream feeds the turns above. Session ids are unique
- * across hosts, so one table serves them all. */
-const subscribedHosts = new Set<string>();
+/**
+ * Host CONNECTIONS whose event stream feeds the turns above (session ids are
+ * unique across hosts, so one table serves them all).
+ *
+ * Keyed by the host object, not its id. A machine dialled over its own socket
+ * gets a new host object under the same id on every reconnect — the phone
+ * backgrounded, a Wi-Fi change — and remembering ids made the new socket's
+ * events vanish: nothing streamed again until the app restarted, and each
+ * turn appeared only at its end, when the quiet-turn check re-read history.
+ */
+const subscribedHosts = new WeakSet<LoopHost>();
 
 /** Everything the turn has said, for comparing against the transcript. */
 export function liveTurnText(turn: LiveTurn): string {
@@ -824,8 +832,8 @@ function apply(sessionId: string, part: LoopTurnPart): void {
 
 /** Feed `host`'s turn events into the live turns. Idempotent per host. */
 export function subscribeLiveTurns(host: LoopHost = defaultLoopHost): void {
-  if (subscribedHosts.has(host.id)) return;
-  subscribedHosts.add(host.id);
+  if (subscribedHosts.has(host)) return;
+  subscribedHosts.add(host);
   host.onEvent((event) => {
     const part = event.part as LoopTurnPart | undefined;
     if (!part || typeof part.type !== "string") return;

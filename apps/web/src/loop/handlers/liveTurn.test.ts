@@ -412,3 +412,54 @@ describe("consecutive turns with no beginLiveTurn between them", () => {
     clearLiveTurn(id);
   });
 });
+
+// A phone reaches another machine over its own socket, and every reconnect
+// (backgrounded, a Wi-Fi change) is a NEW host object under the SAME id.
+// Remembering hosts by id made the second socket's events vanish: nothing
+// streamed again until the app restarted.
+describe("a reconnected host", () => {
+  function fakeHost(id: string) {
+    const listeners = new Set<(event: { sessionId: string; seq: number; part: unknown }) => void>();
+    const host = {
+      id,
+      call: () => Promise.resolve({}),
+      onEvent: (listener: (event: { sessionId: string; seq: number; part: unknown }) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      emit: (sessionId: string, seq: number, part: unknown) => {
+        for (const l of listeners) l({ sessionId, seq, part });
+      },
+    };
+    return host;
+  }
+
+  it("still streams after the socket is replaced", async () => {
+    const { subscribeLiveTurns } = await import("./liveTurn.ts");
+    const id = session();
+    const first = fakeHost("env-reconnect");
+    subscribeLiveTurns(first as never);
+    first.emit(id, 1, { type: "session-running", data: { running: true } });
+    first.emit(id, 2, { type: "text-delta", data: "before " });
+
+    // The socket dropped; the app dialled again.
+    const second = fakeHost("env-reconnect");
+    subscribeLiveTurns(second as never);
+    second.emit(id, 3, { type: "text-delta", data: "after" });
+
+    const turn = readLiveTurn(id);
+    expect(turn && liveTurnText(turn)).toBe("before after");
+  });
+
+  it("subscribing the same host object twice does not double events", async () => {
+    const { subscribeLiveTurns } = await import("./liveTurn.ts");
+    const id = session();
+    const host = fakeHost("env-once");
+    subscribeLiveTurns(host as never);
+    subscribeLiveTurns(host as never);
+    host.emit(id, 1, { type: "session-running", data: { running: true } });
+    host.emit(id, 2, { type: "text-delta", data: "x" });
+    const turn = readLiveTurn(id);
+    expect(turn && liveTurnText(turn)).toBe("x");
+  });
+});
