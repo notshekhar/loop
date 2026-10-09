@@ -256,6 +256,42 @@ describe("hello", () => {
     });
 });
 
+// session.history {afterEntryId}: only the branch after what the client holds.
+describe("history tails", () => {
+    useTempSessionDb();
+
+    test("sends what follows a known entry, and the whole branch for an unknown one", async () => {
+        const server = new RpcServer({ askBridge: false });
+        const t = fakeTransport();
+        const f = server.attach(t);
+        const cwd = mkdtempSync(join(tmpdir(), "loop-rpc-"));
+        let id = 0;
+        const call = async (method: string, params: unknown) => {
+            const my = ++id;
+            f.feed(JSON.stringify({ jsonrpc: "2.0", id: my, method, params }) + "\n");
+            await until(() => !!t.response(my), method);
+            return (t.response(my) as { result: any }).result;
+        };
+        const { sessionId } = await call("session.create", { cwd, provider: "nope", model: "nope/model" });
+        // A few entries on the branch.
+        for (const name of ["one", "two", "three"]) await call("session.rename", { sessionId, name });
+        const whole = await call("session.history", { sessionId });
+        expect(whole.tail).toBeUndefined();
+        const all = whole.entries as Array<{ id?: string }>;
+        expect(all.length).toBeGreaterThan(2);
+
+        const anchor = all[1]!.id!;
+        const tail = await call("session.history", { sessionId, afterEntryId: anchor });
+        expect(tail.tail).toEqual({ afterEntryId: anchor });
+        expect((tail.entries as Array<{ id?: string }>).map((e) => e.id)).toEqual(all.slice(2).map((e) => e.id));
+
+        const unknown = await call("session.history", { sessionId, afterEntryId: "not-on-the-branch" });
+        expect(unknown.tail).toBeUndefined();
+        expect(unknown.entries).toHaveLength(all.length);
+        server.dispose();
+    });
+});
+
 describe("host-wide session status", () => {
     useTempSessionDb();
 

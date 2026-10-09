@@ -84,6 +84,9 @@ interface LoopHistory {
   readonly provider?: string;
   readonly name?: string;
   readonly entries: readonly LoopEntry[];
+  /** Present when `entries` is only the branch after this entry (asked for
+   * with `afterEntryId`); absent when it is the whole branch. */
+  readonly tail?: { readonly afterEntryId: string };
   readonly seq: number;
   readonly running: boolean;
 }
@@ -1342,6 +1345,45 @@ const emptyThread = (threadId: string, intent: { cwd: string; provider: string; 
  */
 const historyCache = new Map<string, { revision: number; history: LoopHistory }>();
 
+/** The last whole branch read per session — what a tail is appended to. */
+const lastHistory = new Map<string, LoopHistory>();
+/**
+ * Entries re-read before the end of what is held. The newest few can still be
+ * amended in place (a reply marked interrupted, a step's usage landing), so
+ * the tail starts a little before the end and replaces that overlap.
+ */
+const TAIL_OVERLAP = 4;
+
+/** Tests only. */
+export function forgetHistoriesForTests(): void {
+  lastHistory.clear();
+}
+
+/**
+ * `session.history`, but only what is new: the client says which entry it
+ * already has and loop sends the branch after it (`afterEntryId`). A long
+ * session is hundreds of KB, and re-reading it whole at every tool step is
+ * what made a phone on Wi-Fi fall behind a turn until it ended. A host that
+ * predates the parameter — or a branch that moved — answers with the whole
+ * branch, which simply replaces what was held.
+ */
+export async function readHistory(host: LoopHost, sessionId: string): Promise<LoopHistory> {
+  const held = lastHistory.get(sessionId);
+  const anchorIndex = held ? held.entries.length - 1 - TAIL_OVERLAP : -1;
+  const anchor = anchorIndex >= 0 ? held!.entries[anchorIndex]?.id : undefined;
+  const answer = await host.call<LoopHistory>("session.history", {
+    sessionId,
+    ...(anchor ? { afterEntryId: anchor } : {}),
+  });
+  const whole: LoopHistory =
+    held && anchor && answer.tail?.afterEntryId === anchor
+      ? { ...answer, entries: [...held.entries.slice(0, anchorIndex + 1), ...answer.entries] }
+      : answer;
+  const { tail: _tail, ...withoutTail } = whole;
+  lastHistory.set(sessionId, withoutTail);
+  return withoutTail;
+}
+
 export const buildThread = Effect.fnUntraced(function* (
   loopSessionId: string,
   host: LoopHost = defaultLoopHost,
@@ -1369,9 +1411,7 @@ export const buildThread = Effect.fnUntraced(function* (
 
   const history = reusable
     ? cached.history
-    : yield* Effect.promise(() =>
-        host.call<LoopHistory>("session.history", { sessionId: loopSessionId }),
-      );
+    : yield* Effect.promise(() => readHistory(host, loopSessionId));
   if (!reusable) {
     if (revision === undefined) historyCache.delete(loopSessionId);
     else historyCache.set(loopSessionId, { revision, history });

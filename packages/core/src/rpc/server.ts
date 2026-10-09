@@ -746,6 +746,17 @@ export class RpcServer {
                 // silently undoes every /model switch, so the model actually in
                 // force is reported alongside them.
                 const model = ctx.session.lastModel();
+                // `afterEntryId`: the client already holds the branch up to
+                // that entry — send only what follows it. A long session is
+                // hundreds of KB (every tool's output), and a client refreshed
+                // it in full at every tool step; over Wi-Fi to a phone that
+                // backed updates up until the turn ended. An id no longer on
+                // the branch (a fork, a branch switch) gets the whole branch,
+                // and `tail` says which answer this is. An older client never
+                // sends it and gets the whole branch, as before.
+                const branch = ctx.session.getBranch();
+                const after = typeof params.afterEntryId === "string" ? params.afterEntryId : null;
+                const at = after === null ? -1 : branch.findIndex((e) => e.id === after);
                 return {
                     sessionId: id,
                     info: ctx.session.info,
@@ -753,7 +764,8 @@ export class RpcServer {
                     provider: providerOfModel(model) ?? ctx.session.info.provider,
                     name: ctx.session.getName(),
                     leafId: ctx.session.getLeafId(),
-                    entries: ctx.session.getBranch(),
+                    entries: at >= 0 ? branch.slice(at + 1) : branch,
+                    ...(at >= 0 ? { tail: { afterEntryId: after } } : {}),
                     seq: ctx.seq,
                     running: ctx.running,
                 };
