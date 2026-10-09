@@ -1226,7 +1226,11 @@ function foldLiveTurn(
   // By arrival, not by clock: several events routinely land in the same
   // millisecond, and sorting on time then falls back to which array was walked
   // first — every text run before every tool call, whatever really happened.
-  for (const block of blocks.toSorted((a, b) => a.seq - b.seq)) {
+  //
+  // A sorted copy, not `.toSorted()`: Hermes has no ES2023 change-by-copy
+  // methods, so on the phone every mid-turn rebuild threw here and the thread
+  // only moved when the turn ended and the overlay went away.
+  for (const block of [...blocks].sort((a, b) => a.seq - b.seq)) {
     block.emit(out.order.next(block.at));
   }
 

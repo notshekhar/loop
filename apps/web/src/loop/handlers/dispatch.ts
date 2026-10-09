@@ -733,7 +733,7 @@ async function run(
       // before being sent — the panel may hand them back in any order.
       const answers = (command as { answers?: Record<string, unknown> }).answers ?? {};
       const ordered = Object.entries(answers)
-        .toSorted(([left], [right]) => Number(left) - Number(right))
+        .sort(([left], [right]) => Number(left) - Number(right))
         .map(([, value]) => ({
           answers: Array.isArray(value) ? value.map(String) : [String(value)],
         }));
