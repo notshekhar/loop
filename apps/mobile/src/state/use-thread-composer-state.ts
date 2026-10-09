@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo } from "react";
+import { queuedTurnsForThread, useQueuedTurnsStore } from "@loop/queuedTurns";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 
 import {
   CommandId,
@@ -21,6 +22,7 @@ import {
 } from "../lib/composerImages";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
+import { appendPendingMessages } from "../lib/pendingMessages";
 import { buildThreadFeed } from "../lib/threadActivity";
 import { appAtomRegistry } from "../state/atom-registry";
 import {
@@ -90,9 +92,32 @@ export function useThreadComposerState() {
     () => (selectedThreadKey ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []) : []),
     [queuedMessagesByThreadKey, selectedThreadKey],
   );
-  const selectedThreadFeed = useMemo(
+  // What you sent that loop has not taken yet, shown at the end of the thread
+  // right away (lib/pendingMessages.ts) — from the outbox, and from the shared
+  // dispatch queue (a send that met a turn still running on the host).
+  const dispatchQueue = useSyncExternalStore(
+    useQueuedTurnsStore.subscribe,
+    () => useQueuedTurnsStore.getState().queue,
+  );
+  const selectedThreadId = selectedThreadShell?.id ?? null;
+  const pendingMessages = useMemo(
+    () => [
+      ...selectedThreadQueuedMessages.map((m) => ({ id: m.messageId, text: m.text, createdAt: m.createdAt })),
+      ...queuedTurnsForThread(dispatchQueue, selectedThreadId).map((t) => ({
+        id: t.id,
+        text: t.text,
+        createdAt: t.queuedAt,
+      })),
+    ],
+    [dispatchQueue, selectedThreadId, selectedThreadQueuedMessages],
+  );
+  const baseThreadFeed = useMemo(
     () => (selectedThreadDetail ? buildThreadFeed(selectedThreadDetail) : []),
     [selectedThreadDetail],
+  );
+  const selectedThreadFeed = useMemo(
+    () => appendPendingMessages(baseThreadFeed, pendingMessages),
+    [baseThreadFeed, pendingMessages],
   );
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;

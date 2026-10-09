@@ -63,6 +63,7 @@ import {
   type SelectableMarkdownSkill,
 } from "../../native/SelectableMarkdownText";
 
+import { isPendingMessageId } from "../../lib/pendingMessages";
 import { AppText as Text } from "../../components/AppText";
 import { CopyTextButton } from "../../components/CopyTextButton";
 import {
@@ -902,9 +903,12 @@ function renderFeedEntry(
 
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
+      // Sent, not yet taken by loop (lib/pendingMessages.ts).
+      const pending = isPendingMessageId(message.id);
       return (
         <Animated.View
           className="mb-5 items-end"
+          style={pending ? { opacity: 0.6 } : undefined}
           {...(enterAnimated ? { entering: FadeInUp.duration(220) } : {})}
         >
           <View
@@ -938,7 +942,7 @@ function renderFeedEntry(
           </View>
           <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
             <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
-              {timestampLabel}
+              {pending ? "Queued" : timestampLabel}
             </Text>
             {message.text.trim().length > 0 ? (
               <CopyTextButton

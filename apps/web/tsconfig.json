@@ -76,6 +76,9 @@
       "@loop/handlers/sessionPaging": [
         "./src/loop/handlers/sessionPaging.ts"
       ],
+      "@loop/queuedTurns": [
+        "./src/queuedTurnsStore.ts"
+      ],
       "@loop/ui/verbGroup": [
         "./src/components/loop/loopVerbGroup.ts"
       ],
