@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.21.4] - 2026-10-09
+
+### Added
+
+- **The terminal for other devices.** A paired phone or desktop can open a shell on this machine once you allow it: "terminal for other devices" in `/settings`, the "Turn on, with the terminal" choice when `/rc` asks, `/rc --terminal` for one run, or `loop serve --terminal`. `/rc` says whether it is on. When it is off, the app now says so and how to turn it on, instead of a terminal that never opens.
+
+### Fixed
+
+- **Replies stream on the phone again after it reconnects.** Backgrounding the app or changing networks used to stop live updates until the app restarted, so a reply only appeared once it had finished.
+- **What you send from the phone shows at once,** marked Queued, instead of appearing only when loop took it.
+- **Long sessions update quickly over a network.** During a turn the apps re-read only the newest part of a session instead of all of it — on a long session, a few KB instead of hundreds — so the phone keeps up with a reply as it streams and shows "Loading messages" far less.
+
 ## [0.21.3] - 2026-10-08
 
 ### Fixed
