@@ -66,6 +66,7 @@ export function createSettingsHandlers(state: AppState, deps: AppDeps): Settings
         askUser: false,
         webSearch: false,
         serve: false,
+        serveTerminal: false,
         todos: false,
         artifacts: false,
         backgroundShells: false,
@@ -219,6 +220,11 @@ export function createSettingsHandlers(state: AppState, deps: AppDeps): Settings
                         value: "serve",
                         label: `serve (web UI): ${boolSetting("serve") ? "on" : "off"}`,
                         description: `allow "${PRODUCT_NAME} serve" — token-locked web UI; anyone with the URL controls this machine`,
+                    },
+                    {
+                        value: "serveTerminal",
+                        label: `terminal for other devices: ${boolSetting("serveTerminal") ? "on" : "off"}`,
+                        description: `let paired devices (the phone app, another desktop) open a shell over "${PRODUCT_NAME} serve" and /rc`,
                     },
                     {
                         value: "todos",

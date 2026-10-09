@@ -328,7 +328,7 @@ export function cmdServe(args: Args): void {
     let token: string;
     let stop: () => void;
     try {
-        ({ url, hostname, networkUrls, port: boundPort, token, stop } = startWebServer({ host, port, remoteTerminal: Boolean(args.flags.terminal), version: APP_VERSION }));
+        ({ url, hostname, networkUrls, port: boundPort, token, stop } = startWebServer({ host, port, remoteTerminal: Boolean(args.flags.terminal) || getSetting("serveTerminal") === true, version: APP_VERSION }));
     } catch (err) {
         console.error((err as Error).message);
         process.exitCode = 1;

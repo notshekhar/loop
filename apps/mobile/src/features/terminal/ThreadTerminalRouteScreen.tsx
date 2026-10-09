@@ -1078,6 +1078,17 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     return <LoadingScreen message="Opening terminal…" />;
   }
 
+  // The host said no (the terminal is off for other devices) or the shell
+  // could not start: say so, in the host's words, instead of a pane that never
+  // comes up.
+  if (terminal.status === "error" && terminal.error) {
+    return (
+      <View className="flex-1 bg-screen">
+        <EmptyState title="Terminal unavailable" detail={terminal.error} />
+      </View>
+    );
+  }
+
   return (
     <>
       <NativeStackScreenOptions

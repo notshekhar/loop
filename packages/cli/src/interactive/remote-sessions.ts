@@ -641,6 +641,11 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
             ...rc.networkUrls.map((u) => `  network   ${u}`),
             ...(tailnetUrl ? [`  tailnet   ${tailnetUrl}`] : []),
             dim("or paste a link into another loop's /hosts"),
+            dim(
+                getSetting("serveTerminal") === true
+                    ? "terminal: offered to paired devices"
+                    : "terminal: this machine only — turn on \"terminal for other devices\" in /settings, then /rc off and /rc",
+            ),
             warn("Anyone with this link fully controls this machine. ") + dim("/rc off stops it."),
         ];
         say(lines.join("\n"));
@@ -668,15 +673,21 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
             const pick = await deps.selectOnce(
                 [
                     { value: "on", label: "Turn on remote control", description: "anyone with the link controls this machine" },
+                    {
+                        value: "terminal",
+                        label: "Turn on, with the terminal",
+                        description: "paired devices can also open a shell here (the app's terminal)",
+                    },
                     { value: "no", label: "Cancel" },
                 ],
                 "Remote control",
             );
-            if (pick?.value !== "on") return;
+            if (pick?.value !== "on" && pick?.value !== "terminal") return;
             setSetting("serve", true);
+            if (pick.value === "terminal") setSetting("serveTerminal", true);
         }
         // Reachable from the phone means a network bind; the token is the lock.
-        const bind = sub === "--local" ? "127.0.0.1" : "0.0.0.0";
+        const bind = /--local\b/.test(sub) ? "127.0.0.1" : "0.0.0.0";
         let lastError: unknown;
         for (let port = SERVE_DEFAULT_PORT; port < SERVE_DEFAULT_PORT + 5 && !rc; port++) {
             // macOS lets 127.0.0.1:N bind beside another process's *:N, and
@@ -687,6 +698,9 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
                 rc = startWebServer({
                     host: bind,
                     port,
+                    // The app's terminal, for other devices: /settings, or
+                    // `/rc --terminal` for this run.
+                    remoteTerminal: getSetting("serveTerminal") === true || /--terminal\b/.test(sub),
                     ...(host.version ? { version: host.version } : {}),
                     live: liveSessions,
                 });

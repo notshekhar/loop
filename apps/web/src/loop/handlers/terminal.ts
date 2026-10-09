@@ -43,6 +43,24 @@ const malformed = () =>
     requiredScope: AuthOrchestrationReadScope,
   });
 
+/**
+ * A pty call whose refusal reaches the screen as a message.
+ *
+ * `Effect.promise` turns a rejection into a defect, so a host refusing the
+ * terminal ("off for other devices") killed the stream with nothing to show —
+ * the phone's terminal just never came up. The host's own sentence says why
+ * and how to turn it on; this carries it through.
+ */
+const ptyCall = <A>(run: () => Promise<A>) =>
+  Effect.tryPromise({
+    try: run,
+    catch: (error) =>
+      new EnvironmentAuthorizationError({
+        message: error instanceof Error ? error.message : String(error),
+        requiredScope: AuthOrchestrationReadScope,
+      }),
+  });
+
 const toContract = (snapshot: TerminalSnapshot) =>
   decodeSnapshot(snapshot).pipe(Effect.mapError(malformed));
 
@@ -59,7 +77,7 @@ export const openTerminal = Effect.fnUntraced(function* (
 ) {
   const pty = host.pty();
   if (!pty) return yield* Effect.fail(unavailable());
-  const snapshot = yield* Effect.promise(() =>
+  const snapshot = yield* ptyCall(() =>
     pty.open({
       threadId: input.threadId,
       terminalId: input.terminalId,
@@ -218,10 +236,10 @@ export function attachTerminal(
         (unsubscribe) => Effect.sync(unsubscribe),
       );
 
-      const existing = yield* Effect.promise(() => pty.snapshot(input.threadId, input.terminalId));
+      const existing = yield* ptyCall(() => pty.snapshot(input.threadId, input.terminalId));
       const snapshot =
         existing ??
-        (yield* Effect.promise(() =>
+        (yield* ptyCall(() =>
           pty.open({
             threadId: input.threadId,
             terminalId: input.terminalId,

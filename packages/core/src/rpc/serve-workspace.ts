@@ -73,7 +73,7 @@ export function createServeWorkspace(
             if (!handler) throw new Error(`Method not found: ${method}`);
             if (name.startsWith("pty.") && !canUseTerminal) {
                 throw new Error(
-                    "the terminal is only offered to this machine — restart serve with --terminal to allow it over the network",
+                    "The terminal is off for other devices. On the computer, turn on \"terminal for other devices\" in /settings (or start loop serve with --terminal), then reconnect.",
                 );
             }
             return await handler(params);
