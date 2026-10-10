@@ -31,6 +31,7 @@ import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
+import { ThreadInsightsSheet } from "./features/threads/ThreadInsightsSheet";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
@@ -265,6 +266,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "GitCommit",
   "GitConfirm",
   "GitOverview",
+  "ThreadInsights",
   "NewTaskSheet",
   "SettingsLegal",
   "SettingsSheet",
@@ -445,6 +447,15 @@ export const RootStack = createNativeStackNavigator({
       options: {
         presentation: "formSheet",
         sheetAllowedDetents: [0.55, 0.92],
+        sheetGrabberVisible: true,
+      },
+    }),
+    ThreadInsights: createNativeStackScreen({
+      screen: ThreadInsightsSheet,
+      linking: `${THREAD_LINKING_PREFIX}/insights`,
+      options: {
+        presentation: "formSheet",
+        sheetAllowedDetents: [0.6, 0.95],
         sheetGrabberVisible: true,
       },
     }),

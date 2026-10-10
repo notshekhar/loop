@@ -101,6 +101,8 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly terminalSessions: ReadonlyArray<TerminalMenuSession>;
   readonly showActionControls?: boolean;
   readonly showDirectFileControl?: boolean;
+  /** Opens the thread's Context & usage sheet. */
+  readonly onOpenInsights?: () => void;
   readonly onOpenTerminal: (terminalId?: string | null) => void;
   readonly onOpenNewTerminal: () => void;
   readonly onRunProjectScript: (script: ProjectScript) => Promise<void>;
@@ -486,6 +488,14 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           disabled={!props.canOpenFiles}
           icon="folder"
           onPress={model.openFiles}
+          separateBackground
+        />
+      ) : null}
+      {showActionControls && props.onOpenInsights ? (
+        <NativeHeaderToolbar.Button
+          accessibilityLabel="Context and usage"
+          icon="gauge.with.dots.needle.33percent"
+          onPress={props.onOpenInsights}
           separateBackground
         />
       ) : null}

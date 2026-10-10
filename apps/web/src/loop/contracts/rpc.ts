@@ -241,6 +241,9 @@ export const WS_METHODS = {
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
 
+  // loop's /context, /cost and /steak for one session
+  sessionInsights: "session.insights",
+
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -783,6 +786,61 @@ export const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeReso
   stream: true,
 });
 
+/**
+ * What a session holds and costs — the terminal's `/context` and `/cost`, plus
+ * the `/steak` totals — in one read, for a client that cannot call loop
+ * directly (the phone). Each part is null when that loop cannot tell.
+ */
+export const SessionInsightsResult = Schema.Struct({
+  context: Schema.NullOr(
+    Schema.Struct({
+      modelId: Schema.String,
+      /** 0 when loop's catalog does not know the model. */
+      contextWindow: Schema.Number,
+      autoCompactThreshold: Schema.Number,
+      totalTokens: Schema.Number,
+      freeTokens: Schema.Number,
+      categories: Schema.Array(
+        Schema.Struct({ key: Schema.String, label: Schema.String, tokens: Schema.Number }),
+      ),
+    }),
+  ),
+  cost: Schema.NullOr(
+    Schema.Struct({
+      inputTokens: Schema.Number,
+      outputTokens: Schema.Number,
+      cachedInputTokens: Schema.Number,
+      usd: Schema.Number,
+      estimated: Schema.optional(Schema.Boolean),
+    }),
+  ),
+  spend: Schema.NullOr(
+    Schema.Struct({
+      todayUsd: Schema.Number,
+      last7Usd: Schema.Number,
+      monthUsd: Schema.Number,
+      lifetimeUsd: Schema.Number,
+    }),
+  ),
+  usage: Schema.NullOr(
+    Schema.Struct({
+      totalTokens: Schema.Number,
+      currentStreak: Schema.Number,
+      longestStreak: Schema.Number,
+      activeDays: Schema.Number,
+      busiestDay: Schema.String,
+      busiestDayTokens: Schema.Number,
+    }),
+  ),
+});
+export type SessionInsightsResult = typeof SessionInsightsResult.Type;
+
+export const WsSessionInsightsRpc = Rpc.make(WS_METHODS.sessionInsights, {
+  payload: Schema.Struct({ threadId: Schema.String }),
+  success: SessionInsightsResult,
+  error: EnvironmentAuthorizationError,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -804,6 +862,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,
+  WsSessionInsightsRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsSourceControlLookupRepositoryRpc,

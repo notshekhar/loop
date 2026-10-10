@@ -73,6 +73,7 @@ import {
   writeTerminal,
 } from "./terminal.ts";
 import { threadStream } from "./thread.ts";
+import { readSessionInsights } from "./insights.ts";
 import { subscribeLiveTurns } from "./liveTurn.ts";
 
 const notPorted = (method: string) =>
@@ -216,6 +217,7 @@ export const makeHandlers = (options: HandlerOptions) => {
   "server.getResourceTelemetryHistory": () => fail("server.getResourceTelemetryHistory"),
   "server.retryResourceTelemetry": () => fail("server.retryResourceTelemetry"),
   "server.signalProcess": () => fail("server.signalProcess"),
+  "session.insights": (input) => readSessionInsights(input, host),
   "cloud.getRelayClientStatus": () => fail("cloud.getRelayClientStatus"),
   "cloud.installRelayClient": () => failStream("cloud.installRelayClient"),
   "server.reportClientActivity": () => fail("server.reportClientActivity"),

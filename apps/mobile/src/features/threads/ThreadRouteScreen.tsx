@@ -342,6 +342,13 @@ function ThreadRouteContent(
     setInspectorSelection({ routeThreadIdentity, mode: "git" });
     showAuxiliaryPane("inspector");
   }, [fileInspector.supported, navigation, routeThreadIdentity, selectedThread, showAuxiliaryPane]);
+  const handleOpenInsights = useCallback(() => {
+    if (selectedThread === null) return;
+    navigation.navigate("ThreadInsights", {
+      environmentId: String(selectedThread.environmentId),
+      threadId: String(selectedThread.id),
+    });
+  }, [navigation, selectedThread]);
   const handleOpenFilesInspector = useCallback(() => {
     if (selectedThread === null || selectedThreadCwd === null) {
       return;
@@ -614,6 +621,7 @@ function ThreadRouteContent(
     projectScripts: selectedThreadProject?.scripts ?? [],
     terminalSessions: terminalMenuSessions,
     showDirectFileControl: layout.usesSplitView,
+    onOpenInsights: handleOpenInsights,
     onOpenTerminal: handleOpenTerminal,
     onOpenNewTerminal: handleOpenNewTerminal,
     onRunProjectScript: handleRunProjectScript,
@@ -689,6 +697,11 @@ function ThreadRouteContent(
       });
     }
     actions.push({
+      accessibilityLabel: "Context and usage",
+      icon: "gauge.with.dots.needle.33percent",
+      onPress: handleOpenInsights,
+    });
+    actions.push({
       accessibilityLabel: "Open git controls",
       icon: "point.topleft.down.curvedto.point.bottomright.up",
       onPress: handleOpenGitInspector,
@@ -706,6 +719,7 @@ function ThreadRouteContent(
     handleOpenFilesInspector,
     handleOpenTerminal,
     handleOpenGitInspector,
+    handleOpenInsights,
     handleToggleInspector,
     props.onReturnToThread,
     selectedThreadCwd,

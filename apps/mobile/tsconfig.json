@@ -7,6 +7,9 @@
       "@loop/transcript": [
         "../../packages/core/src/transcript/index.ts"
       ],
+      "@loop/format": [
+        "../../packages/core/src/format.ts"
+      ],
       "@loop/contracts": [
         "../web/src/loop/contracts/index.ts"
       ],
@@ -72,6 +75,9 @@
       ],
       "@loop/runtime/state/filesystem": [
         "../web/src/loop/runtime/state/filesystem.ts"
+      ],
+      "@loop/runtime/state/insights": [
+        "../web/src/loop/runtime/state/insights.ts"
       ],
       "@loop/runtime/state/git": [
         "../web/src/loop/runtime/state/git.ts"
