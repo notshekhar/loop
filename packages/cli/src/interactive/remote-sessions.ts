@@ -628,8 +628,11 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
         },
     };
 
-    const printReach = (): void => {
+    const printReach = (opts: { freshCode?: boolean } = {}): void => {
         if (!rc) return;
+        // By hand: the address and a six-digit code the app trades for the
+        // token. Asking again (`/rc` while on) shows a new code.
+        const pairingCode = rc.pairingCode({ fresh: opts.freshCode === true });
         const tailnet = isLoopbackHost(rc.hostname) ? null : tailnetIdentity();
         const tailnetUrl = tailnet?.dnsName ? `http://${tailnet.dnsName}:${rc.port}/?token=${rc.token}` : null;
         const pairing = tailnetUrl ?? rc.networkUrls[0] ?? rc.url;
@@ -643,6 +646,8 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
             `  local     ${rc.url}`,
             ...rc.networkUrls.map((u) => `  network   ${u}`),
             ...(tailnetUrl ? [`  tailnet   ${tailnetUrl}`] : []),
+            `  code      ${accent(`${pairingCode.code.slice(0, 3)} ${pairingCode.code.slice(3)}`)}` +
+                dim(`  type host ${new URL(pairing).host} and this code in the app (one use, 5 min; /rc for a new one)`),
             dim("or paste a link into another loop's /hosts"),
             dim(
                 rcTerminal
@@ -667,7 +672,7 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
             return;
         }
         if (rc) {
-            printReach();
+            printReach({ freshCode: true });
             return;
         }
         // The same consent `loop serve` asks for, given here instead of in

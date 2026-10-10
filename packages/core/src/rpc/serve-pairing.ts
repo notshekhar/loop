@@ -18,13 +18,34 @@
  *
  * Tickets are the one new secret: random, single-use and short-lived, so the
  * socket URL a client opens (and a proxy may log) never carries the token.
+ *
+ * A pairing CODE is the way to pair by hand: six digits the computer shows,
+ * typed into the other device instead of the long token. It is only ever
+ * exchanged for the token, never used as a credential itself — six digits
+ * would fall to guessing in minutes — so it is single-use, expires in a few
+ * minutes, and a handful of wrong guesses cancels it.
  */
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 import { hostname as osHostname } from "node:os";
 import { MIN_CLIENT_PROTOCOL, PROTOCOL_VERSION } from "./protocol";
 
 /** How long a socket ticket stays redeemable. Clients redeem immediately. */
 export const WS_TICKET_TTL_MS = 60_000;
+/** How long a pairing code stays good: long enough to walk to the phone and type it. */
+export const PAIRING_CODE_TTL_MS = 5 * 60_000;
+/** Wrong codes tolerated before the current one is cancelled (a fresh one must be shown). */
+export const PAIRING_CODE_MAX_FAILURES = 5;
+
+/** A pairing code as typed: digits only, so "123 456" and "123-456" both work. */
+export function normalizePairingCode(input: string | null | undefined): string | null {
+    const digits = (input ?? "").replace(/[\s-]/g, "");
+    return /^\d{6}$/.test(digits) ? digits : null;
+}
+
+export interface PairingCode {
+    readonly code: string;
+    readonly expiresAt: number;
+}
 /** What the access token claims for its lifetime; it lasts as long as the serve token. */
 const ACCESS_TOKEN_EXPIRES_IN_S = 365 * 24 * 60 * 60;
 
@@ -112,6 +133,13 @@ export interface Pairing {
     handle(req: Request): Promise<Response | null>;
     /** Redeem a socket ticket. True once per ticket, and only before it expires. */
     redeemTicket(ticket: string | null): boolean;
+    /**
+     * A fresh pairing code. It replaces any earlier one: there is only ever one
+     * code to guess at, and showing a new code withdraws the last.
+     */
+    issueCode(): PairingCode;
+    /** The code still good to show, if any — expired, used and cancelled ones are not. */
+    currentCode(): PairingCode | null;
 }
 
 export function createPairing(opts: PairingOptions): Pairing {
@@ -120,6 +148,24 @@ export function createPairing(opts: PairingOptions): Pairing {
     const label = opts.label ?? (osHostname().replace(/\.local$/, "") || "loop");
     /** ticket → expiry. Swept on every issue, so it cannot grow unbounded. */
     const tickets = new Map<string, number>();
+    let code: PairingCode | null = null;
+    let codeFailures = 0;
+    const liveCode = () => {
+        if (code && code.expiresAt <= now()) code = null;
+        return code;
+    };
+    /** Spend the code if `candidate` is it; count a wrong guess against it otherwise. */
+    const redeemCode = (candidate: string): boolean => {
+        const current = liveCode();
+        if (!current) return false;
+        if (candidate === current.code) {
+            code = null;
+            return true;
+        }
+        codeFailures += 1;
+        if (codeFailures >= PAIRING_CODE_MAX_FAILURES) code = null;
+        return false;
+    };
 
     const sweep = () => {
         const t = now();
@@ -166,8 +212,17 @@ export function createPairing(opts: PairingOptions): Pairing {
                     if (form.get("grant_type") !== TOKEN_EXCHANGE_GRANT) {
                         return oauthError("unsupported_grant_type", "Only token exchange is supported.");
                     }
-                    if (!opts.tokenMatches(form.get("subject_token"))) {
-                        return oauthError("invalid_grant", "That pairing link is not valid for this loop.", 400);
+                    const subject = form.get("subject_token");
+                    const typedCode = normalizePairingCode(subject);
+                    const paired = opts.tokenMatches(subject) || (typedCode !== null && redeemCode(typedCode));
+                    if (!paired) {
+                        return oauthError(
+                            "invalid_grant",
+                            typedCode !== null
+                                ? "That code is wrong, used or expired. Show a new one on the computer (it prints one with loop serve, or /rc) and try again."
+                                : "That pairing link is not valid for this loop.",
+                            400,
+                        );
                     }
                     return json({
                         access_token: opts.token,
@@ -202,6 +257,16 @@ export function createPairing(opts: PairingOptions): Pairing {
                 }
             }
             return null;
+        },
+
+        issueCode() {
+            code = { code: String(randomInt(0, 1_000_000)).padStart(6, "0"), expiresAt: now() + PAIRING_CODE_TTL_MS };
+            codeFailures = 0;
+            return code;
+        },
+
+        currentCode() {
+            return liveCode();
         },
 
         redeemTicket(ticket) {

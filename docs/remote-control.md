@@ -163,7 +163,10 @@ back.
 - `/rc` binds **localhost** by default; `/rc --lan` opts into the LAN.
   Cross-machine reach is Tailscale or `ssh -L`, which also provides TLS — loop
   does not do its own.
-- `/rc` prints the URL + token and a QR code; `/rc off` stops it; the status
+- `/rc` prints the URL + token, a QR code and a six-digit pairing code (typed
+  into the app with the host address instead of the token; one use, five
+  minutes, cancelled after five wrong guesses; `/rc` again shows a new one);
+  `/rc off` stops it; the status
   line shows `rc on` while it runs.
 - Files, git and the terminal are host-machine capabilities. Paired devices get
   the terminal by default (they can already run the agent, which runs shell

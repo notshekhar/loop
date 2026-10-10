@@ -252,7 +252,7 @@ export function ConnectionsNewRouteScreen({
                 <TextInput
                   autoCapitalize="none"
                   autoCorrect={false}
-                  placeholder="abc-123-xyz"
+                  placeholder="123 456"
                   value={codeInput}
                   onChangeText={handleCodeChange}
                   className="rounded-[14px] border border-input-border bg-input px-4 py-3.5 text-base text-foreground"

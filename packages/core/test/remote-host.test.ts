@@ -90,9 +90,16 @@ describe("pairing and driving another machine", () => {
         expect(again.label).toBe("studio");
     });
 
+    test("pairs with the six-digit code and keeps the token, not the code", async () => {
+        storedHosts = [];
+        const { code } = handle.pairingCode({ fresh: true });
+        const record = await pairRemoteHost(parsePairingLink(base, code)!);
+        expect(record.token).toBe(handle.token);
+    });
+
     test("refuses a wrong token and saves nothing", async () => {
         storedHosts = [];
-        await expect(pairRemoteHost({ url: base, token: "nope" })).rejects.toThrow("refused that token");
+        await expect(pairRemoteHost({ url: base, token: "nope" })).rejects.toThrow("not valid");
         expect(listRemoteHosts()).toHaveLength(0);
     });
 

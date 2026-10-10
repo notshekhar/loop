@@ -18,7 +18,7 @@ import { RpcServer, type LiveSessionProvider } from "./server";
 import { loadWebApp, serveWebApp, webAppMissing } from "./serve-web-app";
 import { createServeWorkspace, WORKSPACE_EVENT, WORKSPACE_PREFIX } from "./serve-workspace";
 import { getStoredServeToken, storeServeToken } from "./serve-token-store";
-import { bearerToken, createPairing } from "./serve-pairing";
+import { bearerToken, createPairing, type PairingCode } from "./serve-pairing";
 
 /** The cookie a token page load leaves, so the app's own asset and socket
  * requests are authorised without the token in every URL. */
@@ -119,6 +119,11 @@ export interface ServeHandle {
         publish(sessionId: string, part: { type: string; data: unknown }): void;
         setRunning(sessionId: string, running: boolean): void;
     };
+    /**
+     * The six-digit code another device types to pair (serve-pairing.ts):
+     * the one still good, or a fresh one when there is none (or `fresh`).
+     */
+    pairingCode(opts?: { fresh?: boolean }): PairingCode;
     stop(): void;
 }
 
@@ -309,6 +314,7 @@ export function startWebServer(
             publish: (sessionId, part) => rpc.publishLive(sessionId, part),
             setRunning: (sessionId, running) => rpc.setLiveRunning(sessionId, running),
         },
+        pairingCode: (opts) => (!opts?.fresh && pairing.currentCode()) || pairing.issueCode(),
         // Killing the HTTP server closes the sockets; disposing the RPC
         // server is what kills the background shells its sessions started,
         // which nothing else in this process will do.

@@ -20,6 +20,9 @@
       `apps/mobile` is in `bun run typecheck`.
 - [x] `loop serve` prints a pairing QR code — the tailnet URL when Tailscale is
       running, else the LAN URL — which the app's scanner reads as-is.
+- [x] Pairing by hand: `loop serve` and `/rc` also show a six-digit code; the
+      app takes the host address and that code, and the host trades it for its
+      token (one use, five minutes, cancelled after five wrong guesses).
 - [x] Desktop: Settings → Connections pairs another loop (paste its URL);
       verified in the app. The sidebar keeps each machine's projects and
       threads apart, names the machine once more than one is paired ("This

@@ -2422,7 +2422,7 @@ export function ConnectionsSettings() {
           <Input
             value={savedBackendPairingCode}
             onChange={(event) => setSavedBackendPairingCode(event.target.value)}
-            placeholder="PAIRCODE"
+            placeholder="123 456"
             disabled={isAddingSavedBackend}
             spellCheck={false}
           />
@@ -2430,7 +2430,8 @@ export function ConnectionsSettings() {
       </div>
       <div>
         <span className="mt-1 block text-[11px] text-muted-foreground">
-          Paste a full pairing URL here to fill both fields automatically.
+          Type the host and the six-digit code that loop serve (or /rc) shows on that computer, or
+          paste its full pairing URL to fill both fields.
         </span>
       </div>
     </div>

@@ -15,6 +15,7 @@ import {
     SERVE_DEFAULT_PORT,
     SessionManager,
     type SessionScope,
+    type ServeHandle,
     startSocketServer,
     startStdioServer,
     startWebServer,
@@ -328,8 +329,9 @@ export function cmdServe(args: Args): void {
     let boundPort: number;
     let token: string;
     let stop: () => void;
+    let pairingCode: ServeHandle["pairingCode"];
     try {
-        ({ url, hostname, networkUrls, port: boundPort, token, stop } = startWebServer({ host, port, remoteTerminal: remoteTerminalFor(args.flags, getSetting("serveTerminal")), version: APP_VERSION }));
+        ({ url, hostname, networkUrls, port: boundPort, token, stop, pairingCode } = startWebServer({ host, port, remoteTerminal: remoteTerminalFor(args.flags, getSetting("serveTerminal")), version: APP_VERSION }));
     } catch (err) {
         console.error((err as Error).message);
         process.exitCode = 1;
@@ -371,6 +373,19 @@ export function cmdServe(args: Args): void {
     const pairingUrl = tailnetUrl ?? networkUrls[0] ?? url;
     console.log(`\nPair a phone — scan with the loop app (${tailnetUrl ? "tailnet" : networkUrls[0] ? "LAN" : "this machine only"}):\n`);
     console.log(terminalQr(pairingUrl));
+    // By hand, for a phone that cannot scan this screen: the address and a
+    // six-digit code, which the app trades for the token (serve-pairing.ts).
+    const pairingHost = new URL(pairingUrl).host;
+    const showCode = (fresh: boolean) => {
+        const { code, expiresAt } = pairingCode({ fresh });
+        const minutes = Math.max(1, Math.round((expiresAt - Date.now()) / 60_000));
+        console.log(`Or type it in: host ${pairingHost}  code ${code.slice(0, 3)} ${code.slice(3)}  (one use, ${minutes} min)`);
+    };
+    showCode(false);
+    if (process.stdin.isTTY) {
+        console.log(`Press Enter for a new code.`);
+        process.stdin.on("data", () => showCode(true));
+    }
     console.log(``);
     console.log(`WARNING: anyone with this URL fully controls this machine (the agent runs`);
     console.log(`shell commands as you). The token is the only lock — do not share or log it.`);

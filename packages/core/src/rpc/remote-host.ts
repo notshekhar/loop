@@ -134,7 +134,10 @@ export async function pairRemoteHost(
     // otherwise sit in /hosts failing on every open.
     const mismatch = protocolMismatch(env);
     if (mismatch) throw new Error(`${env.label}: ${mismatch}`);
-    await withTimeout(opts.timeoutMs ?? 4000, async (signal) => {
+    // What the host hands back is the credential to keep. It is the link's
+    // own token when pairing by link; when pairing by a six-digit code it is
+    // the token that code stood in for — the code itself is spent.
+    const accessToken = await withTimeout(opts.timeoutMs ?? 4000, async (signal) => {
         const res = await doFetch(`${link.url}/oauth/token`, {
             method: "POST",
             signal,
@@ -145,7 +148,16 @@ export async function pairRemoteHost(
                 subject_token_type: "urn:ietf:params:oauth:token-type:access_token",
             }).toString(),
         });
-        if (!res.ok) throw new Error(`${env.label} refused that token — copy the link \`loop serve\` prints there`);
+        if (!res.ok) {
+            const body = (await res.json().catch(() => ({}))) as { error_description?: string };
+            throw new Error(
+                body.error_description
+                    ? `${env.label}: ${body.error_description}`
+                    : `${env.label} refused that token — copy the link \`loop serve\` prints there`,
+            );
+        }
+        const granted = (await res.json().catch(() => ({}))) as { access_token?: unknown };
+        return typeof granted.access_token === "string" && granted.access_token ? granted.access_token : link.token;
     });
     const hosts = loadRemoteHosts();
     const existing = hosts.find((h) => h.id === env.environmentId);
@@ -154,7 +166,7 @@ export async function pairRemoteHost(
         // A name given here survives re-pairing; the host's own name otherwise.
         label: existing?.label ?? env.label,
         url: link.url,
-        token: link.token,
+        token: accessToken,
         addedAt: existing?.addedAt ?? Date.now(),
     };
     saveRemoteHosts([...hosts.filter((h) => h.id !== record.id), record]);

@@ -16,6 +16,7 @@ export {
     SERVE_DEFAULT_PORT,
     type ServeHandle,
 } from "./serve";
+export { normalizePairingCode, PAIRING_CODE_TTL_MS, type PairingCode } from "./serve-pairing";
 export { RpcClient } from "./client";
 export {
     answerAuthFlow,

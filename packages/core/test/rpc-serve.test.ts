@@ -807,6 +807,59 @@ describe("pairing another device", () => {
         expect((await bad.json()).error).toBe("invalid_grant");
     });
 
+    test("a six-digit code pairs once, for the token, and never works as a credential", async () => {
+        const { code } = handle.pairingCode({ fresh: true });
+        // Typed with a space, the way the computer shows it.
+        const ok = await exchange(`${code.slice(0, 3)} ${code.slice(3)}`);
+        expect(ok.status).toBe(200);
+        expect((await ok.json()).access_token).toBe(handle.token);
+        // Spent.
+        const again = await exchange(code);
+        expect(again.status).toBe(400);
+        expect((await again.json()).error_description).toContain("code");
+        // Not a bearer either.
+        const session = await (
+            await fetch(`${base}/api/auth/session`, { headers: { authorization: `Bearer ${code}` } })
+        ).json();
+        expect(session.authenticated).toBe(false);
+    });
+
+    test("wrong guesses cancel the code, and showing a new one withdraws the old", async () => {
+        const first = handle.pairingCode({ fresh: true }).code;
+        const second = handle.pairingCode({ fresh: true }).code;
+        if (second !== first) expect((await exchange(first)).status).toBe(400);
+        const current = handle.pairingCode({ fresh: true }).code;
+        const wrong = current === "000000" ? "111111" : "000000";
+        for (let i = 0; i < 5; i++) expect((await exchange(wrong)).status).toBe(400);
+        // Five misses and even the right code is gone.
+        expect((await exchange(current)).status).toBe(400);
+        expect(handle.pairingCode().code).not.toBe(current);
+    });
+
+    test("a code expires", async () => {
+        const { createPairing, PAIRING_CODE_TTL_MS } = await import("../src/rpc/serve-pairing");
+        let clock = 1_000_000;
+        const pairing = createPairing({
+            token: "t".repeat(32),
+            version: "1",
+            tokenMatches: (candidate) => candidate === "t".repeat(32),
+            now: () => clock,
+        });
+        const { code } = pairing.issueCode();
+        clock += PAIRING_CODE_TTL_MS + 1;
+        expect(pairing.currentCode()).toBeNull();
+        const res = await pairing.handle(
+            new Request("http://x/oauth/token", {
+                method: "POST",
+                body: new URLSearchParams({
+                    grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+                    subject_token: code,
+                }),
+            }),
+        );
+        expect(res?.status).toBe(400);
+    });
+
     test("a ticket opens one socket, once", async () => {
         const issue = await fetch(`${base}/api/auth/websocket-ticket`, {
             method: "POST",
