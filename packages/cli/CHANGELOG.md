@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.21.10] - 2026-10-11
+
+### Added
+
+- **Thread teams.** The agent can split a big job across threads that work in parallel: it starts them with `spawn_threads`, each one a real chat with its own title, and they message each other, share a team board, and report back to the thread that started them, which can wait for them. Every thread's spend adds up into the team's total, including what you send to a thread yourself. Off by default — turn on "thread teams" in `/settings`, on the desktop in Settings, or on the phone per computer. Not offered to Claude Code or Cursor Agent, which run their own tools.
+- **Teams in the TUI.** Threads run in the background and are listed in the Ctrl+S switcher; `/team` shows every thread and jumps to one or stops them all, `/lead` goes back to the lead, `/resume` nests threads under their lead, and `/cost` shows the team.
+- **Teams on the desktop.** A Team button in the chat input opens the team beside the chat, with every thread's live state one click away; threads sit under their lead in the sidebar, and a thread's lead is in its breadcrumb.
+- **Teams on the phone.** A pill under the header goes back to the lead or opens the team sheet; threads are indented under their lead in the list.
+
+### Fixed
+
+- **The desktop hears about chats created elsewhere right away.** Sessions started outside the window — a team's threads, a turn from another device — showed in the sidebar only after the next unrelated refresh.
+
 ## [0.21.9] - 2026-10-10
 
 ### Fixed
