@@ -29,6 +29,12 @@ on:
             - "apps/web/src/loop/**"
             - ".github/workflows/mobile.yml"
     workflow_dispatch:
+        inputs:
+            variant:
+                description: "release (installable, published from main) or dev (loop Dev: a debug dev client that loads JS from Metro)"
+                type: choice
+                options: [release, dev]
+                default: release
 
 permissions:
     contents: write
@@ -62,7 +68,13 @@ jobs:
         # A cold Gradle + C++ build of the native modules is the long pole.
         timeout-minutes: 75
         env:
-            APP_VARIANT: production
+            # `dev` is for working on the app: a separate "loop Dev" install
+            # that loads its JavaScript from Metro, so a change reloads in
+            # seconds on a real Hermes instead of costing a 15-minute build.
+            APP_VARIANT: ${{ inputs.variant == 'dev' && 'development' || 'production' }}
+            GRADLE_TASK: ${{ inputs.variant == 'dev' && 'assembleDebug' || 'assembleRelease' }}
+            APK_DIR: ${{ inputs.variant == 'dev' && 'debug/app-debug.apk' || 'release/app-release.apk' }}
+            NAME_SUFFIX: ${{ inputs.variant == 'dev' && '-dev' || '' }}
             EXPO_NO_GIT_STATUS: "1"
             LOOP_ANDROID_VERSION_CODE: ${{ github.run_number }}
         steps:
@@ -110,14 +122,14 @@ jobs:
 
             - name: Build the APK (arm64 — every phone from the last decade)
               working-directory: apps/mobile/android
-              run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+              run: ./gradlew $GRADLE_TASK -PreactNativeArchitectures=arm64-v8a --no-daemon
 
             - name: Name it
               id: apk
               run: |
                   version=$(node -p "require('./apps/mobile/package.json').version")
-                  name="loop-android-${version}-${{ github.run_number }}.apk"
-                  cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk "$name"
+                  name="loop-android-${version}-${{ github.run_number }}${NAME_SUFFIX}.apk"
+                  cp "apps/mobile/android/app/build/outputs/apk/$APK_DIR" "$name"
                   echo "name=$name" >> "$GITHUB_OUTPUT"
                   ls -la "$name"
 
@@ -130,7 +142,7 @@ jobs:
             # Only signed builds from main reach the release: a debug-signed
             # APK would not install over the last one anyway.
             - name: Publish to the mobile-latest pre-release
-              if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.key.outputs.signed == 'true'
+              if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.key.outputs.signed == 'true' && inputs.variant != 'dev'
               env:
                   GH_TOKEN: ${{ github.token }}
               run: |
