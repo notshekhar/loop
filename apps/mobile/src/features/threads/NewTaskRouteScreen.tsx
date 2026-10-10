@@ -17,6 +17,7 @@ import { useWorkspaceState } from "../../state/workspace";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
+import { useHomeListOptions } from "../home/home-list-options";
 
 type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
@@ -78,7 +79,23 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
 }
 
 export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRouteParams | undefined>) {
-  const projects = useProjects();
+  const allProjects = useProjects();
+  // The home list's environment filter applies here too: with the list
+  // narrowed to one machine, offering another machine's projects for a new
+  // chat was a way to start work somewhere you had just hidden.
+  const projectEnvironmentIds = useMemo(
+    () => new Set(allProjects.map((project) => project.environmentId)),
+    [allProjects],
+  );
+  const { options: homeListOptions } = useHomeListOptions(projectEnvironmentIds);
+  const filterEnvironmentId = homeListOptions.selectedEnvironmentId;
+  const projects = useMemo(
+    () =>
+      filterEnvironmentId === null
+        ? allProjects
+        : allProjects.filter((project) => project.environmentId === filterEnvironmentId),
+    [allProjects, filterEnvironmentId],
+  );
   const threads = useThreadShells();
   const { state: catalogState } = useWorkspaceState();
   const navigation = useNavigation();
@@ -130,7 +147,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const resumedDestinationKeyRef = useRef<string | null>(null);
   const reservedDestinationProject = incomingShare?.destination
-    ? (projects.find(
+    ? (allProjects.find(
         (project) =>
           project.environmentId === incomingShare.destination?.environmentId &&
           project.id === incomingShare.destination?.projectId,
