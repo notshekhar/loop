@@ -3,11 +3,9 @@ import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
 import { LayoutAnimation, Pressable, ScrollView, useColorScheme, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { scaledTypographyLineHeight } from "../../lib/appearancePreferences";
 import { cn } from "../../lib/cn";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
-import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import Animated, { FadeIn } from "react-native-reanimated";
 
 const WORK_LOG_LAYOUT_ANIMATION = {
@@ -87,38 +85,9 @@ export function visibleWorkLogActivities(
   return activities.filter((activity) => !(activity.toolLike && activity.status === "neutral"));
 }
 
-// Pre-measurement heights for the feed's getFixedItemSize. Collapsed work-log
-// rows are single-line (numberOfLines={1}) inside a min-height that stays
-// taller than the text at every supported base font size (text-xs reaches
-// 23px at the 22pt maximum, under the 32px min-h-8), so row height is
-// deterministic. The "work log" label has no such clamp — its height follows
-// the scaled text-2xs line height. Values mirror the classNames below — keep
-// them in sync; a mismatch only costs a one-time correction on measure.
-const WORK_ROW_HEIGHT = 32; // min-h-8
-const WORK_ROW_GAP = 1; // gap-px
-const WORK_LOG_HEADER_PADDING = 2; // pb-0.5 under the "work log" label
-const WORK_LOG_BOTTOM_MARGIN = 4; // mb-1
-
+// The work-group toggle's height, for the feed's getFixedItemSize. Mirrors
+// the classNames below; a mismatch only costs a one-time correction.
 export const WORK_GROUP_TOGGLE_HEIGHT = 36; // min-h-8 (32) + mb-1 (4)
-
-export function collapsedWorkLogHeight(
-  activities: ReadonlyArray<ThreadFeedActivity>,
-  baseFontSize: number,
-): number {
-  const rows = visibleWorkLogActivities(activities);
-  if (rows.length === 0) {
-    return 0;
-  }
-  const onlyToolRows = rows.every((row) => row.toolLike);
-  const headerHeight =
-    scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.caption, baseFontSize) + WORK_LOG_HEADER_PADDING;
-  return (
-    WORK_LOG_BOTTOM_MARGIN +
-    (onlyToolRows ? 0 : headerHeight) +
-    rows.length * WORK_ROW_HEIGHT +
-    (rows.length - 1) * WORK_ROW_GAP
-  );
-}
 
 export function ThreadWorkLog(props: {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;

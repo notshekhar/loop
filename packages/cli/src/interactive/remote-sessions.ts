@@ -114,6 +114,8 @@ export interface RemoteSessionsHost {
 export interface RemoteSessions {
     manageHosts(args: string): Promise<void>;
     remoteControl(args: string): Promise<void>;
+    /** Draw a turn the `/rc` server is running in a session open here. */
+    followServerTurn(sessionId: string): void;
     /** Close every socket and stop `/rc`. */
     dispose(): void;
 }
@@ -628,6 +630,85 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
         },
     };
 
+    /**
+     * A turn the `/rc` server is running itself, in a session just opened
+     * here — a phone started it before this loop had the session open. It is
+     * drawn as it streams, from its first word (the server replays what came
+     * before), exactly as a /hosts turn is; the slot is busy meanwhile, so
+     * what is typed here (or sent from a phone) waits for it; and Esc stops it
+     * on the server.
+     */
+    const followServerTurn = (sessionId: string): void => {
+        const server = rc;
+        if (!server || !server.live.isRunning(sessionId)) return;
+        const slot = slots.bySessionId(sessionId);
+        if (!slot || slot.remote || slot.busy) return;
+        const d = roster.depsFor(slot);
+        slot.busy = true;
+        slot.history.addSystem(dim("a turn started from another device"));
+        const provider = providerOf(slot.modelId);
+        slot.history.ensureAssistant(provider, slot.modelId);
+        const emitter = asTurnEmitter(new EventEmitter());
+        const subagentStream = createSubagentStream(slot.history, tui);
+        const errors: unknown[] = [];
+        wireTurnEmitter(emitter, {
+            history: slot.history,
+            tui,
+            state: roster.viewOf(slot),
+            turnProvider: provider,
+            subagentStream,
+            todoPanel: slot.todoPanel,
+            showWorking: d.showWorking,
+            refreshStatusLine: d.refreshStatusLine,
+            onTurnError: (e) => errors.push(e),
+        });
+        const signal = slot.abort.signal;
+        const onAbort = () => server.live.cancel(sessionId);
+        signal.addEventListener("abort", onAbort, { once: true });
+        const startedAt = Date.now();
+        let stop: () => void = () => {};
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            stop();
+            signal.removeEventListener("abort", onAbort);
+            subagentStream.dispose();
+            slot.busy = false;
+            slot.history.finishAssistant();
+            if (signal.aborted) slot.history.markPendingToolsInterrupted();
+            else if (errors.length > 0) slot.history.addTurnFailed((Date.now() - startedAt) / 1000, describeTurnFailure(errors));
+            else slot.history.addTurnSummary((Date.now() - startedAt) / 1000);
+            if (!slot.todoPanel.isEmpty()) {
+                slot.history.addSystem(slot.todoPanel.retireLine());
+                slot.todoPanel.clear();
+            }
+            d.hideWorking();
+            d.settleTurn(errors.length > 0 && !signal.aborted);
+            tui.requestRender();
+            const next = slot.queue.shift();
+            if (next !== undefined) {
+                d.renderPending();
+                void roster.runnerFor(slot)(next);
+            }
+        };
+        d.showWorking("Generating");
+        stop = server.live.watch(
+            sessionId,
+            (part) => {
+                if (part.type === "session-running") {
+                    if (!(part.data as { running?: boolean }).running) finish();
+                    return;
+                }
+                if (!TURN_EVENTS.has(part.type)) return;
+                (emitter as unknown as EventEmitter).emit(part.type, part.data);
+                tui.requestRender();
+            },
+            { fromTurnStart: true },
+        );
+        if (!server.live.isRunning(sessionId)) finish();
+    };
+
     const printReach = (opts: { freshCode?: boolean } = {}): void => {
         if (!rc) return;
         // By hand: the address and a six-digit code the app trades for the
@@ -738,6 +819,7 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
     return {
         manageHosts,
         remoteControl,
+        followServerTurn,
         dispose: () => {
             for (const c of clients.values()) c.close();
             clients.clear();

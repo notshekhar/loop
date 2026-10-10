@@ -542,6 +542,64 @@ export class RpcServer {
         this.broadcast(sessionId, ctx, { type: part.type, data });
     }
 
+    /**
+     * The Session this server holds open for `sessionId`, if any. A TUI
+     * opening the same session uses this object rather than loading a second
+     * copy: two copies in one process each append to their own branch, so
+     * whichever wrote second dropped the other's messages.
+     */
+    openSession(sessionId: string): Session | undefined {
+        return this.sessions.get(sessionId)?.session;
+    }
+
+    /** Stop a turn this server is running itself (Esc in the TUI following it). */
+    cancelOwnTurn(sessionId: string): void {
+        const ctx = this.sessions.get(sessionId);
+        if (!ctx?.running) return;
+        ctx.abort.abort();
+        ctx.abort = new AbortController();
+    }
+
+    /** Whether this server is running a turn in `sessionId` itself. */
+    isRunning(sessionId: string): boolean {
+        return this.sessions.get(sessionId)?.running === true;
+    }
+
+    /**
+     * The events of a session this server has open, in order — how the TUI
+     * that hosts it draws a turn a phone started. `fromTurnStart` first replays
+     * what the running turn already streamed (from the event ring), so the
+     * reply reads whole however late the TUI opened it. Returns an unsubscribe.
+     */
+    watch(
+        sessionId: string,
+        listener: (part: { type: string; data: unknown }) => void,
+        opts: { fromTurnStart?: boolean } = {},
+    ): () => void {
+        const ctx = this.sessions.get(sessionId);
+        if (!ctx) return () => {};
+        if (opts.fromTurnStart && ctx.running) {
+            let start = -1;
+            for (let i = ctx.ring.length - 1; i >= 0; i--) {
+                const part = ctx.ring[i]!.part;
+                if (part.type === "session-running" && (part.data as { running?: boolean })?.running) {
+                    start = i;
+                    break;
+                }
+            }
+            for (const entry of ctx.ring.slice(start + 1)) listener(entry.part);
+        }
+        const transport: Transport = {
+            send: (msg) => {
+                if ("method" in msg && msg.method === "session.event") {
+                    listener((msg.params as { part: { type: string; data: unknown } }).part);
+                }
+            },
+        };
+        ctx.subscribers.add(transport);
+        return () => ctx.subscribers.delete(transport);
+    }
+
     /** A live session's turn started or ended (see publishLive). */
     setLiveRunning(sessionId: string, running: boolean): void {
         const ctx = this.liveCtx(sessionId);
@@ -559,8 +617,16 @@ export class RpcServer {
         if (!live) return this.sessions.get(sessionId);
         const existing = this.sessions.get(sessionId);
         if (existing) {
-            existing.session = live.session;
-            existing.transcript = transcriptOf(live.session, existing.running);
+            // Only when it is a different object, and never mid-turn. This is
+            // reached for every event of the TUI's turns: rebuilding each time
+            // threw away the reply streamed so far, so a client opening the
+            // session mid-turn got a broken snapshot. And a turn this server is
+            // running writes to the object it started with — swapping in the
+            // TUI's copy then dropped that reply from the saved branch.
+            if (existing.session !== live.session && !existing.running) {
+                existing.session = live.session;
+                existing.transcript = transcriptOf(live.session, false);
+            }
             return existing;
         }
         const ctx: ActiveSession = {

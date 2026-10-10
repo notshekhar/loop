@@ -97,7 +97,6 @@ import {
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import {
-  collapsedWorkLogHeight,
   ThreadWorkGroupToggle,
   ThreadWorkLog,
   WORK_GROUP_TOGGLE_HEIGHT,
@@ -1740,17 +1739,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           return WORK_GROUP_TOGGLE_HEIGHT;
         case "working":
           return workingRowHeight;
-        case "activity-group":
-          // Expanded rows append a variable detail block — fall back to
-          // measurement for those groups.
-          return entry.activities.some((activity) => expandedWorkRows[activity.id])
-            ? undefined
-            : collapsedWorkLogHeight(entry.activities, appearance.baseFontSize);
+        // A tool group is measured, not predicted. LegendList keeps a
+        // predicted size under the group's key, and a group whose rows
+        // change under the same key (a reopened thread filling in) kept the
+        // old size: a blank gap until some row was expanded, which
+        // recomputes every prediction. A late correction offscreen is
+        // invisible; a gap is not.
         default:
           return undefined;
       }
     },
-    [expandedWorkRows, workingRowHeight, appearance.baseFontSize],
+    [workingRowHeight],
   );
 
   const renderItem = useCallback(

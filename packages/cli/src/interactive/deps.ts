@@ -1,5 +1,12 @@
 import type { Container, Editor, SelectItem, SelectList, TUI } from "@notshekhar/loop-tui";
-import type { CommandRegistry, CostTracker, Session, SessionManager, UsageBlock } from "@notshekhar/loop-core";
+import type {
+    CommandRegistry,
+    CostTracker,
+    ServeHandle,
+    Session,
+    SessionManager,
+    UsageBlock,
+} from "@notshekhar/loop-core";
 import type { ChatHistory } from "./components/chat-history";
 import type { StatusLine } from "./components/status-line";
 import type { TodoPanel } from "./components/todo-panel";
@@ -7,11 +14,8 @@ import type { ShellsPanel } from "./components/shells-panel";
 import type { ScrollbackFocus } from "./scrollback-focus";
 import type { SessionSlot } from "./slots";
 
-/** The `/rc` server's side of a local turn (ServeHandle.live). */
-export interface LiveTurnFeed {
-    publish(sessionId: string, part: { type: string; data: unknown }): void;
-    setRunning(sessionId: string, running: boolean): void;
-}
+/** The `/rc` server's side of this loop's sessions (ServeHandle.live). */
+export type LiveTurnFeed = ServeHandle["live"];
 
 /**
  * Stable references for handlers. Functions and objects here don't change
@@ -79,7 +83,12 @@ export interface AppDeps {
      */
     live: { feed: LiveTurnFeed | null };
     /** `/hosts` and `/rc` (remote-sessions.ts); set once the roster exists. */
-    remote?: { manageHosts(args: string): Promise<void>; remoteControl(args: string): Promise<void> };
+    remote?: {
+        manageHosts(args: string): Promise<void>;
+        remoteControl(args: string): Promise<void>;
+        /** Draw a turn the `/rc` server is running in this session (a phone started it). */
+        followServerTurn(sessionId: string): void;
+    };
     /** App version (undefined in dev runs). */
     version?: string;
     /** Undo the console→chat bridge before handing the terminal to a child process. */

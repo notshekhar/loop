@@ -60,7 +60,17 @@ export async function resumeSessionById(state: AppState, deps: AppDeps, idOrPath
     if (state.busy) await deps.sessions.openNew();
     const { tui, history, statusLine, tracker, manager, refreshStatusLine } = deps;
     try {
-        state.session = await manager.open(idOrPath);
+        // The `/rc` server may already hold this session — a phone opened it,
+        // or is running a turn in it right now. Use its object: a second copy
+        // in this process appends to its own branch, and whichever writes
+        // second drops the other's messages (the phone's reply, typically).
+        const feed = deps.live.feed;
+        let opened = feed?.openSession(idOrPath);
+        if (!opened) {
+            opened = await manager.open(idOrPath);
+            opened = feed?.openSession(opened.id) ?? opened;
+        }
+        state.session = opened;
         const resumedModel = state.session.lastModel();
         if (resumedModel) {
             state.modelId = resumedModel;
@@ -85,6 +95,8 @@ export async function resumeSessionById(state: AppState, deps: AppDeps, idOrPath
             history.addSystem(`resumed session ${state.session.id}`);
         }
         renderSessionBranch(state.session, history, state.modelId, deps.todoPanel);
+        // Mid-turn on the server: the rest of that reply streams in here.
+        deps.remote?.followServerTurn(state.session.id);
     } catch (err) {
         history.addError(`open failed: ${(err as Error).message}`);
     }

@@ -424,6 +424,57 @@ describe("session.messages", () => {
     });
 });
 
+describe("a session the TUI runs (/rc)", () => {
+    useTempSessionDb();
+
+    async function tuiSession() {
+        const { SessionManager } = await import("../src/sessions");
+        const cwd = mkdtempSync(join(tmpdir(), "loop-rc-"));
+        const session = await new SessionManager().create({ cwd, provider: "nope", model: "nope/model" });
+        const server = new RpcServer({
+            askBridge: false,
+            live: { get: (id) => (id === session.id ? { session, send: () => {}, cancel: () => {} } : undefined) },
+        });
+        return { server, session };
+    }
+
+    test("the snapshot keeps what a TUI turn has streamed so far", async () => {
+        const { server, session } = await tuiSession();
+        const client = fakeTransport();
+        const fs = server.attach(client);
+        server.setLiveRunning(session.id, true);
+        server.publishLive(session.id, { type: "user-message", data: { id: "u1", text: "hi", ts: 1 } });
+        server.publishLive(session.id, { type: "text-delta", data: "Hel" });
+        server.publishLive(session.id, { type: "text-delta", data: "lo" });
+        fs.feed(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "session.messages", params: { sessionId: session.id } }) + "\n");
+        await until(() => !!client.response(1), "messages");
+        const { messages } = (client.response(1) as { result: { messages: { role: string; parts: { text?: string }[] }[] } })
+            .result;
+        // Each event used to rebuild the transcript from the saved branch,
+        // leaving only the last delta: "lo".
+        expect(messages.at(-1)).toMatchObject({ role: "assistant", parts: [{ type: "text", text: "Hello" }] });
+        server.dispose();
+    });
+
+    test("a watcher joining mid-turn gets the turn from its start, then the rest live", async () => {
+        const { server, session } = await tuiSession();
+        server.setLiveRunning(session.id, true);
+        server.publishLive(session.id, { type: "text-delta", data: "one " });
+        const seen: string[] = [];
+        const stop = server.watch(session.id, (part) => seen.push(part.type === "text-delta" ? String(part.data) : part.type), {
+            fromTurnStart: true,
+        });
+        server.publishLive(session.id, { type: "text-delta", data: "two" });
+        server.setLiveRunning(session.id, false);
+        stop();
+        server.publishLive(session.id, { type: "text-delta", data: "after" });
+        expect(seen).toEqual(["one ", "two", "session-running"]);
+        expect(server.openSession(session.id)).toBe(session);
+        expect(server.isRunning(session.id)).toBe(false);
+        server.dispose();
+    });
+});
+
 describe("startWebServer", () => {
     useTempSessionDb();
 

@@ -14,6 +14,7 @@
  */
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { networkInterfaces } from "node:os";
+import type { Session } from "../sessions";
 import { RpcServer, type LiveSessionProvider } from "./server";
 import { loadWebApp, serveWebApp, webAppMissing } from "./serve-web-app";
 import { createServeWorkspace, WORKSPACE_EVENT, WORKSPACE_PREFIX } from "./serve-workspace";
@@ -118,6 +119,18 @@ export interface ServeHandle {
     live: {
         publish(sessionId: string, part: { type: string; data: unknown }): void;
         setRunning(sessionId: string, running: boolean): void;
+        /** The server's own object for a session it has open (RpcServer.openSession). */
+        openSession(sessionId: string): Session | undefined;
+        /** Whether the server is running a turn there itself. */
+        isRunning(sessionId: string): boolean;
+        /** Its events, in order (RpcServer.watch). */
+        watch(
+            sessionId: string,
+            listener: (part: { type: string; data: unknown }) => void,
+            opts?: { fromTurnStart?: boolean },
+        ): () => void;
+        /** Stop a turn the server is running there itself. */
+        cancel(sessionId: string): void;
     };
     /**
      * The six-digit code another device types to pair (serve-pairing.ts):
@@ -313,6 +326,10 @@ export function startWebServer(
         live: {
             publish: (sessionId, part) => rpc.publishLive(sessionId, part),
             setRunning: (sessionId, running) => rpc.setLiveRunning(sessionId, running),
+            openSession: (sessionId) => rpc.openSession(sessionId),
+            isRunning: (sessionId) => rpc.isRunning(sessionId),
+            watch: (sessionId, listener, opts) => rpc.watch(sessionId, listener, opts),
+            cancel: (sessionId) => rpc.cancelOwnTurn(sessionId),
         },
         pairingCode: (opts) => (!opts?.fresh && pairing.currentCode()) || pairing.issueCode(),
         // Killing the HTTP server closes the sockets; disposing the RPC
