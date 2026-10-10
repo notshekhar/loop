@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.9] - 2026-10-10
+
+### Fixed
+
+- **A reply started from the phone shows in the TUI, and stays in the session.** Under `/rc`, opening in the TUI a chat whose reply was still streaming from a phone loaded a second copy of it: the reply never appeared there, reopening showed the same stale copy, and the next message typed in the TUI was saved beside the reply instead of after it, so the reply looked lost. The TUI now shares the server's copy and draws the running reply from its first word; Esc stops it, and anything typed meanwhile waits for it to finish.
+- **Opening a chat mid-reply shows the reply so far.** For turns the TUI runs under `/rc`, a phone or desktop opening the chat partway through saw only the last fragment of the reply.
+- **No blank gap in the phone's chat after reopening it.** A tool group could leave empty space below it until one of its rows was expanded.
+
 ## [0.21.8] - 2026-10-10
 
 ### Added
