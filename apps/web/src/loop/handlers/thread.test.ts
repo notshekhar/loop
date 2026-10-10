@@ -433,6 +433,38 @@ describe("what a tool row is given to draw with", () => {
     clearLiveTurn(SESSION);
   });
 
+  it("streams a reply as part of the turn its prompt opened, not a second turn", async () => {
+    // Mid-reply the transcript already holds the prompt (and any finished
+    // step); the overlay streaming the rest used to carry an id of its own,
+    // so the phone split one reply into two turns — two copy buttons, two
+    // groups — until the turn ended and the transcript took over.
+    beginLiveTurn(SESSION);
+    applyLoopEvent(SESSION, { type: "text-delta", data: "Looking now." });
+    applyLoopEvent(SESSION, {
+      type: "tool-input-start",
+      data: { toolCallId: "call-live", toolName: "read" },
+    });
+    applyLoopEvent(SESSION, { type: "text-delta", data: "Still going" });
+
+    const thread = await threadOf([userEntry("check the repo", "u-live")], true);
+    const turnIds = new Set(
+      [...thread.messages, ...thread.activities]
+        .map((item) => (item as { turnId?: string | null }).turnId)
+        .filter((id): id is string => typeof id === "string"),
+    );
+    expect([...turnIds]).toEqual(["u-live"]);
+    // And in the order it streamed: text, the tool, then the text after it.
+    const order = [
+      ...thread.messages.map((m) => ({ at: m.createdAt, what: `text:${m.text}` })),
+      ...thread.activities.map((a) => ({ at: a.createdAt, what: "tool" })),
+    ]
+      .filter((item) => item.what !== "text:check the repo")
+      .sort((x, y) => (x.at < y.at ? -1 : x.at > y.at ? 1 : 0))
+      .map((item) => item.what);
+    expect(order).toEqual(["text:Looking now.", "tool", "text:Still going"]);
+    clearLiveTurn(SESSION);
+  });
+
   it("keeps a recap last when the transcript has caught up mid-overlay", async () => {
     // Same root cause, seen as an ordering inversion: history is folded first,
     // so a live run it already held was re-emitted AFTER the persisted recap

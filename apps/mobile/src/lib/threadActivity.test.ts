@@ -13,6 +13,7 @@ import {
 
 import {
   buildThreadFeed,
+  createdAtMicros,
   deriveThreadFeedPresentation,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
@@ -55,7 +56,57 @@ function makeThread(
   };
 }
 
+describe("createdAtMicros", () => {
+  it("keeps microseconds, and reads millisecond stamps the same as Date", () => {
+    expect(createdAtMicros("2026-04-01T00:00:05.123456Z") - createdAtMicros("2026-04-01T00:00:05.123Z")).toBe(456);
+    expect(createdAtMicros("2026-04-01T00:00:05.123Z")).toBe(Date.parse("2026-04-01T00:00:05.123Z") * 1000);
+    expect(createdAtMicros("not a date")).toBe(0);
+  });
+});
+
 describe("buildThreadFeed", () => {
+  it("keeps a reply in the order it streamed when its blocks share a millisecond", () => {
+    // loop stamps each block of one reply to the microsecond (EmitOrder);
+    // sorted as Dates they all tie, and the text used to land above the tool.
+    const turnId = TurnId.make("turn-1");
+    const message = (id: string, text: string, createdAt: string) =>
+      ({
+        id: MessageId.make(id),
+        role: "assistant",
+        text,
+        turnId,
+        streaming: false,
+        createdAt,
+        updatedAt: createdAt,
+      }) as unknown as OrchestrationThread["messages"][number];
+    const thread = makeThread({
+      id: ThreadId.make("thread-order"),
+      projectId: ProjectId.make("project-1"),
+      title: "Ordering",
+      messages: [
+        message("text-1", "Let me look.", "2026-04-01T00:00:05.123001Z"),
+        message("text-2", "Found it.", "2026-04-01T00:00:05.123003Z"),
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("tool-1"),
+          kind: "runtime.warning",
+          summary: "Runtime warning",
+          createdAt: "2026-04-01T00:00:05.123002Z",
+          turnId,
+          payload: { message: "between the two" },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed.map((entry) => (entry.type === "message" ? entry.id : entry.type))).toEqual([
+      "text-1",
+      "activity-group",
+      "text-2",
+    ]);
+  });
+
   it("keeps historic work entries attributed to their turns", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-1"),

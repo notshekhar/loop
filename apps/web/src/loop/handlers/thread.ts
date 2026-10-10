@@ -305,6 +305,8 @@ interface Accumulator {
   seenCompactions: number;
   /** Hands out the stamp that keeps emit order; see EmitOrder. */
   readonly order: EmitOrder;
+  /** The turn the transcript's last prompt opened — see foldLiveTurn's turnId. */
+  lastTurnId: string | null;
   /**
    * The latest checklist the transcript holds, and when it was written.
    *
@@ -709,6 +711,7 @@ function foldHistory(history: LoopHistory, sessionId: string): Accumulator {
     seenRecaps: new Set(),
     seenCompactions: 0,
     order: new EmitOrder(),
+    lastTurnId: null,
   };
   // Tool results arrive as their own `role: "tool"` entries, after the
   // assistant message that called them, so calls are indexed while walking and
@@ -830,6 +833,7 @@ function foldHistory(history: LoopHistory, sessionId: string): Accumulator {
       // (the transcript has no turn ids) chopped one reply into several and
       // printed a "Worked for 1ms" summary between every tool call.
       currentTurnId = entryId;
+      out.lastTurnId = entryId;
       out.messages.push({
         // Reuse the id the client already rendered this message under, or it
         // appears twice: once optimistically, once from the transcript.
@@ -1007,6 +1011,7 @@ function foldHistory(history: LoopHistory, sessionId: string): Accumulator {
 function foldLiveTurn(
   out: Accumulator,
   sessionId: string,
+  hostRunning = false,
 ): { running: boolean; turnId: string | null; todos?: readonly LoopTodo[] } {
   const live = readLiveTurn(sessionId);
   if (!live) return { running: false, turnId: null };
@@ -1023,7 +1028,18 @@ function foldLiveTurn(
     }
   }
 
-  const turnId = `live-${live.startedAt}`;
+  /**
+   * The turn this is, as the transcript names it.
+   *
+   * loop writes the prompt the moment a turn starts (and each finished step
+   * after it), so mid-reply the transcript already holds the start of the very
+   * turn this overlay is streaming. Under an id of its own the overlay was a
+   * SECOND turn: the phone gave each half its own copy button, grouped them
+   * apart, and only once the turn ended and the transcript took over did it
+   * read as one reply. While loop says a turn is running, the last prompt is
+   * that turn's.
+   */
+  const turnId = live.running && hostRunning && out.lastTurnId ? out.lastTurnId : `live-${live.startedAt}`;
 
   /**
    * The turn's blocks back in the order they were written.
@@ -1441,7 +1457,7 @@ export const buildThread = Effect.fnUntraced(function* (
   }
 
   const out = foldHistory(history, loopSessionId);
-  const live = foldLiveTurn(out, loopSessionId);
+  const live = foldLiveTurn(out, loopSessionId, history.running === true);
   const running = history.running || live.running;
 
   // The checklist, emitted once and last.

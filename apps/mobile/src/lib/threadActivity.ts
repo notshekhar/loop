@@ -1440,6 +1440,26 @@ export function buildPendingUserInputAnswers(
   return answers;
 }
 
+/**
+ * A `createdAt` as microseconds, keeping the precision `Date` throws away.
+ *
+ * loop's handlers stamp every block of a reply in emit order to the
+ * microsecond (`…:05.123456Z`, handlers/thread.ts EmitOrder), because a whole
+ * reply shares one millisecond. Sorted as a `Date`, those all tied and kept
+ * input order — every text message, then every tool call — so a streaming
+ * reply on the phone showed all its text above the tools it ran, while the
+ * desktop, comparing the full stamp, had them interleaved as they streamed.
+ */
+export function createdAtMicros(createdAt: string): number {
+  // Parsed at millisecond precision, the digits past it added back by hand:
+  // engines differ on whether `Date.parse` accepts more than three fraction
+  // digits at all, and Hermes is not one to count on.
+  const extra = /\.\d{3}(\d{1,3})\d*(?=Z|[+-]\d{2}:?\d{2}$)/.exec(createdAt)?.[1];
+  const millis = Date.parse(extra ? createdAt.replace(/(\.\d{3})\d+/, "$1") : createdAt);
+  if (Number.isNaN(millis)) return 0;
+  return millis * 1000 + (extra ? Number(extra.padEnd(3, "0")) : 0);
+}
+
 export function buildThreadFeed(
   thread: OrchestrationThread,
   options?: {
@@ -1500,8 +1520,8 @@ export function buildThreadFeed(
           };
         }),
     ],
-    (s) => new Date(s.createdAt),
-    Order.Date,
+    (s) => createdAtMicros(s.createdAt),
+    Order.Number,
   );
 
   return groupAdjacentActivities(entries);
