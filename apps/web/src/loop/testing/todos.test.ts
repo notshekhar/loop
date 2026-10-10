@@ -6,6 +6,12 @@ import { buildThread } from "../handlers/thread.ts";
 import { applyLoopEvent, beginLiveTurn, clearLiveTurn } from "../handlers/liveTurn.ts";
 import { renderTranscript } from "./renderTranscript";
 
+// History and live overlapping (the same call, run, recap or checklist in
+// both) cannot happen any more: the transcript store applies only events
+// after the host snapshot's seq, and the host builds that snapshot from one
+// stream — see packages/core/test/transcript.test.ts ("the saved turn reads
+// exactly as it streamed") and src/loop/transcript/store.ts.
+
 const globals = globalThis as { window?: Window & typeof globalThis };
 
 /** loop's persisted checklist entry (tools/todo.ts writes exactly this). */
@@ -102,21 +108,6 @@ describe("the agent's checklist", () => {
     expect(plan?.steps[0]?.step).toBe("New plan");
   });
 
-  it("prefers the live list over the transcript's older copy", async () => {
-    // Mid-turn the overlay is the same list further along; history only gains
-    // its copy when the turn ends.
-    const plan = planOf(
-      await thread({
-        history: [todosEntry([{ content: "Stale", status: "pending" }])],
-        events: [
-          { type: "todo-update", data: { items: [{ content: "Live", status: "in_progress" }] } },
-        ],
-        running: true,
-      }),
-    );
-    expect(plan?.steps).toHaveLength(1);
-    expect(plan?.steps[0]?.step).toBe("Live");
-  });
 
   it("never becomes a row in the transcript", async () => {
     // It is current state, not something that happened — the terminal keeps it
@@ -144,19 +135,6 @@ describe("a settled turn does not render its recap or compaction twice", () => {
     payload: { kind: "recap", text },
   });
 
-  it("skips the live recap once the transcript carries the same text", async () => {
-    // Both were emitted before, which is what put "Recap" on screen twice in a
-    // row under a finished turn.
-    const view = await renderTranscript({
-      history: [recapEntry("Wrote the file and read it back.")],
-      events: [
-        { type: "text-delta", data: "done" },
-        { type: "data-recap", data: { text: "Wrote the file and read it back." } },
-      ],
-      running: true,
-    });
-    expect(view.shape.filter((kind) => kind.startsWith("recap"))).toHaveLength(1);
-  });
 
   it("still shows a live recap the transcript has not caught up with", async () => {
     const view = await renderTranscript({

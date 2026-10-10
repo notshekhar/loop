@@ -4,6 +4,9 @@
     "allowImportingTsExtensions": true,
     "strict": true,
     "paths": {
+      "@loop/transcript": [
+        "../../packages/core/src/transcript/index.ts"
+      ],
       "@loop/contracts": [
         "../web/src/loop/contracts/index.ts"
       ],

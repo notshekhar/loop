@@ -48,6 +48,10 @@ export interface SubagentRun {
     stepCount?: number;
     usd?: number;
     durationMs?: number;
+    /** What it is doing right now — the tool it is in, or "finishing". Live only. */
+    current?: string;
+    /** Steps dropped from the front once the log reached its cap. */
+    dropped?: number;
     finished: boolean;
 }
 
@@ -60,6 +64,9 @@ export interface ToolPart {
     input?: unknown;
     /** The raw JSON of an input still streaming (a long `write`), live only. */
     inputText?: string;
+    /** A hook rewrote the input (`tool-input-updated`): that is what runs, and
+     * the model's original `tool-call`, which arrives after it, does not win. */
+    inputRewritten?: boolean;
     output?: unknown;
     errorText?: string;
     subagent?: SubagentRun;

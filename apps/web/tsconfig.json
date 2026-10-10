@@ -28,6 +28,9 @@
       "vite/client"
     ],
     "paths": {
+      "@loop/transcript": [
+        "../../packages/core/src/transcript/index.ts"
+      ],
       "~/*": [
         "./src/*"
       ],

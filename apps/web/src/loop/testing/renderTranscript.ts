@@ -36,7 +36,9 @@ import {
   readLineRangeText,
 } from "../../components/loop/loopToolSummary";
 import { deriveTimelineEntries, deriveWorkLogEntries } from "../../session-logic";
-import { applyLoopEvent, beginLiveTurn, clearLiveTurn } from "../handlers/liveTurn.ts";
+import { applyEvent, applyEvents, fromEntries } from "@loop/transcript";
+
+import { applyLoopEvent, clearLiveTurn } from "../handlers/liveTurn.ts";
 import { buildThread } from "../handlers/thread.ts";
 
 /** One `session.event` notification's part, as the RPC server broadcasts it. */
@@ -98,8 +100,9 @@ const DEFAULT_INFO = {
 /**
  * Fold history + a live turn into the blocks the timeline renders.
  *
- * `events` are applied to the live turn first, exactly as the transport does,
- * so a turn can be described mid-flight (`running: true`) or after it settled.
+ * Built the way the host builds its transcript (packages/core/src/transcript):
+ * the saved branch, then `events` applied in order — so a turn can be
+ * described mid-flight (`running: true`) or after it settled.
  */
 export async function renderTranscript(input: {
   readonly history?: readonly unknown[];
@@ -131,13 +134,25 @@ export async function renderTranscript(input: {
   };
 
   try {
-    if (input.events && input.events.length > 0) {
-      beginLiveTurn(sessionId);
-      for (const event of input.events) applyLoopEvent(sessionId, event);
-      if (input.running === false) applyLoopEvent(sessionId, { type: "finish", data: {} });
+    const events = input.events ?? [];
+    let transcript = fromEntries(entries as Parameters<typeof fromEntries>[0], {
+      running: events.length === 0 && input.running === true,
+    });
+    transcript = applyEvents(transcript, events);
+    // A pending question is not a turn event; the live-turn tracker holds it.
+    for (const event of events) if (event.type === "ask") applyLoopEvent(sessionId, event);
+    if (events.length > 0 && input.running === false) {
+      transcript = applyEvent(transcript, { type: "finish", data: {} });
+      transcript = applyEvent(transcript, { type: "session-running", data: { running: false } });
     }
 
-    const thread = await Effect.runPromise(buildThread(sessionId));
+    const thread = await Effect.runPromise(
+      buildThread(sessionId, undefined, {
+        transcript,
+        ready: true,
+        meta: { info, model: info.model, provider: info.provider },
+      }),
+    );
 
     // The same composition ChatView performs.
     const workEntries = deriveWorkLogEntries(thread.activities);

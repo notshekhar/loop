@@ -27,6 +27,9 @@ import type {
 } from "./types";
 import { isToolPart } from "./types";
 
+/** A subagent's log keeps its newest steps; the row says how many it dropped. */
+export const MAX_SUBAGENT_STEPS = 60;
+
 export function emptyTranscript(): Transcript {
     return { messages: [], running: false, todos: [] };
 }
@@ -118,6 +121,24 @@ function ensureTool(parts: TranscriptPart[], toolCallId: string, toolName: strin
     return parts.length - 1;
 }
 
+/**
+ * The failure a tool's RESULT reports, when it reports one: MCP-style tools
+ * return `{ content, isError: true }` rather than throwing, and that is still
+ * a failed call the row should draw red.
+ */
+export function resultFailure(output: unknown): string | undefined {
+    if (!output || typeof output !== "object" || (output as { isError?: unknown }).isError !== true) return undefined;
+    const content = (output as { content?: unknown }).content;
+    if (Array.isArray(content)) {
+        const text = content
+            .map((part) => (part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string" ? (part as { text: string }).text : ""))
+            .join("")
+            .trim();
+        if (text) return text;
+    }
+    return "Failed";
+}
+
 function errorText(error: unknown): string {
     if (typeof error === "string") return error;
     if (error instanceof Error) return error.message;
@@ -142,16 +163,28 @@ function settle(parts: TranscriptPart[], at: number, interrupted: boolean): void
             });
         } else if (isToolPart(part) && (part.state === "input-streaming" || part.state === "input-available")) {
             // A call with no result when its turn ends never got one: it was
-            // cut off, the way the terminal marks it.
+            // cut off, the way the terminal marks it — not left spinning.
             editPart<ToolPart>(parts, i, (copy) => {
                 copy.state = "output-error";
-                copy.errorText = interrupted ? "Interrupted" : "No result";
+                copy.errorText = INTERRUPTED;
             });
         } else if (part.type === "data-compaction" && part.data.running) {
             editPart<CompactionPart>(parts, i, (copy) => {
-                copy.data = { ...copy.data, running: false, aborted: copy.data.aborted ?? interrupted };
+                // Still running when its turn ended: it never finished.
+                copy.data = { ...copy.data, running: false, aborted: true };
             });
         }
+    }
+}
+
+/** What a call cut off by the end of its turn says instead of a result. */
+export const INTERRUPTED = "Interrupted";
+
+function pushStep(run: SubagentRun, step: SubagentRun["steps"][number]): void {
+    run.steps.push(step);
+    while (run.steps.length > MAX_SUBAGENT_STEPS) {
+        run.steps.shift();
+        run.dropped = (run.dropped ?? 0) + 1;
     }
 }
 
@@ -289,11 +322,14 @@ export function applyEvent(transcript: Transcript, event: TranscriptEvent, at: n
         case "tool-input-updated": {
             const toolCallId = typeof record.toolCallId === "string" ? record.toolCallId : "";
             if (!toolCallId) return transcript;
+            const rewrite = event.type === "tool-input-updated";
             return editReply(transcript, at, (parts) => {
                 const index = ensureTool(parts, toolCallId, String(record.toolName ?? "tool"), at);
                 editPart<ToolPart>(parts, index, (part) => {
-                    part.input = record.input ?? part.input ?? {};
-                    delete part.inputText;
+                    if (rewrite || !part.inputRewritten) part.input = record.input ?? part.input ?? {};
+                    if (rewrite) part.inputRewritten = true;
+                    // The streamed input stays on screen until the result
+                    // replaces it — a long `write` keeps showing its content.
                     if (part.state === "input-streaming") part.state = "input-available";
                 });
             });
@@ -302,6 +338,7 @@ export function applyEvent(transcript: Transcript, event: TranscriptEvent, at: n
         case "tool-error": {
             const toolCallId = typeof record.toolCallId === "string" ? record.toolCallId : "";
             if (!toolCallId) return transcript;
+            const failure = event.type === "tool-result" ? resultFailure(record.output) : undefined;
             return editReply(transcript, at, (parts) => {
                 const index = ensureTool(parts, toolCallId, String(record.toolName ?? "tool"), at);
                 editPart<ToolPart>(parts, index, (part) => {
@@ -309,11 +346,17 @@ export function applyEvent(transcript: Transcript, event: TranscriptEvent, at: n
                     if (event.type === "tool-error") {
                         part.state = "output-error";
                         part.errorText = errorText(record.error);
+                    } else if (failure !== undefined) {
+                        part.state = "output-error";
+                        part.errorText = failure;
                     } else {
                         part.state = "output-available";
                         part.output = record.output;
                     }
-                    if (part.subagent && !part.subagent.finished) part.subagent = { ...part.subagent, finished: true };
+                    if (part.subagent && !part.subagent.finished) {
+                        const { current: _current, ...rest } = part.subagent;
+                        part.subagent = { ...rest, finished: true };
+                    }
                 });
             });
         }
@@ -332,14 +375,17 @@ export function applyEvent(transcript: Transcript, event: TranscriptEvent, at: n
                             const text = String(record.text ?? "");
                             const last = run.steps[run.steps.length - 1];
                             if (last?.type === "text") run.steps[run.steps.length - 1] = { ...last, text: last.text + text };
-                            else if (text) run.steps.push({ type: "text", text });
+                            else if (text) pushStep(run, { type: "text", text });
                         } else if (event.type === "subagent-tool") {
-                            run.steps.push({ type: "tool", name: String(record.toolName ?? "tool"), input: record.input });
+                            const name = String(record.toolName ?? "tool");
+                            pushStep(run, { type: "tool", name, input: record.input });
+                            run.current = name;
                         } else if (event.type === "subagent-step-usage") {
                             if (typeof record.steps === "number") run.stepCount = record.steps;
                             if (typeof record.usd === "number") run.usd = record.usd;
                         } else {
-                            run.finished = true;
+                            // The run is done; its call's result follows.
+                            run.current = "finishing";
                         }
                     }),
                 );

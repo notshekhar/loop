@@ -38,21 +38,14 @@ import { formatError } from "./formatError.ts";
 import { toInstanceId } from "./ids.ts";
 import { pinSession } from "./sessionPaging.ts";
 import {
-  adoptRunningTurn,
-  clearLiveTurn,
-  confirmLiveTurnRunning,
-  endLiveTurn,
-  forgetEventSeq,
-  syncEventSeq,
-  lastEventSeq,
-  liveTurnIsQuiet,
   onLiveTurnChange,
   readLiveTurn,
-  type LiveToolCall,
   type LiveSubagentStep,
 } from "./liveTurn.ts";
 import { parsePartialInput } from "./streamingInput.ts";
 import { defaultLoopHost, type LoopHost } from "../transport.ts";
+import { isToolPart, type Transcript } from "@loop/transcript";
+import { readTranscript, snapshotOf, watchTranscript, type TranscriptView } from "../transcript/store.ts";
 
 /** `kind` the work log turns into a thinking-toned row. */
 const THINKING_ACTIVITY_KIND = "task.progress";
@@ -699,8 +692,31 @@ function pushRecapActivity(
   });
 }
 
-/** Walk loop's persisted transcript into messages, activities and plans. */
-function foldHistory(history: LoopHistory, sessionId: string): Accumulator {
+/**
+ * A thread loop has never heard of.
+ *
+ * The composer opens a draft the moment you click New thread, with a
+ * client-generated id, and loop is told nothing until the first turn — asking
+ * it for that transcript gets "Unknown sessionId", which is correct of loop and
+ * fatal here: the failure killed the thread stream and the composer rendered
+ * as a broken thread instead of an empty one.
+ *
+ * A draft is simply a thread with no messages yet.
+ */
+/**
+ * loop's transcript (packages/core/src/transcript) as the thread's rows.
+ *
+ * One walk over the parts, in the order they were written — the host already
+ * merged saved history with the live stream, with the terminal's rules, so
+ * nothing here reconciles, deduplicates or reorders anything. Each row is
+ * stamped from a strictly increasing counter, so any view that sorts by
+ * `createdAt` gets exactly this order back.
+ *
+ * The rows are the same objects the screens already draw (tool rows, thinking
+ * blocks, plan cards, compaction and recap rows); only where their order comes
+ * from changed.
+ */
+function foldTranscript(transcript: Transcript, sessionId: string): Accumulator {
   const out: Accumulator = {
     messages: [],
     activities: [],
@@ -713,131 +729,20 @@ function foldHistory(history: LoopHistory, sessionId: string): Accumulator {
     order: new EmitOrder(),
     lastTurnId: null,
   };
-  // Tool results arrive as their own `role: "tool"` entries, after the
-  // assistant message that called them, so calls are indexed while walking and
-  // their results merged in when they show up.
-  const pendingTools = new Map<string, { index: number; name: string; input: unknown }>();
-  /** The prompt everything since belongs to; see the user branch below. */
-  let currentTurnId: string | null = null;
+  let turnId: string | null = null;
 
-  for (const [position, entry] of history.entries.entries()) {
-    const entryId = entry.id ?? `entry-${position}`;
-    const createdAt = iso(entry.ts);
-
-    // A recap persists as a custom entry so a resumed session re-renders it
-    // (packages/core/src/agent/recap.ts). It is not a message and never
-    // enters the model's context — it is a note under the reply.
-    if (entry.type === "custom") {
-      const payload = (entry as { payload?: unknown }).payload;
-      const recap = recapTextOf(payload);
-      if (recap) {
-        pushRecapActivity(out, `${entryId}-recap`, currentTurnId, out.order.next(entry.ts), recap);
-        out.seenRecaps.add(recap.trim());
-      }
-      // Kept, not emitted: a later write supersedes this one, and the winner
-      // is decided once the whole transcript has been walked.
-      const todos = todosOf(payload);
-      if (todos) out.todos = { items: todos, ts: entry.ts };
-      continue;
-    }
-    // MEASURED, and it is why a replayed session showed no subagents at all:
-    // loop does NOT persist a `task` tool call inside the assistant message.
-    // It writes a separate `subagent` ENTRY carrying the whole run — agent,
-    // prompt, result, its ordered activity log, and its billed stats. So the
-    // row is built from that rather than from a tool call that is not there;
-    // the live path (`subagent-*` events) covers the same run while it runs.
-    if (entry.type === "subagent") {
-      const run = entry as unknown as {
-        agent?: string;
-        prompt?: string;
-        result?: string;
-        activity?: readonly { type?: string; text?: string; name?: string; summary?: string }[];
-        steps?: number;
-        durationMs?: number;
-        usd?: number;
-        toolCallId?: string;
-      };
-      const activity: LiveSubagentStep[] = [];
-      for (const part of run.activity ?? []) {
-        if (part.type === "tool" && typeof part.name === "string") {
-          activity.push({
-            kind: "tool",
-            name: part.name,
-            // Already formatted loop-side; re-deriving it from an input we do
-            // not have would only lose information.
-            ...(typeof part.summary === "string" ? { summary: part.summary } : {}),
-          });
-        } else if (part.type === "reasoning" && typeof part.text === "string") {
-          activity.push({ kind: "thinking", text: part.text });
-        } else if (part.type === "text" && typeof part.text === "string") {
-          activity.push({ kind: "text", text: part.text });
-        }
-      }
-      pushToolActivity(out, {
-        id: `${entryId}-task`,
-        turnId: currentTurnId,
-        createdAt: out.order.next(entry.ts),
-        name: "task",
-        input: {
-          ...(run.agent === undefined ? {} : { agent: run.agent }),
-          ...(run.prompt === undefined ? {} : { prompt: run.prompt }),
-        },
-        ...(run.result === undefined ? {} : { output: run.result }),
-        ...(run.toolCallId === undefined ? {} : { toolCallId: run.toolCallId }),
-        ...(activity.length === 0 ? {} : { activity }),
-        ...(run.steps === undefined && run.durationMs === undefined && run.usd === undefined
-          ? {}
-          : {
-              stats: {
-                ...(run.steps === undefined ? {} : { steps: run.steps }),
-                ...(run.durationMs === undefined ? {} : { durationMs: run.durationMs }),
-                ...(run.usd === undefined ? {} : { usd: run.usd }),
-              },
-            }),
-      });
-      // Retires the live overlay for the same run once the transcript has it,
-      // or the finished task renders twice — once settled, once still
-      // "running". The live events carry the task tool's own call id, which is
-      // exactly what loop records here.
-      if (run.toolCallId) out.seenToolCallIds.add(run.toolCallId);
-      continue;
-    }
-    // A compaction is persisted as its own entry type, on the branch, so a
-    // resumed session shows where the context was cut rather than appearing
-    // to have skipped half the conversation.
-    if (entry.type === "compact") {
-      const compact = entry as unknown as {
-        summary?: string;
-        tokensBefore?: number;
-        tokensAfter?: number;
-      };
-      out.seenCompactions += 1;
-      pushCompactActivity(out, `${entryId}-compact`, currentTurnId, out.order.next(entry.ts), {
-        running: false,
-        ...(typeof compact.summary === "string" ? { summary: compact.summary } : {}),
-        ...(typeof compact.tokensBefore === "number"
-          ? { tokensBefore: compact.tokensBefore }
-          : {}),
-        ...(typeof compact.tokensAfter === "number" ? { tokensAfter: compact.tokensAfter } : {}),
-      });
-      continue;
-    }
-    if (entry.type !== "message") continue;
-
-    if (entry.role === "user") {
-      const { text, attachments } = splitUserAttachments(textOf(entry.content));
+  for (const message of transcript.messages) {
+    const at = message.metadata.createdAt;
+    if (message.role === "user") {
+      const raw = message.parts.map((part) => (part.type === "text" ? part.text : "")).join("");
+      const { text, attachments } = splitUserAttachments(raw);
       if (text.trim() === "" && attachments.length === 0) continue;
-      const userAt = out.order.next(entry.ts);
-      // What the user asked starts a turn, and everything until the next
-      // prompt belongs to it. Treating each assistant message as its own turn
-      // (the transcript has no turn ids) chopped one reply into several and
-      // printed a "Worked for 1ms" summary between every tool call.
-      currentTurnId = entryId;
-      out.lastTurnId = entryId;
+      turnId = message.id;
+      out.lastTurnId = message.id;
+      const userAt = out.order.next(at);
       out.messages.push({
-        // Reuse the id the client already rendered this message under, or it
-        // appears twice: once optimistically, once from the transcript.
-        id: recentUserMessageId(sessionId, text) ?? entryId,
+        // The id the client already drew this message under, or it shows twice.
+        id: recentUserMessageId(sessionId, text) ?? message.id,
         role: "user",
         text,
         ...(attachments.length > 0 ? { attachments } : {}),
@@ -849,433 +754,138 @@ function foldHistory(history: LoopHistory, sessionId: string): Accumulator {
       continue;
     }
 
-    if (entry.role === "tool") {
-      for (const part of partsOf(entry.content)) {
-        const id = part.toolCallId;
-        if (!id) continue;
-        const pending = pendingTools.get(id);
-        if (!pending) continue;
-        const output = part.output ?? part.result;
-        const text = toolOutputText(output);
-        const activity = out.activities[pending.index] as {
-          payload: Record<string, unknown>;
-        };
-        const loopTool = activity.payload[LOOP_TOOL_PAYLOAD_KEY] as LoopToolPayload | undefined;
-        activity.payload = {
-          ...activity.payload,
-          ...(text === undefined ? {} : { detail: text }),
-          // A persisted call is settled by definition: the result entry is
-          // what proves it returned.
-          ...(loopTool === undefined
-            ? {}
-            : {
-                [LOOP_TOOL_PAYLOAD_KEY]: {
-                  ...loopTool,
-                  isPartial: false,
-                  ...(text === undefined ? {} : { output: text }),
-                  isError: isErrorResult(output),
-                } satisfies LoopToolPayload,
-              }),
-        };
-      }
-      continue;
-    }
-
-    if (entry.role !== "assistant") continue;
-
-    // Every assistant step since the last prompt is the same turn.
-    const turnId = currentTurnId ?? entryId;
-
-    // One ordered walk over the parts, the way the terminal builds its
-    // transcript: text accumulates into the live message, and a tool call
-    // CLOSES it and appends a sibling block (chat-history.ts addToolCall), so
-    // whatever the model writes afterwards is a new message below the tool.
-    // Concatenating all the text into one message instead forces the entire
-    // reply above or below every call it made.
-    let pendingText = "";
-    let pendingTextAt: string | null = null;
-    let textRun = 0;
-    const flushText = () => {
-      if (pendingText.trim() !== "") {
-        textRun += 1;
-        out.seenAssistantText.add(pendingText.trim());
+    const rowTurn = message.role === "assistant" ? (turnId ?? message.id) : null;
+    for (const [index, part] of message.parts.entries()) {
+      const id = `${message.id}-${index}`;
+      const stamp = out.order.next(at);
+      if (part.type === "text") {
+        if (part.text.trim() === "") continue;
         out.messages.push({
-          id: textRun === 1 ? `${entryId}-assistant` : `${entryId}-assistant-${textRun}`,
+          id,
           role: "assistant",
-          text: pendingText,
-          turnId,
-          streaming: false,
-          createdAt: pendingTextAt ?? out.order.next(entry.ts),
-          updatedAt: pendingTextAt ?? out.order.current(),
+          text: part.text,
+          turnId: rowTurn,
+          streaming: part.state === "streaming",
+          createdAt: stamp,
+          updatedAt: stamp,
         });
-      }
-      pendingText = "";
-      pendingTextAt = null;
-    };
-
-    let ordinal = 0;
-    for (const part of partsOf(entry.content)) {
-      ordinal += 1;
-      if (part.type === "text" && typeof part.text === "string") {
-        if (pendingTextAt === null) pendingTextAt = out.order.next(entry.ts);
-        pendingText += part.text;
-        continue;
-      }
-      if (part.type === "reasoning" && typeof part.text === "string" && part.text.trim() !== "") {
-        flushText();
+      } else if (part.type === "reasoning") {
+        if (part.text.trim() === "" && part.state !== "streaming") continue;
         out.activities.push({
-          id: `${entryId}-reasoning-${ordinal}`,
+          id,
           tone: "info",
           kind: THINKING_ACTIVITY_KIND,
           summary: "Thinking",
           payload: {
             detail: part.text,
-            // No duration: loop's transcript records the text, not how long it
-            // took. The row reads "Thought" rather than "Thought for 1.2s",
-            // which is what the terminal does on a replayed session too.
             [LOOP_THINKING_PAYLOAD_KEY]: {
               text: part.text,
-              streaming: false,
+              ...(part.durationMs === undefined ? {} : { durationMs: part.durationMs }),
+              streaming: part.state === "streaming",
             } satisfies LoopThinkingPayload,
           },
-          turnId,
-          createdAt: out.order.next(entry.ts),
+          turnId: rowTurn,
+          createdAt: stamp,
         });
-        out.seenThinking.add(part.text.trim());
-        continue;
-      }
-      if (part.type !== "tool-call") continue;
-      flushText();
-
-      const name = part.toolName ?? "unknown";
-      const input = part.input ?? part.args;
-      if (name === PLAN_TOOL) {
-        // loop delivers a plan AS a tool call whose input is the document, so
-        // it maps onto the plan card with no new protocol.
-        const markdown = (input as { plan?: unknown } | undefined)?.plan;
-        if (typeof markdown === "string" && markdown.trim() !== "") {
-          const planAt = out.order.next(entry.ts);
-          out.plans.push({
-            id: part.toolCallId ?? `${entryId}-plan-${ordinal}`,
-            turnId,
-            planMarkdown: markdown,
-            createdAt: planAt,
-            updatedAt: planAt,
-          });
-          // Claim the id even though this took the plan branch instead of
-          // becoming a tool row. The live overlay skips calls the transcript
-          // already has, and it now emits plans too — without this the settled
-          // plan and the live copy of the same call are two cards.
-          if (part.toolCallId) out.seenToolCallIds.add(part.toolCallId);
-          continue;
+      } else if (isToolPart(part)) {
+        const fields = part.inputText === undefined ? null : parsePartialInput(part.toolName, part.inputText);
+        if (part.toolName === PLAN_TOOL) {
+          const markdown = (part.input as { plan?: unknown } | undefined)?.plan ?? fields?.plan;
+          if (typeof markdown === "string" && markdown.trim() !== "") {
+            out.plans.push({ id: part.toolCallId, turnId: rowTurn, planMarkdown: markdown, createdAt: stamp, updatedAt: stamp });
+            continue;
+          }
         }
-      }
-      const index = out.activities.length;
-      pushToolActivity(out, {
-        id: `${entryId}-tool-${ordinal}`,
-        turnId,
-        createdAt: out.order.next(entry.ts),
-        name,
-        input,
-        ...(part.toolCallId === undefined ? {} : { toolCallId: part.toolCallId }),
-      });
-      if (part.toolCallId) {
-        pendingTools.set(part.toolCallId, { index, name, input });
-        out.seenToolCallIds.add(part.toolCallId);
-      }
-    }
-    flushText();
-  }
-
-  return out;
-}
-
-/**
- * Overlay the turn currently being streamed, if there is one.
- *
- * The overlay has to retire exactly once, and neither obvious rule is safe.
- * Dropping it the moment loop reports `finish` can blank the reply, because
- * the transcript is not guaranteed to be written by the time the rebuild runs
- * — and with no further events there would be no rebuild to restore it. Never
- * dropping it shows the reply twice, once live and once persisted.
- *
- * So retirement is driven by evidence rather than by timing: the overlay goes
- * away when the transcript already holds every text run it was carrying.
- *
- * Per RUN, not against the joined text. A tool call closes the current run, so
- * an agentic turn is several runs, and the transcript stores them as separate
- * assistant messages. Comparing the concatenation to the last of them never
- * matched, so the overlay outlived the transcript and the whole answer rendered
- * a second time below the first.
- */
-function foldLiveTurn(
-  out: Accumulator,
-  sessionId: string,
-  hostRunning = false,
-): { running: boolean; turnId: string | null; todos?: readonly LoopTodo[] } {
-  const live = readLiveTurn(sessionId);
-  if (!live) return { running: false, turnId: null };
-
-  const liveRuns = live.texts
-    .map((run) => run.text.trim())
-    .filter((text) => text !== "");
-  if (!live.running && liveRuns.length > 0) {
-    if (liveRuns.every((text) => out.seenAssistantText.has(text))) {
-      clearLiveTurn(sessionId);
-      // The revisions this was keyed on go with the turn.
-      historyCache.delete(sessionId);
-      return { running: false, turnId: null };
-    }
-  }
-
-  /**
-   * The turn this is, as the transcript names it.
-   *
-   * loop writes the prompt the moment a turn starts (and each finished step
-   * after it), so mid-reply the transcript already holds the start of the very
-   * turn this overlay is streaming. Under an id of its own the overlay was a
-   * SECOND turn: the phone gave each half its own copy button, grouped them
-   * apart, and only once the turn ended and the transcript took over did it
-   * read as one reply. While loop says a turn is running, the last prompt is
-   * that turn's.
-   */
-  const turnId = live.running && hostRunning && out.lastTurnId ? out.lastTurnId : `live-${live.startedAt}`;
-
-  /**
-   * The turn's blocks back in the order they were written.
-   *
-   * Each one recorded when it started, so sorting by that reconstructs the
-   * stream — thinking, then the tool it led to, then the text after it. Walking
-   * the three arrays one after another instead would print every thought, then
-   * every tool, then the whole reply, no matter what actually happened.
-   */
-  const blocks: Array<{ seq: number; at: number; emit: (createdAt: string) => void }> = [];
-
-  let thinkingOrdinal = 0;
-  for (const block of live.thinking) {
-    thinkingOrdinal += 1;
-    if (block.text.trim() === "") continue;
-    // Already in the transcript — rendering it again would double the block.
-    if (out.seenThinking.has(block.text.trim())) continue;
-    const streaming = block.endedAt === undefined && live.running;
-    const id = `${turnId}-reasoning-${thinkingOrdinal}`;
-    blocks.push({
-      seq: block.seq,
-      at: block.startedAt,
-      emit: (createdAt) =>
-        out.activities.push({
-          id,
-          tone: "info",
-          kind: THINKING_ACTIVITY_KIND,
-          summary: "Thinking",
-          payload: {
-            detail: block.text,
-            [LOOP_THINKING_PAYLOAD_KEY]: {
-              text: block.text,
-              ...(block.endedAt === undefined
-                ? {}
-                : { durationMs: block.endedAt - block.startedAt }),
-              streaming,
-            } satisfies LoopThinkingPayload,
-          },
-          turnId,
-          createdAt,
-        }),
-    });
-  }
-
-  let textOrdinal = 0;
-  for (const run of live.texts) {
-    textOrdinal += 1;
-    if (run.text.trim() === "") continue;
-    // Already persisted — the same rule tools and reasoning follow. loop
-    // writes an assistant message per STEP, so a multi-step turn has its
-    // earlier runs on disk while the live copy still carries all of them; a
-    // closed run that history already holds would otherwise render twice
-    // before the turn even ended.
-    if (!run.open && out.seenAssistantText.has(run.text.trim())) continue;
-    const id = textOrdinal === 1 ? `${turnId}-assistant` : `${turnId}-assistant-${textOrdinal}`;
-    const streaming = run.open && live.running;
-    blocks.push({
-      seq: run.seq,
-      at: run.startedAt,
-      emit: (createdAt) =>
-        out.messages.push({
-          id,
-          role: "assistant",
-          text: run.text,
-          turnId,
-          streaming,
-          createdAt,
-          updatedAt: createdAt,
-        }),
-    });
-  }
-
-  let hookOrdinal = 0;
-  for (const hook of live.hooks) {
-    hookOrdinal += 1;
-    const id = `${turnId}-hook-${hookOrdinal}`;
-    blocks.push({
-      seq: hook.seq,
-      at: hook.startedAt,
-      emit: (createdAt) => pushHookActivity(out, id, turnId, createdAt, hook.text),
-    });
-  }
-
-  let compactOrdinal = 0;
-  // Positional rather than by id: a compaction carries none, and the
-  // transcript records them in the same order the live turn saw them — so the
-  // first N live compactions are the N the transcript already holds.
-  let compactionsToSkip = out.seenCompactions;
-  for (const compaction of live.compactions) {
-    if (compactionsToSkip > 0) {
-      compactionsToSkip -= 1;
-      continue;
-    }
-    compactOrdinal += 1;
-    const id = `${turnId}-compact-${compactOrdinal}`;
-    blocks.push({
-      seq: compaction.seq,
-      at: compaction.startedAt,
-      emit: (createdAt) =>
-        pushCompactActivity(out, id, turnId, createdAt, {
-          reason: compaction.reason,
-          running: compaction.running,
-          ...(compaction.summary === undefined ? {} : { summary: compaction.summary }),
-          ...(compaction.tokensBefore === undefined
-            ? {}
-            : { tokensBefore: compaction.tokensBefore }),
-          ...(compaction.tokensAfter === undefined ? {} : { tokensAfter: compaction.tokensAfter }),
-          ...(compaction.aborted ? { aborted: true } : {}),
-          ...(compaction.error === undefined ? {} : { error: compaction.error }),
-        }),
-    });
-  }
-
-  let ordinal = 0;
-  for (const tool of live.tools as readonly LiveToolCall[]) {
-    ordinal += 1;
-    // The transcript already has this call, settled. The live copy is the
-    // same call mid-flight; showing both leaves a phantom row on "running".
-    if (out.seenToolCallIds.has(tool.id)) continue;
-    const isPartial = !tool.done && live.running;
-    // The turn ended with the call still open — freeze it as interrupted
-    // rather than leaving a spinner that never resolves.
-    const interrupted = !tool.done && !live.running;
-    const fields =
-      tool.inputBuffer === undefined ? null : parsePartialInput(tool.name, tool.inputBuffer);
-    // Before `tool-call` lands there are no parsed args, so the partial ones
-    // stand in — that is how the path reaches the title while content streams.
-    const input = tool.input ?? (fields?.path === undefined ? undefined : { path: fields.path });
-    const streamingContent = livePreviewTail(fields?.content ?? fields?.plan);
-    const id = `${turnId}-tool-${ordinal}`;
-
-    if (tool.name === PLAN_TOOL) {
-      // A plan is a document, and loop streams it: `tool-input-start` names the
-      // tool, then the whole markdown arrives as `tool-input-delta` (MEASURED:
-      // ~1600 deltas / 6.6 KB for one plan) long before the single `tool-call`.
-      // Waiting for that call is what made the plan appear all at once, fully
-      // written, at the end of the turn — the same document the settled
-      // transcript renders as a card, but with nothing to watch while it was
-      // being written. Emitting it as a plan the moment the first delta lands
-      // means one card that fills in, rather than a tool row that is replaced
-      // by a card when history refolds.
-      const markdown =
-        (tool.input as { plan?: unknown } | undefined)?.plan ?? fields?.plan;
-      if (typeof markdown === "string" && markdown.trim() !== "") {
-        blocks.push({
-          seq: tool.seq,
-          at: tool.startedAt,
-          emit: (createdAt) => {
-            out.plans.push({
-              id: tool.id,
-              turnId,
-              planMarkdown: markdown,
-              createdAt,
-              updatedAt: createdAt,
-            });
-          },
-        });
-        continue;
-      }
-      // Nothing readable yet — the buffer is still inside the opening `{"plan":
-      // "`. Fall through so the row exists and the turn does not look stalled.
-    }
-    blocks.push({
-      seq: tool.seq,
-      at: tool.startedAt,
-      emit: (createdAt) =>
+        const run = part.subagent;
+        const open = part.state === "input-streaming" || part.state === "input-available";
+        const streamingContent = livePreviewTail(fields?.content ?? fields?.plan);
         pushToolActivity(out, {
           id,
-          turnId,
-          createdAt,
-          name: tool.name,
-          input,
-          ...(tool.output === undefined ? {} : { output: tool.output }),
-          ...(tool.error === undefined ? {} : { error: tool.error }),
-          toolCallId: tool.id,
-          isPartial,
-          ...(interrupted ? { interrupted: true } : {}),
+          turnId: rowTurn,
+          createdAt: stamp,
+          name: part.toolName,
+          // Before the call lands there are no parsed args; the partial ones
+          // stand in, which is how a streaming `write` shows its path.
+          input: part.input ?? (fields?.path === undefined ? undefined : { path: fields.path }),
+          ...(part.state === "output-available" ? { output: part.output } : {}),
+          ...(part.state === "output-error" && part.errorText !== "Interrupted" ? { error: part.errorText } : {}),
+          toolCallId: part.toolCallId,
+          isPartial: open && transcript.running,
+          ...(part.errorText === "Interrupted" ? { interrupted: true } : {}),
           ...(streamingContent ? { streamingContent } : {}),
-          ...(tool.agent === undefined ? {} : { agent: tool.agent }),
-          ...(tool.statusText === undefined ? {} : { statusText: tool.statusText }),
-          startedAt: tool.startedAt,
-          ...(tool.activity === undefined ? {} : { activity: tool.activity }),
-          ...(tool.droppedActivity === undefined
-            ? {}
-            : { droppedActivity: tool.droppedActivity }),
-          ...(tool.steps === undefined && tool.usd === undefined && tool.endedAt === undefined
-            ? {}
-            : {
+          ...(run ? { agent: run.agent } : {}),
+          ...(run?.current === undefined || run.finished ? {} : { statusText: run.current }),
+          ...(run?.dropped ? { droppedActivity: run.dropped } : {}),
+          ...(run && run.steps.length > 0
+            ? {
+                activity: run.steps.map((step) =>
+                  step.type === "tool"
+                    ? typeof step.input === "string"
+                      ? { kind: "tool" as const, name: step.name, summary: step.input }
+                      : { kind: "tool" as const, name: step.name, input: step.input }
+                    : step.type === "reasoning"
+                      ? { kind: "thinking" as const, text: step.text }
+                      : { kind: "text" as const, text: step.text },
+                ),
+              }
+            : {}),
+          ...(run && (run.stepCount !== undefined || run.usd !== undefined || run.durationMs !== undefined)
+            ? {
                 stats: {
-                  ...(tool.steps === undefined ? {} : { steps: tool.steps }),
-                  ...(tool.usd === undefined ? {} : { usd: tool.usd }),
-                  ...(tool.endedAt === undefined
-                    ? {}
-                    : { durationMs: tool.endedAt - tool.startedAt }),
+                  ...(run.stepCount === undefined ? {} : { steps: run.stepCount }),
+                  ...(run.usd === undefined ? {} : { usd: run.usd }),
+                  ...(run.durationMs === undefined ? {} : { durationMs: run.durationMs }),
                 },
-              }),
-        }),
-    });
+              }
+            : {}),
+        });
+      } else if (part.type === "data-compaction") {
+        pushCompactActivity(out, id, rowTurn, stamp, {
+          running: part.data.running,
+          ...(part.data.reason === undefined ? {} : { reason: part.data.reason }),
+          ...(part.data.summary === undefined ? {} : { summary: part.data.summary }),
+          ...(part.data.tokensBefore === undefined ? {} : { tokensBefore: part.data.tokensBefore }),
+          ...(part.data.tokensAfter === undefined ? {} : { tokensAfter: part.data.tokensAfter }),
+          ...(part.data.aborted ? { aborted: true } : {}),
+          ...(part.data.error === undefined ? {} : { error: part.data.error }),
+        });
+      } else if (part.type === "data-recap") {
+        pushRecapActivity(out, id, rowTurn, stamp, part.data.text);
+      } else if (part.type === "data-hook") {
+        pushHookActivity(out, id, rowTurn, stamp, part.data.text);
+      } else if (part.type === "data-error") {
+        out.activities.push({
+          id,
+          tone: "error",
+          kind: "turn.error",
+          summary: "The turn failed",
+          payload: { detail: part.data.message },
+          turnId: rowTurn,
+          createdAt: stamp,
+        });
+      } else if (part.type === "data-branch-summary") {
+        pushRecapActivity(out, id, null, stamp, part.data.summary);
+      }
+    }
   }
 
-  // By arrival, not by clock: several events routinely land in the same
-  // millisecond, and sorting on time then falls back to which array was walked
-  // first — every text run before every tool call, whatever really happened.
-  //
-  // A sorted copy, not `.toSorted()`: Hermes has no ES2023 change-by-copy
-  // methods, so on the phone every mid-turn rebuild threw here and the thread
-  // only moved when the turn ended and the overlay went away.
-  for (const block of [...blocks].sort((a, b) => a.seq - b.seq)) {
-    block.emit(out.order.next(block.at));
-  }
-
-  // Both arrive after everything above by definition: a recap is generated
-  // once the turn is over, and an error ends it.
-  // A question the agent is waiting on. The UI already renders
-  // `user-input.requested` as an answer panel, so mapping onto it needs no new
-  // component: `requestId` is loop's askId, which is what the answer carries
-  // back. Emitted after the blocks above because the turn is paused ON it.
-  if (live.ask !== undefined) {
+  // A question the agent is waiting on: not part of any turn's events, so it
+  // still comes from the live-turn tracker.
+  const ask = readLiveTurn(sessionId)?.ask;
+  if (ask !== undefined && transcript.running) {
     out.activities.push({
-      id: `${turnId}-ask-${live.ask.askId}`,
+      id: `${turnId ?? sessionId}-ask-${ask.askId}`,
       tone: "info",
       kind: "user-input.requested",
-      summary: live.ask.questions[0]?.question ?? "The agent has a question",
+      summary: ask.questions[0]?.question ?? "The agent has a question",
       payload: {
-        requestId: live.ask.askId,
-        questions: live.ask.questions.map((question, index) => ({
-          // The panel keys answers by question id; loop's questions are
-          // positional, so the index IS the id.
+        requestId: ask.askId,
+        questions: ask.questions.map((question, index) => ({
           id: String(index),
           header: question.header,
           question: question.question,
           multiSelect: question.multiSelect === true,
-          options: question.options.map((option) => ({
-            label: option.label,
-            description: option.description,
-          })),
+          options: question.options.map((option) => ({ label: option.label, description: option.description })),
         })),
       },
       turnId,
@@ -1283,42 +893,12 @@ function foldLiveTurn(
     });
   }
 
-  // Skipped when the transcript already carries this recap — the two are the
-  // same text, and rendering both is what put "Recap" on screen twice.
-  if (live.recap !== undefined && !out.seenRecaps.has(live.recap.trim())) {
-    pushRecapActivity(out, `${turnId}-recap`, turnId, out.order.next(Date.now()), live.recap);
+  if (transcript.todos.length > 0) {
+    out.todos = { items: transcript.todos as readonly LoopTodo[], ts: Date.now() };
   }
-
-  if (live.error !== undefined) {
-    out.activities.push({
-      id: `${turnId}-error`,
-      tone: "error",
-      kind: "turn.error",
-      summary: "The turn failed",
-      payload: { detail: live.error },
-      turnId,
-      createdAt: out.order.next(Date.now()),
-    });
-  }
-
-  return {
-    running: live.running,
-    turnId,
-    ...(live.todos === undefined ? {} : { todos: live.todos }),
-  };
+  return out;
 }
 
-/**
- * A thread loop has never heard of.
- *
- * The composer opens a draft the moment you click New thread, with a
- * client-generated id, and loop is told nothing until the first turn — asking
- * it for that transcript gets "Unknown sessionId", which is correct of loop and
- * fatal here: the failure killed the thread stream and the composer rendered
- * as a broken thread instead of an empty one.
- *
- * A draft is simply a thread with no messages yet.
- */
 const emptyThread = (threadId: string, intent: { cwd: string; provider: string; model: string }) => {
   const now = new Date().toISOString();
   return decodeThread({
@@ -1349,181 +929,74 @@ const emptyThread = (threadId: string, intent: { cwd: string; provider: string; 
   });
 };
 
-/**
- * The last transcript read, per session, while a turn is in flight.
- *
- * `session.history` returns the WHOLE conversation — every message, every tool
- * result, every reasoning block — and the live-turn subscription asks for a
- * rebuild every 80ms. On a long thread that is megabytes marshalled across the
- * bridge and parsed twelve times a second, which is what made a streaming
- * reasoning block crawl: the cost was proportional to the conversation so far,
- * not to the tokens arriving.
- *
- * Nothing in the transcript can change while only deltas are landing, so this
- * keeps the last read and revalidates it against `historyRevision` — see
- * liveTurn.ts. Any event that could have written an entry invalidates it, so
- * the transcript is still re-read whenever it could actually differ.
- */
-const historyCache = new Map<string, { revision: number; history: LoopHistory }>();
-
-/** The last whole branch read per session — what a tail is appended to. */
-const lastHistory = new Map<string, LoopHistory>();
-/**
- * Entries re-read before the end of what is held. The newest few can still be
- * amended in place (a reply marked interrupted, a step's usage landing), so
- * the tail starts a little before the end and replaces that overlap.
- */
-const TAIL_OVERLAP = 4;
-
-/** Tests only. */
-export function forgetHistoriesForTests(): void {
-  lastHistory.clear();
-}
-
-/**
- * `session.history`, but only what is new: the client says which entry it
- * already has and loop sends the branch after it (`afterEntryId`). A long
- * session is hundreds of KB, and re-reading it whole at every tool step is
- * what made a phone on Wi-Fi fall behind a turn until it ended. A host that
- * predates the parameter — or a branch that moved — answers with the whole
- * branch, which simply replaces what was held.
- */
-export async function readHistory(host: LoopHost, sessionId: string): Promise<LoopHistory> {
-  const held = lastHistory.get(sessionId);
-  const anchorIndex = held ? held.entries.length - 1 - TAIL_OVERLAP : -1;
-  const anchor = anchorIndex >= 0 ? held!.entries[anchorIndex]?.id : undefined;
-  const answer = await host.call<LoopHistory>("session.history", {
-    sessionId,
-    ...(anchor ? { afterEntryId: anchor } : {}),
-  });
-  const whole: LoopHistory =
-    held && anchor && answer.tail?.afterEntryId === anchor
-      ? { ...answer, entries: [...held.entries.slice(0, anchorIndex + 1), ...answer.entries] }
-      : answer;
-  const { tail: _tail, ...withoutTail } = whole;
-  lastHistory.set(sessionId, withoutTail);
-  return withoutTail;
-}
-
 export const buildThread = Effect.fnUntraced(function* (
   loopSessionId: string,
   host: LoopHost = defaultLoopHost,
+  view?: TranscriptView,
 ) {
   const intent = draftIntent(loopSessionId);
   if (intent) return yield* emptyThread(loopSessionId, intent);
 
-  const turn = readLiveTurn(loopSessionId);
-  const cached = historyCache.get(loopSessionId);
-  // Read BEFORE the fetch: the turn is a live object, and an event landing
-  // while `session.history` is in flight must invalidate the answer it gives.
-  const revision = turn?.historyRevision;
-  /**
-   * A running turn that has gone silent — see `liveTurnIsQuiet`.
-   *
-   * The cache is keyed on the turn's own revision, so a turn whose end event
-   * was lost freezes the revision AND the cached `running: true` with it: the
-   * one fact that could unstick the view was the one the cache kept serving.
-   */
-  const quiet = turn !== undefined && turn.running && liveTurnIsQuiet(turn);
-  // Only while the turn is running: once it ends loop writes the whole thing
-  // down, and that final read is the one that must not be served from cache.
-  const reusable =
-    turn?.running === true && !quiet && cached !== undefined && cached.revision === revision;
+  // The host's transcript: saved history and the turn in flight, merged once,
+  // there. A caller watching the session passes what it holds; otherwise this
+  // asks for a snapshot.
+  const { transcript, meta } =
+    view?.ready === true ? view : yield* Effect.promise(() => snapshotOf(host, loopSessionId));
+  const out = foldTranscript(transcript, loopSessionId);
+  const running = transcript.running;
 
-  const history = reusable
-    ? cached.history
-    : yield* Effect.promise(() => readHistory(host, loopSessionId));
-  if (!reusable) {
-    if (revision === undefined) historyCache.delete(loopSessionId);
-    else historyCache.set(loopSessionId, { revision, history });
+  // The checklist, emitted once and last, so the sidebar never reads a stale copy.
+  if (out.todos && out.todos.items.length > 0) {
+    pushTodosActivity(out, out.lastTurnId, out.order.current(), out.todos.items);
   }
 
-  /**
-   * loop is the authority on whether a turn is running; the overlay is not.
-   *
-   * `live.running` closes only on `finish`/`error`, so any turn whose end never
-   * reached this client — a dropped event, a resync that outran the ring, a
-   * reload landing mid-turn — kept the composer on Stop and the timeline on
-   * "Working for 12m" until the app was restarted. `history.running` is read
-   * straight off loop's active-session table and knows better, and after six
-   * silent seconds it is no longer racing anything this client just sent.
-   *
-   * Ends the turn BEFORE the fold, so the overlay retires in the same snapshot
-   * rather than one rebuild later.
-   */
-  if (quiet) {
-    if (history.running === false) endLiveTurn(loopSessionId);
-    else confirmLiveTurnRunning(loopSessionId);
-  }
-
-  const out = foldHistory(history, loopSessionId);
-  const live = foldLiveTurn(out, loopSessionId, history.running === true);
-  const running = history.running || live.running;
-
-  // The checklist, emitted once and last.
-  //
-  // A live turn's list wins outright: it is the same list further along, and
-  // the transcript only gains its copy when the turn ends. Emitting both would
-  // put two `turn.plan.updated` activities in play, and the sidebar takes the
-  // last by order — which is the stale one whenever history sorts after the
-  // overlay. Stamped `order.current()` so it never sorts before the work it
-  // describes.
-  const todos = live.todos ?? out.todos?.items;
-  if (todos && todos.length > 0) {
-    pushTodosActivity(out, live.turnId, out.order.current(), todos);
-  }
-
+  const info = meta.info ?? {};
+  const provider = meta.provider || info.provider || "";
+  const model = meta.model || info.model || "unknown";
   const firstUser = out.messages.find(
     (message) => (message as { role: string }).role === "user",
   ) as { text: string } | undefined;
-  const title = history.name?.trim() || firstUser?.text.replace(/\s+/g, " ").slice(0, 80) || "Untitled";
-  const updatedAt = iso(
-    history.entries.length > 0 ? history.entries[history.entries.length - 1]!.ts : history.info.createdAt,
-  );
+  const title = meta.name?.trim() || firstUser?.text.replace(/\s+/g, " ").slice(0, 80) || "Untitled";
+  const lastMessage = transcript.messages[transcript.messages.length - 1];
+  const updatedAt = iso(lastMessage?.metadata.createdAt ?? info.createdAt ?? Date.now());
+  // A turn running with no prompt in view (started where this client could not
+  // see it) is still running: it goes by its reply's id.
+  const turnId = running ? (out.lastTurnId ?? lastMessage?.id ?? null) : null;
 
   /**
-   * The id the CLIENT knows this thread by, which is not always loop's.
-   *
-   * A thread the composer created lives at `/primary/<client-uuid>` while loop
-   * names its session a ULID, and `buildShellSnapshot` already reports it under
-   * the client id (`clientThreadIdFor`). Reporting loop's id here made the
-   * detail disagree with the shell for exactly those threads, and the damage
-   * was much wider than a cosmetic mismatch:
-   *
-   * - `mergeEnvironmentThread` bails on `detail.id !== shell.id`, so the shell's
-   *   title/session/latestTurn were silently dropped.
-   * - ChatView derives `activeThreadRef` from `activeThread.id` but reads
-   *   `terminalUiState` from `routeThreadRef`. With the two ids different, the
-   *   terminal toggle WROTE `terminalOpen: true` under loop's id and READ it
-   *   back under the route's — so the drawer never mounted, the button looked
-   *   dead, and every press spawned another PTY nobody could see.
+   * The id the CLIENT knows this thread by, which is not always loop's: a
+   * thread the composer created lives under its client uuid while loop names
+   * the session a ULID, and the shell reports it under the client id
+   * (`clientThreadIdFor`). Reporting loop's id here made the detail disagree
+   * with the shell — the shell's title and status were dropped, and the
+   * terminal toggle wrote and read its state under different ids.
    */
   const clientThreadId = clientThreadIdFor(loopSessionId);
 
   return yield* decodeThread({
     id: clientThreadId,
-    projectId: history.info.cwd,
+    projectId: info.cwd ?? "/",
     title,
     modelSelection: {
-      instanceId: toInstanceId(history.provider || history.info.provider),
-      model: history.model || history.info.model || "unknown",
+      instanceId: toInstanceId(provider),
+      model,
       options: turnOptionsFor(loopSessionId),
     },
     runtimeMode: "full-access",
     branch: null,
     worktreePath: null,
     latestTurn:
-      live.turnId === null
+      turnId === null
         ? null
         : {
-            turnId: live.turnId,
-            state: running ? "running" : "completed",
+            turnId,
+            state: "running",
             requestedAt: updatedAt,
             startedAt: updatedAt,
-            completedAt: running ? null : updatedAt,
+            completedAt: null,
             assistantMessageId: null,
           },
-    createdAt: iso(history.info.createdAt),
+    createdAt: iso(info.createdAt ?? Date.now()),
     updatedAt,
     archivedAt: null,
     deletedAt: null,
@@ -1534,10 +1007,10 @@ export const buildThread = Effect.fnUntraced(function* (
     session: {
       threadId: clientThreadId,
       status: running ? "running" : "idle",
-      providerName: history.provider || history.info.provider || null,
-      providerInstanceId: toInstanceId(history.provider || history.info.provider),
+      providerName: provider || null,
+      providerInstanceId: toInstanceId(provider),
       runtimeMode: "full-access",
-      activeTurnId: running ? live.turnId : null,
+      activeTurnId: turnId,
       lastError: null,
       updatedAt,
     },
@@ -1547,71 +1020,8 @@ export const buildThread = Effect.fnUntraced(function* (
 /** How long to gather live-turn changes before rebuilding the thread. */
 const REBUILD_COALESCE_MS = 80;
 
-/**
- * The same, for a window in which only deltas landed.
- *
- * A tool starting, returning or failing must reach the screen promptly — 80ms
- * is the budget for anything that changes what the transcript IS. Text,
- * reasoning and tool-input deltas only change how much of a block has been
- * written, and MEASURED they arrive at ~120/sec while a `write` streams; at the
- * structural cadence that is twelve full rebuilds a second, which is what
- * pinned the renderer. Three or four repaints a second is well past what reads
- * as live text, and it leaves the main thread free to actually paint them.
- */
-const DELTA_COALESCE_MS = 250;
-
-/**
- * How often a silent-but-running turn is checked against loop's own state.
- *
- * Only a turn that is BOTH running and quiet reaches the check, so on a settled
- * thread this timer wakes up, reads one map and goes back to sleep.
- */
-const LIVENESS_CHECK_MS = 3_000;
-
 const authFailure = (message: string) =>
   new EnvironmentAuthorizationError({ message, requiredScope: AuthOrchestrationReadScope });
-
-/**
- * Subscribe loop's event stream to this session.
- *
- * loop only broadcasts a turn to clients that have attached, so without this
- * a thread would render its transcript and then sit still while the agent
- * worked. `session.open` revives the session without subscribing; `attach`
- * is the subscription, and is a separate call precisely so history can be
- * rendered first and no event can slip in between and apply twice.
- */
-const attach = (loopSessionId: string, host: LoopHost) =>
-  Effect.promise(async () => {
-    // No `session.open` first: attach revives the session itself
-    // (`ensureCtx`), and the extra round trip was pure latency on every open —
-    // on a phone over Tailscale, a visible part of "Loading messages".
-    // `afterSeq` is the difference between watching a turn and missing it.
-    //
-    // loop persists a turn only once it ends and broadcasts only to clients
-    // that have attached, so a session already running when this thread is
-    // opened — started in the terminal, in another window, or before the app
-    // was restarted — has nothing on disk and nothing in flight to catch. It
-    // rendered as a settled conversation sitting perfectly still while the
-    // agent worked. Attaching from the last seq this client applied (0 when it
-    // has applied none) replays loop's event ring, which rebuilds the turn so
-    // far; `running` from the response is what marks it as still going, since
-    // a `finish` left in the ring by an EARLIER turn would otherwise say the
-    // opposite.
-    const attached = await host.call<{ running?: boolean; resync?: boolean; seq?: number }>("session.attach", {
-      sessionId: loopSessionId,
-      afterSeq: lastEventSeq(loopSessionId),
-    }).catch(() => null);
-    if (attached === null) return;
-    if (typeof attached.seq === "number") syncEventSeq(loopSessionId, attached.seq);
-    // The gap outran the ring, so nothing was replayed and what this client
-    // holds is not contiguous. History is the honest fallback, and the next
-    // attach starts over rather than resuming from a seq that means nothing.
-    if (attached.resync === true) {
-      forgetEventSeq(loopSessionId);
-      clearLiveTurn(loopSessionId);
-    }
-    if (attached.running === true) adoptRunningTurn(loopSessionId, host);
-  });
 
 const snapshotItem = (thread: unknown): OrchestrationThreadStreamItem =>
   ({ kind: "snapshot", snapshot: { snapshotSequence: 0, thread } }) as OrchestrationThreadStreamItem;
@@ -1625,161 +1035,76 @@ export function threadStream(
   host: LoopHost = defaultLoopHost,
 ): Stream.Stream<OrchestrationThreadStreamItem, EnvironmentAuthorizationError> {
   /**
-   * Resolved on every use, never captured.
-   *
-   * A draft subscribes before loop has a session for it, and the id only
-   * appears when the first turn creates one. Capturing it at subscribe time
-   * left the stream watching a session that would never exist: loop ran the
-   * turn and finished it, and the UI sat on "Working for 1m 40s" because it
-   * was listening for the wrong id.
+   * Resolved on every use, never captured: a draft has no loop session until
+   * its first turn creates one, and a stream that captured the draft's id
+   * watched a session that would never exist.
    */
   const currentSessionId = () => loopSessionIdFor(threadId);
-  /**
-   * The session this stream's socket is subscribed to, shared by the first
-   * snapshot and the updates after it.
-   *
-   * Tracked separately, the updates did not know the first snapshot had
-   * attached and attached again on their first rebuild — a wasted round trip
-   * on every open, and a replay of events the socket had already delivered.
-   */
-  let attached: string | null = null;
 
-  const initial = Effect.gen(function* () {
-    const sessionId = currentSessionId();
-    // A draft has nothing to attach to yet; the first rebuild does it.
-    if (draftIntent(sessionId) === undefined) {
-      yield* attach(sessionId, host);
-      attached = sessionId;
-    }
-    const thread = yield* buildThread(sessionId, host);
-    return [snapshotItem(thread), { kind: "synchronized" as const }];
-  }).pipe(Effect.mapError(() => authFailure(`loop could not open thread ${threadId}`)));
-
-  const updates = Stream.callback<OrchestrationThreadStreamItem>((queue) =>
+  return Stream.callback<OrchestrationThreadStreamItem, EnvironmentAuthorizationError>((queue) =>
     Effect.acquireRelease(
       Effect.sync(() => {
+        let synchronized = false;
         let timer: ReturnType<typeof setTimeout> | null = null;
-        /**
-         * One rebuild at a time.
-         *
-         * The coalescing window only gated SCHEDULING, so a rebuild slower than
-         * 80ms — which is what a long transcript is — had the next one queued
-         * before it finished, and the backlog grew for as long as the model
-         * kept streaming. Holding the window open until the rebuild lands makes
-         * the interval a floor rather than a fixed rate, so a thread that is
-         * expensive to rebuild simply updates less often instead of falling
-         * further behind.
-         */
-        let building = false;
-        let pending = false;
-        /** Whether anything structural has landed since the last rebuild. */
-        let sawStructural = true;
+        let watching: { sessionId: string; stop: () => void } | null = null;
 
-        const rebuild = () => {
-          building = true;
-          sawStructural = false;
-          const sessionId = currentSessionId();
-          const ready =
-            attached === sessionId
-              ? Promise.resolve()
-              : Effect.runPromise(attach(sessionId, host)).then(() => {
-                  attached = sessionId;
-                });
-          void ready
-            .then(() => Effect.runPromise(buildThread(sessionId, host)))
-            .then((thread) => Queue.offerUnsafe(queue, snapshotItem(thread)))
-            .catch(() => undefined)
-            .finally(() => {
-              building = false;
-              // Something changed while this was in flight, so the snapshot
-              // just sent is already stale — go again.
-              if (pending) {
-                pending = false;
-                schedule();
+        const emit = (sessionId: string) => {
+          const view = draftIntent(sessionId) === undefined ? readTranscript(host, sessionId) : undefined;
+          if (view !== undefined && !view.ready) return;
+          void Effect.runPromise(buildThread(sessionId, host, view))
+            .then((thread) => {
+              Queue.offerUnsafe(queue, snapshotItem(thread));
+              if (!synchronized) {
+                synchronized = true;
+                Queue.offerUnsafe(queue, { kind: "synchronized" } as OrchestrationThreadStreamItem);
               }
-            });
+            })
+            .catch(() => undefined);
         };
 
+        /**
+         * One rebuild per window. The transcript is held locally, so a rebuild
+         * is a fold, not a fetch — but a reply streams ~100 deltas a second,
+         * and redrawing the whole thread for each would still pin a phone.
+         */
         const schedule = () => {
           if (timer !== null) return;
-          // Everything waiting is a delta: worth showing, not worth a full
-          // rebuild twelve times a second.
-          const deltaOnly = !sawStructural;
-          timer = setTimeout(
-            () => {
-              timer = null;
-              if (building) {
-                pending = true;
-                return;
-              }
-              rebuild();
-            },
-            deltaOnly ? DELTA_COALESCE_MS : REBUILD_COALESCE_MS,
-          );
+          timer = setTimeout(() => {
+            timer = null;
+            emit(currentSessionId());
+          }, REBUILD_COALESCE_MS);
         };
 
-        /**
-         * The only thing that re-examines a turn which has stopped changing.
-         *
-         * Every rebuild above is triggered by a live-turn event, which makes
-         * the whole view blind to the one failure that matters: a turn whose
-         * end never arrives emits nothing more, so nothing asks again and the
-         * thread sits on "Working" forever. `buildThread` already reconciles
-         * against loop's own `running` flag — this is what gives it the chance
-         * to, and it only fires while a turn is both running and silent, so a
-         * settled thread costs nothing.
-         */
-        const watchdog = setInterval(() => {
-          const live = readLiveTurn(currentSessionId());
-          if (!live?.running || !liveTurnIsQuiet(live)) return;
-          schedule();
-        }, LIVENESS_CHECK_MS);
-
-        const unsubscribe = onLiveTurnChange((changed, structural) => {
-          if (changed !== currentSessionId()) return;
-          if (structural) sawStructural = true;
-          if (building) {
-            pending = true;
+        const follow = () => {
+          const sessionId = currentSessionId();
+          if (watching?.sessionId === sessionId) return;
+          watching?.stop();
+          watching = null;
+          if (draftIntent(sessionId) !== undefined) {
+            emit(sessionId);
             return;
           }
-          schedule();
-        });
+          watching = { sessionId, stop: watchTranscript(host, sessionId, schedule) };
+          // Already held (another view of the same session): draw it now.
+          if (readTranscript(host, sessionId).ready) emit(sessionId);
+        };
 
-        /**
-         * A reconnected socket is not a subscribed one.
-         *
-         * loop tracks subscribers per TRANSPORT, so the attach this stream did
-         * belongs to the socket that has just gone away. Nothing re-attached
-         * the new one, and since `attached` still named this session the
-         * rebuild path never tried again — so after any drop the thread went
-         * permanently silent: turns ran to completion with the transcript
-         * frozen, and only a reload brought it back. Forgetting the attach and
-         * asking for a rebuild re-subscribes, and `afterSeq` replays whatever
-         * was missed while the socket was down.
-         */
-        const unwatchConnection = host.onConnectionChange((state) => {
-          if (state !== "open") return;
-          attached = null;
-          schedule();
-        });
+        // A draft becomes a session when its first turn starts, and that is
+        // news only the live-turn tracker hears first.
+        const unsubscribe = onLiveTurnChange(() => follow());
+        follow();
 
-        // The shell lists a page of sessions, and this one may be older than
-        // it (opened from search, or a link). The view is merged with its
-        // shell row, so it is kept in the shell for as long as it is open.
+        // The shell lists a page of sessions; this one is kept in it while open.
         const unpin = pinSession(host.id, currentSessionId());
 
         return () => {
           if (timer !== null) clearTimeout(timer);
-          clearInterval(watchdog);
-          pending = false;
+          watching?.stop();
           unsubscribe();
-          unwatchConnection();
           unpin();
         };
       }),
       (dispose) => Effect.sync(dispose),
     ).pipe(Effect.asVoid),
   );
-
-  return Stream.fromEffect(initial).pipe(Stream.flattenIterable, Stream.concat(updates));
 }

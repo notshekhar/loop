@@ -12,6 +12,12 @@ import { describe, expect, it } from "vite-plus/test";
 import { derivePendingUserInputs } from "../../session-logic";
 import { renderTranscript, type LoopEventPart } from "./renderTranscript.ts";
 
+// History and live overlapping (the same call, run, recap or checklist in
+// both) cannot happen any more: the transcript store applies only events
+// after the host snapshot's seq, and the host builds that snapshot from one
+// stream — see packages/core/test/transcript.test.ts ("the saved turn reads
+// exactly as it streamed") and src/loop/transcript/store.ts.
+
 const CWD = "/w/project";
 const userEntry = (text: string, ts = 1_700_000_001_000, id = "u1") => ({
   type: "message",
@@ -220,27 +226,6 @@ describe("a turn in flight", () => {
     });
   });
 
-  it("does not double a call the transcript has already recorded", async () => {
-    // The live overlay retires on matching text; a turn whose reply was empty
-    // leaves it in place, and the same call then renders twice — once settled,
-    // once stuck on "running".
-    const view = await renderTranscript({
-      history: [
-        userEntry("go"),
-        assistant([
-          { type: "tool-call", toolName: "bash", toolCallId: "c1", input: { command: "ls" } },
-        ]),
-        toolResult("c1", "a"),
-      ],
-      events: [
-        { type: "tool-input-start", data: { toolCallId: "c1", toolName: "bash" } },
-        { type: "tool-call", data: { toolCallId: "c1", toolName: "bash", input: { command: "ls" } } },
-      ],
-      running: true,
-    });
-
-    expect(view.blocks.filter((block) => block.kind === "tool")).toHaveLength(1);
-  });
 
   it("nests a subagent's own tools and prose under its task row", async () => {
     // Without this the row said "running" and nothing else for the whole run,
@@ -391,30 +376,6 @@ describe("a turn in flight", () => {
     ]);
   });
 
-  it("does not double a subagent the transcript has already recorded", async () => {
-    // The live overlay and the persisted entry describe the same run; both
-    // rendering leaves one settled row and one stuck on "running".
-    const view = await renderTranscript({
-      history: [
-        userEntry("delegate it"),
-        {
-          type: "subagent",
-          ts: 1_700_000_002_000,
-          id: "sa1",
-          agent: "explore",
-          prompt: "find it",
-          result: "done",
-          toolCallId: "call-9",
-        },
-      ],
-      events: [
-        { type: "tool-input-start", data: { toolCallId: "call-9", toolName: "task" } },
-        { type: "subagent-tool", data: { toolCallId: "call-9", agent: "explore", toolName: "grep" } },
-      ],
-      running: true,
-    });
-    expect(view.blocks.filter((block) => block.kind === "tool")).toHaveLength(1);
-  });
 
   it("replays a compaction the transcript recorded", async () => {
     const view = await renderTranscript({
@@ -425,7 +386,9 @@ describe("a turn in flight", () => {
           ts: 1_700_000_002_000,
           id: "k1",
           summary: "earlier work",
-          cutAt: 4,
+          // The first message the compaction kept: everything from here on
+          // follows the marker (the terminal's rule — replay.ts).
+          cutAt: 1,
           tokensBefore: 90_000,
           tokensAfter: 12_000,
         },

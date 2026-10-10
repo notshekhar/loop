@@ -15,6 +15,7 @@ import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vite-plus/test";
 
 import { applyLoopEvent, beginLiveTurn, clearLiveTurn, readLiveTurn } from "./liveTurn.ts";
+import { applyEvents, fromEntries } from "@loop/transcript";
 import { buildThread } from "./thread.ts";
 
 const globals = globalThis as { window?: Window & typeof globalThis };
@@ -438,15 +439,14 @@ describe("what a tool row is given to draw with", () => {
     // step); the overlay streaming the rest used to carry an id of its own,
     // so the phone split one reply into two turns — two copy buttons, two
     // groups — until the turn ended and the transcript took over.
-    beginLiveTurn(SESSION);
-    applyLoopEvent(SESSION, { type: "text-delta", data: "Looking now." });
-    applyLoopEvent(SESSION, {
-      type: "tool-input-start",
-      data: { toolCallId: "call-live", toolName: "read" },
-    });
-    applyLoopEvent(SESSION, { type: "text-delta", data: "Still going" });
-
-    const thread = await threadOf([userEntry("check the repo", "u-live")], true);
+    const transcript = applyEvents(fromEntries([userEntry("check the repo", "u-live")], { running: true }), [
+      { type: "text-delta", data: "Looking now." },
+      { type: "tool-input-start", data: { toolCallId: "call-live", toolName: "read" } },
+      { type: "text-delta", data: "Still going" },
+    ]);
+    const thread = await Effect.runPromise(
+      buildThread(SESSION, undefined, { transcript, ready: true, meta: { info } }),
+    );
     const turnIds = new Set(
       [...thread.messages, ...thread.activities]
         .map((item) => (item as { turnId?: string | null }).turnId)
@@ -545,12 +545,14 @@ describe("attaching to a session", () => {
       call: (method, params) => {
         calls.push({ method, params });
         if (method === "session.history") {
+          // The snapshot is where `running` comes from now — the host's own
+          // active-session table, read in the same answer as the transcript.
           return Promise.resolve({
             sessionId: input.sessionId,
             info,
             entries: [],
             seq: 0,
-            running: false,
+            running: input.running,
           });
         }
         if (method === "session.attach") {
@@ -577,18 +579,20 @@ describe("attaching to a session", () => {
     }
   }
 
-  it("asks loop to replay from the last event it applied", async () => {
-    // Without `afterSeq` loop subscribes but replays nothing, so everything
-    // that happened before this client arrived is simply never seen.
+  it("subscribes before it reads the snapshot, so no event falls between them", async () => {
+    // The snapshot says which event it is good to; anything after that arrives
+    // on the stream — but only if the stream was already subscribed when the
+    // snapshot was read.
     const { calls } = await attachOf({ running: true, sessionId: "01ATTACH1" });
-    const attach = calls.find((call) => call.method === "session.attach");
-    expect(attach).toBeDefined();
-    expect((attach?.params as { afterSeq?: number }).afterSeq).toBe(0);
+    const attachAt = calls.findIndex((call) => call.method === "session.attach");
+    const snapshotAt = calls.findIndex((call) => call.method === "session.messages" || call.method === "session.history");
+    expect(attachAt).toBeGreaterThanOrEqual(0);
+    expect(snapshotAt).toBeGreaterThan(attachAt);
   });
 
   it("shows a session already running as running", async () => {
-    // The transcript is empty and no event has landed yet — `running` from the
-    // attach response is the only thing that knows a turn is in flight.
+    // The transcript is empty and no event has landed yet — `running` in the
+    // host's snapshot is what knows a turn is in flight.
     const { thread } = await attachOf({ running: true, sessionId: "01ATTACH2" });
     const snapshot = (thread as { snapshot: { thread: { session: { status: string } } } }).snapshot;
     expect(snapshot.thread.session.status).toBe("running");
@@ -749,12 +753,6 @@ describe("a live turn whose end never arrived", () => {
     expect(status).toBe("running");
   });
 
-  it("does not end a turn that has only just been dispatched", async () => {
-    // `beginLiveTurn` runs BEFORE `session.send` lands, so a not-running answer
-    // in that window is a race with the send, not a lost turn.
-    const status = await statusAfterQuiet({ sessionId: "01STUCK3", running: false, quietFor: 0 });
-    expect(status).toBe("running");
-  });
 });
 
 /**

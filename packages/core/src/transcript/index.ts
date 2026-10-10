@@ -4,5 +4,5 @@
  * (`@notshekhar/loop-core/transcript`).
  */
 export * from "./types";
-export { applyEvent, applyEvents, emptyTranscript } from "./reduce";
+export { applyEvent, applyEvents, emptyTranscript, INTERRUPTED, MAX_SUBAGENT_STEPS } from "./reduce";
 export { fromEntries } from "./history";

@@ -2,8 +2,9 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vite-plus/test";
 
-import { applyLoopEvent, beginLiveTurn, clearLiveTurn } from "../handlers/liveTurn.ts";
+import { clearLiveTurn } from "../handlers/liveTurn.ts";
 import { threadStream } from "../handlers/thread.ts";
+import { forgetTranscriptsForTests } from "../transcript/store.ts";
 
 const globals = globalThis as { window?: Window & typeof globalThis };
 
@@ -22,6 +23,13 @@ const globals = globalThis as { window?: Window & typeof globalThis };
  * timestamp after a long quiet stretch.
  */
 function stubWindow(sessionId: string) {
+  const listeners = new Set<(event: never) => void>();
+  let seq = 0;
+  /** Deliver one `session.event` the way loop's transport does, numbered in order. */
+  const emit = (part: { type: string; data?: unknown }) => {
+    seq += 1;
+    for (const listener of listeners) listener({ sessionId, seq, part } as never);
+  };
   const hadWindow = globals.window !== undefined;
   globals.window ??= globals as unknown as Window & typeof globalThis;
   const previous = window.loop;
@@ -36,20 +44,24 @@ function stubWindow(sessionId: string) {
             running: true,
           })
         : Promise.resolve({}),
-    onEvent: () => () => {},
+    onEvent: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
     anchorCwd: () => Promise.resolve(undefined),
   };
-  return () => {
+  const restore = () => {
     if (previous === undefined) delete window.loop;
     else window.loop = previous;
     if (!hadWindow) delete globals.window;
   };
+  return { emit, restore };
 }
 
 describe("live updates reaching a subscriber", () => {
   it("delivers each step of a turn as it happens, not in one batch at the end", async () => {
     const sessionId = "01RPCSTREAM";
-    const restore = stubWindow(sessionId);
+    const { emit, restore } = stubWindow(sessionId);
     const arrivals: { at: number; tools: number }[] = [];
     const start = Date.now();
 
@@ -72,21 +84,20 @@ describe("live updates reaching a subscriber", () => {
 
     try {
       await new Promise((resolve) => setTimeout(resolve, 150));
-      beginLiveTurn(sessionId);
 
       // Three distinct steps, well separated — a batching layer collapses
       // these into one late arrival.
-      applyLoopEvent(sessionId, {
+      emit({
         type: "tool-input-start",
         data: { toolName: "write", toolCallId: "a" },
       });
       await new Promise((resolve) => setTimeout(resolve, 300));
-      applyLoopEvent(sessionId, {
+      emit({
         type: "tool-input-start",
         data: { toolName: "read", toolCallId: "b" },
       });
       await new Promise((resolve) => setTimeout(resolve, 300));
-      applyLoopEvent(sessionId, {
+      emit({
         type: "tool-input-start",
         data: { toolName: "bash", toolCallId: "c" },
       });
@@ -103,6 +114,7 @@ describe("live updates reaching a subscriber", () => {
     } finally {
       void fiber;
       clearLiveTurn(sessionId);
+      forgetTranscriptsForTests();
       restore();
     }
   });

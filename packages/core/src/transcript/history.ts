@@ -17,6 +17,7 @@ import type {
     TranscriptTodo,
 } from "./types";
 import { isToolPart } from "./types";
+import { resultFailure } from "./reduce";
 
 /** The parts of a saved entry this reads (packages/core/src/types.ts Entry). */
 interface EntryLike {
@@ -35,11 +36,15 @@ interface EntryLike {
     readonly handoff?: string;
     // subagent
     readonly agent?: string;
+    readonly prompt?: string;
+    readonly result?: string;
     readonly toolCallId?: string;
     readonly activity?: readonly { type: string; text?: string; name?: string; summary?: string }[];
     readonly steps?: number;
     readonly durationMs?: number;
     readonly usage?: { usd?: number };
+    /** Older entries carried the cost here rather than in `usage`. */
+    readonly usd?: number;
     // custom
     readonly payload?: unknown;
 }
@@ -62,9 +67,13 @@ function unwrapOutput(output: unknown): { value: unknown; error?: string } {
         if (typed.type === "error-text" || typed.type === "error-json") {
             return { value: typed.value, error: typeof typed.value === "string" ? typed.value : JSON.stringify(typed.value) };
         }
-        if (typed.type === "text" || typed.type === "json" || typed.type === "content") return { value: typed.value };
+        if (typed.type === "text" || typed.type === "json" || typed.type === "content") {
+            const failure = resultFailure(typed.value);
+            return failure === undefined ? { value: typed.value } : { value: typed.value, error: failure };
+        }
     }
-    return { value: output };
+    const failure = resultFailure(output);
+    return failure === undefined ? { value: output } : { value: output, error: failure };
 }
 
 function userParts(content: unknown): TranscriptPart[] {
@@ -94,10 +103,15 @@ function subagentRun(entry: EntryLike): SubagentRun {
         agent: entry.agent ?? "agent",
         steps,
         ...(entry.steps !== undefined ? { stepCount: entry.steps } : {}),
-        ...(entry.usage?.usd !== undefined ? { usd: entry.usage.usd } : {}),
+        ...((entry.usage?.usd ?? entry.usd) !== undefined ? { usd: entry.usage?.usd ?? entry.usd } : {}),
         ...(entry.durationMs !== undefined ? { durationMs: entry.durationMs } : {}),
         finished: true,
     };
+}
+
+function isTodos(payload: unknown): payload is { kind: "todos"; items: TranscriptTodo[] } {
+    const p = payload as { kind?: unknown; items?: unknown } | null;
+    return !!p && typeof p === "object" && p.kind === "todos" && Array.isArray(p.items);
 }
 
 function isRecap(payload: unknown): payload is { kind: "recap"; text: string } {
@@ -115,6 +129,8 @@ export function fromEntries(
 ): Transcript {
     const messages: TranscriptMessage[] = [];
     let reply: TranscriptMessage | null = null;
+    // The checklist as the branch last wrote it (each write is the whole list).
+    let todos: readonly TranscriptTodo[] = [];
 
     let latestCompact: EntryLike | undefined;
     for (const entry of entries) if (entry.type === "compact") latestCompact = entry;
@@ -124,29 +140,42 @@ export function fromEntries(
 
     // Subagent runs are saved when they finish — before the step's assistant
     // message that holds their `task` call. Held until that message is in.
-    const pendingRuns: EntryLike[] = [];
+    // Each with where the reply stood when the run was written, for a run whose
+    // call the reply never recorded (older sessions): it goes where it happened.
+    const pendingRuns: { entry: EntryLike; at: number }[] = [];
     const attachRuns = () => {
         if (pendingRuns.length === 0) return;
         const target = currentReply(reply?.metadata.createdAt ?? 0);
-        for (const run of pendingRuns) {
+        for (const { entry: run, at: position } of pendingRuns) {
             const index = run.toolCallId ? findTool(target.parts, run.toolCallId) : -1;
             if (index >= 0) {
-                target.parts[index] = { ...(target.parts[index] as ToolPart), subagent: subagentRun(run) };
+                const tool = target.parts[index] as ToolPart;
+                target.parts[index] = {
+                    ...tool,
+                    subagent: subagentRun(run),
+                    // The run's report is the call's result when no tool entry says otherwise.
+                    ...(tool.output === undefined && tool.state !== "output-error" && run.result !== undefined
+                        ? { state: "output-available" as const, output: run.result }
+                        : {}),
+                };
             } else {
                 // An older session that never linked the run to its call.
-                target.parts.push({
+                target.parts.splice(Math.min(position, target.parts.length), 0, {
                     type: "tool-task",
                     toolCallId: run.toolCallId ?? `task-${run.ts ?? 0}`,
                     toolName: "task",
                     state: "output-available",
-                    input: { agent: run.agent },
-                    output: run.summary,
+                    input: { agent: run.agent, ...(run.prompt === undefined ? {} : { prompt: run.prompt }) },
+                    output: run.result,
                     subagent: subagentRun(run),
                 });
             }
         }
         pendingRuns.length = 0;
     };
+
+    /** How far the reply has got (read through a function: closures assign it). */
+    const currentLength = (): number => (reply as TranscriptMessage | null)?.parts.length ?? 0;
 
     const currentReply = (at: number): TranscriptMessage => {
         if (reply) return reply;
@@ -250,7 +279,7 @@ export function fromEntries(
                 }
             }
         } else if (entry.type === "subagent") {
-            pendingRuns.push(entry);
+            pendingRuns.push({ entry, at: currentLength() });
         } else if (entry.type === "branch-summary" && entry.summary) {
             attachRuns();
             reply = null;
@@ -260,6 +289,8 @@ export function fromEntries(
                 parts: [{ type: "data-branch-summary", data: { summary: entry.summary } }],
                 metadata: { createdAt: at },
             });
+        } else if (entry.type === "custom" && isTodos(entry.payload)) {
+            todos = entry.payload.items;
         } else if (entry.type === "custom" && isRecap(entry.payload)) {
             const text = entry.payload.text.trim();
             if (text) currentReply(at).parts.push({ type: "data-recap", data: { text } });
@@ -280,14 +311,14 @@ export function fromEntries(
                     message.parts[i] = {
                         ...part,
                         state: "output-error",
-                        errorText: message.metadata.interrupted ? "Interrupted" : "No result",
+                        errorText: "Interrupted",
                     };
                 }
             }
         }
     }
 
-    return { messages, running: opts.running === true, todos: [...(opts.todos ?? [])] };
+    return { messages, running: opts.running === true, todos: [...(opts.todos ?? todos)] };
 }
 
 function findTool(parts: readonly TranscriptPart[], toolCallId: string): number {

@@ -2,6 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { renderTranscript } from "./renderTranscript";
 
+// History and live overlapping (the same call, run, recap or checklist in
+// both) cannot happen any more: the transcript store applies only events
+// after the host snapshot's seq, and the host builds that snapshot from one
+// stream — see packages/core/test/transcript.test.ts ("the saved turn reads
+// exactly as it streamed") and src/loop/transcript/store.ts.
+
 const PLAN =
   "# Add /healthz\n\n## Context\n\nThe server has no health endpoint.\n\n## Steps\n\n1. Add the route\n2. Return 200\n";
 
@@ -42,29 +48,4 @@ describe("the plan tool while it is still streaming", () => {
     expect(laterText!.startsWith(earlyText!)).toBe(true);
   });
 
-  it("is one card, not two, once the settled transcript carries the same call", async () => {
-    // The window where both exist: history already has the finished call and
-    // the live turn still holds its copy.
-    const view = await renderTranscript({
-      history: [
-        {
-          type: "message",
-          ts: 1_700_000_000_000,
-          role: "assistant",
-          content: [
-            { type: "tool-call", toolCallId: "tool_1", toolName: "plan", input: { plan: PLAN } },
-          ],
-        },
-      ],
-      events: [
-        ...planEvents(999).events,
-        {
-          type: "tool-call",
-          data: { toolCallId: "tool_1", toolName: "plan", input: { plan: PLAN } },
-        },
-      ],
-      running: true,
-    });
-    expect(view.shape.filter((kind) => kind.startsWith("plan"))).toHaveLength(1);
-  });
 });
