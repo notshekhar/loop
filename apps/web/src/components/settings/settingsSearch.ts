@@ -33,7 +33,8 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
   "/settings/source-control": "Source Control",
-  "/settings/connections": "Connections",
+  // Other computers running loop, added to this app (`loop serve` / `/rc`).
+  "/settings/connections": "Remote hosts",
   "/settings/beta": "Beta",
   "/settings/archived": "Archive",
 };
@@ -161,7 +162,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "remote-environments",
-    title: "Remote environments",
+    title: "Remote hosts",
     to: "/settings/connections",
   },
   {

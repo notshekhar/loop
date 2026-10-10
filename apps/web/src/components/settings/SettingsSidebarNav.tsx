@@ -69,9 +69,9 @@ const SETTINGS_SECTION_ICONS: Readonly<
 /**
  * The sections loop can actually fill.
  *
- * The others configure things loop does not have — pairing and relays
- * (Connections), upstream experiments (Beta), its worktree/PR workflow
- * (Source Control) — or read from a config loop reports empty (Keybindings).
+ * The others configure things loop does not have — upstream experiments
+ * (Beta), its worktree/PR workflow (Source Control) — or read from a config
+ * loop reports empty (Keybindings).
  * Listing a section that renders nothing is worse than not listing it, so the
  * nav is an allowlist. The routes still exist; they are simply not advertised
  * until something backs them.
@@ -87,6 +87,8 @@ const LOOP_SETTINGS_PATHS: ReadonlySet<SettingsPath> = new Set([
   "/settings/archived",
   "/settings/appearance",
   "/settings/providers",
+  // Remote hosts: add another computer's loop by its address and 6-digit code.
+  "/settings/connections",
 ]);
 
 export const SETTINGS_NAV_ITEMS: ReadonlyArray<{

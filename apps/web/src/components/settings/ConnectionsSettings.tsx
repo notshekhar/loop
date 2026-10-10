@@ -1695,11 +1695,11 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
         <ChevronsLeftRightEllipsisIcon />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle>No saved remote environments</EmptyTitle>
+        <EmptyTitle>No other computers yet</EmptyTitle>
         <EmptyDescription>
           {cloudEnabled
-            ? "Click “Add environment” to pair another environment, or connect one from Loop Connect."
-            : "Click “Add environment” to pair another environment."}
+            ? "Run `loop serve` (or /rc) on the other computer, then click “Add host” and type its address and 6-digit code — or connect one from Loop Connect."
+            : "Run `loop serve` (or /rc) on the other computer, then click “Add host” and type its address and 6-digit code."}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -1723,6 +1723,16 @@ function CloudRemoteEnvironmentRows({
     <EmptyRemoteEnvironments cloudEnabled={false} />
   ) : null;
 }
+
+/**
+ * The "This environment" controls — network exposure, Tailscale, WSL, pairing
+ * links and authorized clients for the app's own backend — are upstream's, and
+ * loop's desktop has nothing behind them: another device reaches this machine
+ * through `loop serve` or `/rc`, which print their own address and code. Off
+ * until the desktop can host, so the page is only what works: adding other
+ * computers' loops.
+ */
+const SHOWS_LOCAL_BACKEND_ADMIN = false;
 
 export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
@@ -2447,7 +2457,7 @@ export function ConnectionsSettings() {
         onClick={() => void handleAddSavedBackend()}
       >
         <PlusIcon className="size-3.5" />
-        {isAddingSavedBackend ? "Adding…" : "Add environment"}
+        {isAddingSavedBackend ? "Adding…" : "Add host"}
       </Button>
     </div>
   );
@@ -2501,7 +2511,7 @@ export function ConnectionsSettings() {
           onClick={() => void handleAddSavedBackend()}
         >
           <PlusIcon className="size-3.5" />
-          {isAddingSavedBackend ? "Adding…" : "Add environment"}
+          {isAddingSavedBackend ? "Adding…" : "Add host"}
         </Button>
       </div>
       <div className="overflow-hidden rounded-lg border border-border/60">
@@ -2996,7 +3006,7 @@ export function ConnectionsSettings() {
 
   return (
     <SettingsPageContainer>
-      {canManageLocalBackend ? (
+      {SHOWS_LOCAL_BACKEND_ADMIN && canManageLocalBackend ? (
         <>
           <SettingsSection title="This environment">
             {primaryVersionMismatch || primaryServerUpdateState.status !== "idle" ? (
@@ -3342,7 +3352,7 @@ export function ConnectionsSettings() {
             </DialogPopup>
           </Dialog>
         </>
-      ) : (
+      ) : SHOWS_LOCAL_BACKEND_ADMIN ? (
         <SettingsSection title="This environment">
           <SettingsRow
             title="Administrative access"
@@ -3350,7 +3360,7 @@ export function ConnectionsSettings() {
           />
           <CloudLinkRow canManageRelay={canManageRelay} />
         </SettingsSection>
-      )}
+      ) : null}
 
       <SettingsSection
         {...searchableSetting("remote-environments")}
@@ -3373,21 +3383,23 @@ export function ConnectionsSettings() {
                         size="xs"
                         variant="ghost"
                         className="h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground"
-                        aria-label="Add environment"
+                        aria-label="Add host"
                       >
                         <PlusIcon className="size-3" />
-                        <span>Add environment</span>
+                        <span>Add host</span>
                       </Button>
                     }
                   />
                 }
               />
-              <TooltipPopup side="top">Add environment</TooltipPopup>
+              <TooltipPopup side="top">Add host</TooltipPopup>
             </Tooltip>
             <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
               <DialogHeader>
-                <DialogTitle>Add Environment</DialogTitle>
-                <DialogDescription>Pair another environment to this client.</DialogDescription>
+                <DialogTitle>Add a host</DialogTitle>
+                <DialogDescription>
+                  Another computer running loop: its sessions show up here next to this one's.
+                </DialogDescription>
               </DialogHeader>
               <DialogPanel>
                 <div className="space-y-4">
