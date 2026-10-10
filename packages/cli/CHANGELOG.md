@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.21.5] - 2026-10-10
+
+### Added
+
+- **Pair with a six-digit code.** `loop serve` and `/rc` now show a short code next to the QR. In the app, type the computer's address and that code instead of the long token. A code works once, lasts five minutes, and five wrong guesses cancel it; press Enter in `loop serve`, or run `/rc` again, for a new one. `/hosts` accepts a code too.
+
+### Changed
+
+- **The terminal works on paired devices without a flag.** A paired phone or computer can already run the agent, so it now gets the terminal by default. To keep the terminal on this machine only, use `loop serve --no-terminal`, choose "Turn on, without the terminal" when `/rc` asks, or turn off "terminal for other devices" in `/settings`.
+
+### Fixed
+
+- **A new chat's first reply shows once.** It sometimes appeared twice on the phone, the second copy with extra words, and stayed after the turn ended.
+- **The phone connects once per computer, and sooner.** It opened two connections to the same machine and could take half a minute to connect at launch.
+- **Typing a new chat on Android:** the keyboard no longer covers the composer and its send button.
+- **A new chat opens straight to its messages** instead of briefly saying "Thread unavailable".
+- **The project picker honours the home list's filter:** with the list narrowed to one computer, a new chat no longer offers another computer's projects.
+- **The phone remembers chats it started across restarts,** so a send queued before a restart reaches the right session.
+- **Replies keep streaming after the computer's loop restarts.**
+- **Replies stream on the phone as they are written** (Android): its JavaScript engine lacked a method the live view used, so every mid-reply update failed and the reply appeared only at the end.
+- **An empty message is refused** instead of starting a turn with nothing in it.
+
 ## [0.21.4] - 2026-10-09
 
 ### Added
