@@ -43,6 +43,7 @@ import {
   confirmLiveTurnRunning,
   endLiveTurn,
   forgetEventSeq,
+  syncEventSeq,
   lastEventSeq,
   liveTurnIsQuiet,
   onLiveTurnChange,
@@ -1565,7 +1566,9 @@ const authFailure = (message: string) =>
  */
 const attach = (loopSessionId: string, host: LoopHost) =>
   Effect.promise(async () => {
-    await host.call("session.open", { sessionId: loopSessionId }).catch(() => undefined);
+    // No `session.open` first: attach revives the session itself
+    // (`ensureCtx`), and the extra round trip was pure latency on every open —
+    // on a phone over Tailscale, a visible part of "Loading messages".
     // `afterSeq` is the difference between watching a turn and missing it.
     //
     // loop persists a turn only once it ends and broadcasts only to clients
@@ -1578,11 +1581,12 @@ const attach = (loopSessionId: string, host: LoopHost) =>
     // far; `running` from the response is what marks it as still going, since
     // a `finish` left in the ring by an EARLIER turn would otherwise say the
     // opposite.
-    const attached = await host.call<{ running?: boolean; resync?: boolean }>("session.attach", {
+    const attached = await host.call<{ running?: boolean; resync?: boolean; seq?: number }>("session.attach", {
       sessionId: loopSessionId,
       afterSeq: lastEventSeq(loopSessionId),
     }).catch(() => null);
     if (attached === null) return;
+    if (typeof attached.seq === "number") syncEventSeq(loopSessionId, attached.seq);
     // The gap outran the ring, so nothing was replayed and what this client
     // holds is not contiguous. History is the honest fallback, and the next
     // attach starts over rather than resuming from a seq that means nothing.
@@ -1614,11 +1618,23 @@ export function threadStream(
    * was listening for the wrong id.
    */
   const currentSessionId = () => loopSessionIdFor(threadId);
+  /**
+   * The session this stream's socket is subscribed to, shared by the first
+   * snapshot and the updates after it.
+   *
+   * Tracked separately, the updates did not know the first snapshot had
+   * attached and attached again on their first rebuild — a wasted round trip
+   * on every open, and a replay of events the socket had already delivered.
+   */
+  let attached: string | null = null;
 
   const initial = Effect.gen(function* () {
     const sessionId = currentSessionId();
     // A draft has nothing to attach to yet; the first rebuild does it.
-    if (draftIntent(sessionId) === undefined) yield* attach(sessionId, host);
+    if (draftIntent(sessionId) === undefined) {
+      yield* attach(sessionId, host);
+      attached = sessionId;
+    }
     const thread = yield* buildThread(sessionId, host);
     return [snapshotItem(thread), { kind: "synchronized" as const }];
   }).pipe(Effect.mapError(() => authFailure(`loop could not open thread ${threadId}`)));
@@ -1627,7 +1643,6 @@ export function threadStream(
     Effect.acquireRelease(
       Effect.sync(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
-        let attached: string | null = null;
         /**
          * One rebuild at a time.
          *

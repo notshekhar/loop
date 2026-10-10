@@ -24,6 +24,14 @@ export function isPendingMessageId(id: string): boolean {
   return id.startsWith(PENDING_MESSAGE_PREFIX);
 }
 
+/**
+ * The id of the message a row stands for: a pending row is the message you
+ * just sent, under the id the composer minted for it.
+ */
+export function sentMessageIdOf(id: string): string {
+  return isPendingMessageId(id) ? id.slice(PENDING_MESSAGE_PREFIX.length) : id;
+}
+
 export function appendPendingMessages(
   feed: ReadonlyArray<ThreadFeedEntry>,
   pending: ReadonlyArray<PendingMessage>,

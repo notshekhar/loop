@@ -1,4 +1,10 @@
 import "./src/lib/es2023Polyfills";
+// A synchronous, SQLite-backed `localStorage`. loop's shared handlers keep
+// small durable state there — above all which loop session a chat started
+// on the phone became. React Native has none, so the phone forgot it on every
+// restart: a chat created here, or a send still waiting in the outbox, then
+// pointed at an id the host had never heard of and sat on "Loading messages".
+import "expo-sqlite/localStorage/install";
 import { registerRootComponent } from "expo";
 import "react-native-gesture-handler";
 import { LogBox } from "react-native";

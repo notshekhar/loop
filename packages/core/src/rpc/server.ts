@@ -818,6 +818,13 @@ export class RpcServer {
             },
             "session.send": (params) => {
                 const id = String(params.sessionId);
+                // Nothing to say is a client bug, not a turn: running it put an
+                // empty user message in the transcript and sent the model the
+                // conversation with nothing new at the end.
+                const hasImages = Array.isArray(params.images) && params.images.length > 0;
+                if (String(params.input ?? "").trim() === "" && !hasImages) {
+                    throw new Error("session.send needs a message: `input` is empty and there are no images");
+                }
                 // Open in the TUI: it runs there, on screen, and streams to
                 // every client through publishLive. A turn already running
                 // there queues this one rather than refusing it — the TUI's

@@ -26,6 +26,8 @@ import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { sentMessageIdOf } from "../../lib/pendingMessages";
+import { takeJustSent } from "../../lib/justSent";
 import type {
   PendingApproval,
   PendingUserInput,
@@ -237,7 +239,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   }, [selectedThreadKey]);
 
   useEffect(() => {
-    setAnchorMessageId(null);
+    // A new chat's first message was sent from the New Thread screen.
+    setAnchorMessageId(takeJustSent(selectedThreadKey) as MessageId | null);
     lastScrolledAnchorMessageIdRef.current = null;
     freeze.set(false);
   }, [freeze, selectedThreadKey]);
@@ -247,7 +250,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       anchorMessageId === null ||
       lastScrolledAnchorMessageIdRef.current === anchorMessageId ||
       contentPresentationKind !== "ready" ||
-      !selectedThreadFeed.some((entry) => entry.type === "message" && entry.id === anchorMessageId)
+      !selectedThreadFeed.some(
+        (entry) => entry.type === "message" && sentMessageIdOf(entry.id) === anchorMessageId,
+      )
     ) {
       return;
     }

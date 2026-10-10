@@ -331,6 +331,36 @@ describe("host-wide session status", () => {
     });
 });
 
+describe("session.send", () => {
+    useTempSessionDb();
+
+    test("an empty message is refused rather than run as a turn", async () => {
+        const server = new RpcServer();
+        const client = fakeTransport();
+        const fs = server.attach(client);
+        const cwd = mkdtempSync(join(tmpdir(), "loop-rpc-"));
+        fs.feed(
+            JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "session.create",
+                params: { cwd, provider: "nope", model: "nope/model" },
+            }) + "\n",
+        );
+        await until(() => !!client.response(1), "session.create response");
+        const sid = (client.response(1) as { result: { sessionId: string } }).result.sessionId;
+        fs.feed(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "session.send", params: { sessionId: sid, input: "  " } }) + "\n");
+        fs.feed(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "session.send", params: { sessionId: sid, text: "wrong field" } }) + "\n");
+        await until(() => !!client.response(2) && !!client.response(3), "send responses");
+        for (const id of [2, 3]) {
+            expect((client.response(id) as { error?: { message: string } }).error?.message).toContain("needs a message");
+        }
+        // Nothing ran: no turn events reached the client.
+        expect(client.events()).toHaveLength(0);
+        server.dispose();
+    });
+});
+
 describe("startWebServer", () => {
     useTempSessionDb();
 

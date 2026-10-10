@@ -837,11 +837,17 @@ export function subscribeLiveTurns(host: LoopHost = defaultLoopHost): void {
   host.onEvent((event) => {
     const part = event.part as LoopTurnPart | undefined;
     if (!part || typeof part.type !== "string") return;
-    if (typeof event.seq === "number") {
-      // Guarded so a replayed event that arrives out of order cannot rewind
-      // the resume point and make the next attach ask for it all again.
+    // seq 0 is not a turn event (the host-wide `session.status` news).
+    if (typeof event.seq === "number" && event.seq > 0) {
       const seen = lastSeqs.get(event.sessionId) ?? 0;
-      if (event.seq > seen) lastSeqs.set(event.sessionId, event.seq);
+      // Already applied. A second `session.attach` on a socket that is
+      // already subscribed replays the ring after the seq it was given —
+      // and everything after that seq was ALSO on its way to this client
+      // live. Applying both doubled the text: on the phone, a new chat's
+      // first reply rendered twice, the second copy with extra words, and
+      // because it never matched the transcript it stayed after the turn.
+      if (event.seq <= seen) return;
+      lastSeqs.set(event.sessionId, event.seq);
     }
     apply(event.sessionId, part);
   });
@@ -866,6 +872,19 @@ export function lastEventSeq(sessionId: string): number {
  */
 export function forgetEventSeq(sessionId: string): void {
   lastSeqs.delete(sessionId);
+}
+
+/**
+ * Take the host's word for where its event counter is.
+ *
+ * The counter is per host PROCESS: a restarted `loop serve` numbers from 1
+ * again, and a client still holding seq 500 would drop every new event as
+ * already applied. `session.attach` answers with the host's current seq; one
+ * below what this client holds can only mean the counter started over.
+ */
+export function syncEventSeq(sessionId: string, hostSeq: number): void {
+  const seen = lastSeqs.get(sessionId);
+  if (seen !== undefined && hostSeq < seen) lastSeqs.set(sessionId, hostSeq);
 }
 
 /**

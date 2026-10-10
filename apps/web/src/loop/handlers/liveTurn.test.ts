@@ -451,6 +451,38 @@ describe("a reconnected host", () => {
     expect(turn && liveTurnText(turn)).toBe("before after");
   });
 
+  it("an event replayed after it already arrived live is applied once", async () => {
+    const { subscribeLiveTurns } = await import("./liveTurn.ts");
+    const id = session();
+    const host = fakeHost("env-replay");
+    subscribeLiveTurns(host as never);
+    host.emit(id, 1, { type: "session-running", data: { running: true } });
+    host.emit(id, 2, { type: "text-delta", data: "one " });
+    host.emit(id, 3, { type: "text-delta", data: "two " });
+    // A second attach on the same socket, asking from seq 1: the host
+    // replays 2 and 3, which this client already has.
+    host.emit(id, 2, { type: "text-delta", data: "one " });
+    host.emit(id, 3, { type: "text-delta", data: "two " });
+    host.emit(id, 4, { type: "text-delta", data: "three" });
+    const turn = readLiveTurn(id);
+    expect(turn && liveTurnText(turn)).toBe("one two three");
+  });
+
+  it("a restarted host numbering from 1 again still streams", async () => {
+    const { subscribeLiveTurns, syncEventSeq, lastEventSeq } = await import("./liveTurn.ts");
+    const id = session();
+    const host = fakeHost("env-restart");
+    subscribeLiveTurns(host as never);
+    host.emit(id, 40, { type: "session-running", data: { running: true } });
+    host.emit(id, 41, { type: "text-delta", data: "old" });
+    // The host restarted; attach answered with its new counter.
+    syncEventSeq(id, 0);
+    expect(lastEventSeq(id)).toBe(0);
+    host.emit(id, 1, { type: "text-delta", data: " new" });
+    const turn = readLiveTurn(id);
+    expect(turn && liveTurnText(turn)).toBe("old new");
+  });
+
   it("subscribing the same host object twice does not double events", async () => {
     const { subscribeLiveTurns } = await import("./liveTurn.ts");
     const id = session();

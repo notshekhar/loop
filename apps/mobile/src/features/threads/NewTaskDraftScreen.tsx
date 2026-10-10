@@ -2,7 +2,11 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, usePreventRemove } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
-import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
+import {
+  KeyboardAvoidingView,
+  KeyboardStickyView,
+  useKeyboardState,
+} from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useFontFamily } from "../../lib/useFontFamily";
@@ -27,6 +31,8 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { ComposerSurface } from "./ThreadComposer";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
+import { rememberJustSent } from "../../lib/justSent";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
 import {
   applyProviderOptionMenuEvent,
@@ -807,6 +813,17 @@ export function NewTaskDraftScreen(props: {
       threadTitle: deriveThreadTitleFromPrompt(initialMessageText),
       projectTitle: selectedProject.title,
     });
+    // Minted here rather than inside the hook: the thread screen this hands
+    // over to needs the message's id to anchor it (lib/justSent.ts).
+    const turnMetadata = editingPendingTask
+      ? {
+          threadId: editingPendingTask.threadId,
+          commandId: editingPendingTask.commandId,
+          messageId: editingPendingTask.messageId,
+          createdAt: editingPendingTask.createdAt,
+        }
+      : makeTurnCommandMetadata();
+    const turnMessageId = String(turnMetadata.messageId);
     const result = await createProjectThread({
       project: selectedProject,
       modelSelection,
@@ -818,16 +835,7 @@ export function NewTaskDraftScreen(props: {
       interactionMode,
       initialMessageText,
       initialAttachments: draft.attachments,
-      ...(editingPendingTask
-        ? {
-            turnMetadata: {
-              threadId: editingPendingTask.threadId,
-              commandId: editingPendingTask.commandId,
-              messageId: editingPendingTask.messageId,
-              createdAt: editingPendingTask.createdAt,
-            },
-          }
-        : {}),
+      turnMetadata,
     });
     flow.setSubmitting(false);
 
@@ -852,6 +860,10 @@ export function NewTaskDraftScreen(props: {
     } else {
       clearComposerDraftContent(draftKey, { clearWorkspaceSelection: true });
     }
+    rememberJustSent(
+      scopedThreadKey(result.value.environmentId, result.value.threadId),
+      turnMessageId,
+    );
     navigation.dispatch(
       StackActions.replace("Thread", {
         environmentId: String(result.value.environmentId),
@@ -1004,9 +1016,12 @@ export function NewTaskDraftScreen(props: {
         <NativeStackScreenOptions options={{ headerShown: false }} />
         <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
 
-        <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
-          <View className="flex-1" />
-
+        {/* Pinned to the keyboard the way the thread screen's composer is
+            (KeyboardStickyView). KeyboardAvoidingView's padding came up a
+            toolbar short on Android, so the send button sat under the
+            keyboard and a first message could not be sent while typing. */}
+        <View className="flex-1" />
+        <KeyboardStickyView offset={{ closed: 0, opened: 0 }}>
           <View
             className="px-4 pt-2"
             style={{
@@ -1070,7 +1085,7 @@ export function NewTaskDraftScreen(props: {
               </ComposerToolbarRow>
             ) : null}
           </View>
-        </KeyboardAvoidingView>
+        </KeyboardStickyView>
       </View>
     );
   }
