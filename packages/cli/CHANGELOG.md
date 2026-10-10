@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.6] - 2026-10-10
+
+### Fixed
+
+- **A streaming reply shows in the order it was written.** On the phone, all of a reply's text appeared above every tool call it made until the reply finished; it now reads text, tool, text, tool, as it streams — the same order as the terminal.
+- **A streaming reply is one turn.** Mid-reply, the steps loop had already saved and the part still streaming showed as two separate turns, each with its own copy button, until the turn ended. They are one turn throughout, on the phone and the desktop.
+
 ## [0.21.5] - 2026-10-10
 
 ### Added
