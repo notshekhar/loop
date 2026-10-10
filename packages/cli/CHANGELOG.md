@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.21.7] - 2026-10-10
+
+### Added
+
+- **Context & usage on the phone.** A thread's header opens a sheet with what the terminal's `/context`, `/cost` and `/steak` show: how full the context is and what fills it, what the session cost, your spend, and the year's tokens and streaks.
+- **Add another computer from the desktop.** Settings → Remote hosts → Add host takes the address and six-digit code that `loop serve` or `/rc` prints on that computer, and its sessions show up next to this one's.
+
+### Changed
+
+- **One transcript for every client.** The computer running loop now keeps each session's conversation as one ordered message per turn and serves it to the phone and the desktop, which apply each live update once. A turn reads the same live and after a reload, in the order it was written, on every client. Older hosts still work.
+- **Streaming replies redraw less on the desktop.** A reply is rendered block by block, so only the paragraph being written changes while it streams, and a finished code block highlights straight away.
+
+### Fixed
+
+- **Token counts go on to B and T.** The terminal stopped at B, and the desktop's usage page at M ("1000.0M"); its context popover and compaction row stopped at k ("1200k"). All now read 1.4B, 2.1T.
+
 ## [0.21.6] - 2026-10-10
 
 ### Fixed
