@@ -23,7 +23,7 @@ mock.module("../src/settings", () => ({
     },
 }));
 
-const { getOrCreateServeToken, isLoopbackHost, startWebServer } = await import("../src/rpc/serve");
+const { getOrCreateServeToken, isLoopbackHost, remoteTerminalFor, startWebServer } = await import("../src/rpc/serve");
 const { writeAttachmentPayloads, RpcServer } = await import("../src/rpc/server");
 const { MIN_CLIENT_PROTOCOL, PROTOCOL_VERSION } = await import("../src/rpc/protocol");
 import type { ServeHandle } from "../src/rpc/serve";
@@ -331,6 +331,18 @@ describe("host-wide session status", () => {
     });
 });
 
+describe("remoteTerminalFor", () => {
+    test("paired devices get the terminal unless it was turned off", () => {
+        expect(remoteTerminalFor({}, undefined)).toBe(true);
+        expect(remoteTerminalFor({}, true)).toBe(true);
+        expect(remoteTerminalFor({}, false)).toBe(false);
+        // One run's flag beats the setting, either way.
+        expect(remoteTerminalFor({ terminal: true }, false)).toBe(true);
+        expect(remoteTerminalFor({ "no-terminal": true }, true)).toBe(false);
+        expect(remoteTerminalFor({ terminal: true, "no-terminal": true }, undefined)).toBe(false);
+    });
+});
+
 describe("session.send", () => {
     useTempSessionDb();
 
@@ -515,9 +527,15 @@ describe("startWebServer", () => {
 
     test("WS speaks JSON-RPC: server.info handshake + session.list", async () => {
         const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/ws?token=${token}`);
+        // The next RESPONSE: create and rename also announce `session.status`
+        // to every client (a beat after the reply), and taking one of those
+        // for the reply made this test fail now and then.
         const next = () =>
             new Promise<Record<string, unknown>>((resolve, reject) => {
-                ws.onmessage = (e) => resolve(JSON.parse(String(e.data)) as Record<string, unknown>);
+                ws.onmessage = (e) => {
+                    const message = JSON.parse(String(e.data)) as Record<string, unknown>;
+                    if (message.id !== undefined) resolve(message);
+                };
                 ws.onerror = () => reject(new Error("ws error"));
                 ws.onclose = () => reject(new Error("ws closed"));
             });
@@ -714,7 +732,7 @@ describe("serve workspace terminal gate", () => {
         const workspace = createServeWorkspace(new RpcServer(), () => {});
         await expect(
             workspace.call("workspace.pty.open", { threadId: "t", terminalId: "x", cwd: tmpdir() }, false),
-        ).rejects.toThrow("--terminal");
+        ).rejects.toThrow("terminal for other devices");
         // Everything else is still answered for that client.
         const dir = mkdtempSync(join(tmpdir(), "loop-ws-gate-"));
         expect(await workspace.call("workspace.fs.browse", { partialPath: dir + "/" }, false)).not.toBeNull();

@@ -104,10 +104,10 @@ export interface AppSettings {
      * design: anyone with the URL+token controls this machine. Default OFF. */
     serve?: boolean;
     /** Offer the terminal to OTHER devices over `loop serve` / `/rc` (this
-     * machine always has it). The token already lets a device run the agent,
-     * which runs shell commands; a live shell is the further step a leaked
-     * link would give, so it is its own choice. Default OFF; `--terminal`
-     * turns it on for one run. */
+     * machine always has it). Default ON: a paired device can already run
+     * the agent, which runs shell commands, so withholding the shell bought
+     * little and made the app's terminal look broken. `false` (or
+     * `loop serve --no-terminal` for one run) keeps it to this machine. */
     serveTerminal?: boolean;
     /** Todo tool: a visible checklist the agent maintains during multi-step
      * turns, pinned above the editor. Default OFF. */

@@ -36,6 +36,7 @@ import {
     SERVE_DEFAULT_PORT,
     setSetting,
     startWebServer,
+    remoteTerminalFor,
     tailnetIdentity,
     terminalQr,
     TURN_EVENT_NAMES,
@@ -121,6 +122,8 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
     const { slots, roster, deps, tui } = host;
     const clients = new Map<string, RemoteHostClient>();
     let rc: ServeHandle | null = null;
+    /** Whether the running remote control offers paired devices the terminal. */
+    let rcTerminal = true;
 
     const say = (text: string): void => {
         deps.history.addSystem(text);
@@ -642,7 +645,7 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
             ...(tailnetUrl ? [`  tailnet   ${tailnetUrl}`] : []),
             dim("or paste a link into another loop's /hosts"),
             dim(
-                getSetting("serveTerminal") === true
+                rcTerminal
                     ? "terminal: offered to paired devices"
                     : "terminal: this machine only — turn on \"terminal for other devices\" in /settings, then /rc off and /rc",
             ),
@@ -672,22 +675,30 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
         if (!getSetting("serve")) {
             const pick = await deps.selectOnce(
                 [
-                    { value: "on", label: "Turn on remote control", description: "anyone with the link controls this machine" },
                     {
-                        value: "terminal",
-                        label: "Turn on, with the terminal",
-                        description: "paired devices can also open a shell here (the app's terminal)",
+                        value: "on",
+                        label: "Turn on remote control",
+                        description: "anyone with the link controls this machine, terminal included",
+                    },
+                    {
+                        value: "chat",
+                        label: "Turn on, without the terminal",
+                        description: "paired devices get chat only, no shell here",
                     },
                     { value: "no", label: "Cancel" },
                 ],
                 "Remote control",
             );
-            if (pick?.value !== "on" && pick?.value !== "terminal") return;
+            if (pick?.value !== "on" && pick?.value !== "chat") return;
             setSetting("serve", true);
-            if (pick.value === "terminal") setSetting("serveTerminal", true);
+            if (pick.value === "chat") setSetting("serveTerminal", false);
         }
         // Reachable from the phone means a network bind; the token is the lock.
         const bind = /--local\b/.test(sub) ? "127.0.0.1" : "0.0.0.0";
+        rcTerminal = remoteTerminalFor(
+            { terminal: /--terminal\b/.test(sub), "no-terminal": /--no-terminal\b/.test(sub) },
+            getSetting("serveTerminal"),
+        );
         let lastError: unknown;
         for (let port = SERVE_DEFAULT_PORT; port < SERVE_DEFAULT_PORT + 5 && !rc; port++) {
             // macOS lets 127.0.0.1:N bind beside another process's *:N, and
@@ -698,9 +709,10 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
                 rc = startWebServer({
                     host: bind,
                     port,
-                    // The app's terminal, for other devices: /settings, or
-                    // `/rc --terminal` for this run.
-                    remoteTerminal: getSetting("serveTerminal") === true || /--terminal\b/.test(sub),
+                    // The app's terminal, for other devices: on unless
+                    // /settings turned it off (`/rc --terminal` overrides
+                    // that for this run, `/rc --no-terminal` the reverse).
+                    remoteTerminal: rcTerminal,
                     ...(host.version ? { version: host.version } : {}),
                     live: liveSessions,
                 });

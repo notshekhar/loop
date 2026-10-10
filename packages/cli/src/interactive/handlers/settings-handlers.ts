@@ -66,7 +66,7 @@ export function createSettingsHandlers(state: AppState, deps: AppDeps): Settings
         askUser: false,
         webSearch: false,
         serve: false,
-        serveTerminal: false,
+        serveTerminal: true,
         todos: false,
         artifacts: false,
         backgroundShells: false,

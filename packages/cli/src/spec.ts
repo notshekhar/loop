@@ -87,7 +87,12 @@ export const FLAG_SPECS: Record<string, FlagSpec> = {
     terminal: {
         name: "terminal",
         takesValue: false,
-        description: "serve: offer the terminal to other machines too (this machine always gets it)",
+        description: "serve: offer the terminal to other devices even if /settings turned it off",
+    },
+    "no-terminal": {
+        name: "no-terminal",
+        takesValue: false,
+        description: "serve: keep the terminal to this machine (paired devices get chat only)",
     },
     host: { name: "host", takesValue: true, description: "Interface to bind (default 0.0.0.0)" },
     port: { name: "port", takesValue: true, description: "Port to bind" },
@@ -140,7 +145,7 @@ export const COMMANDS: CommandSpec[] = [
         aliases: ["gateway", "telegram"],
         subcommands: ["status", "stop", "telegram"],
     },
-    { name: "serve", description: "Web UI + WebSocket RPC", flags: ["host", "port", "terminal"] },
+    { name: "serve", description: "Web UI + WebSocket RPC", flags: ["host", "port", "terminal", "no-terminal"] },
     { name: "rpc", description: "JSON-RPC server", subcommands: ["stop"], flags: ["socket"] },
     { name: "install", description: "Install an extension" },
     { name: "link", description: "Link a local extension" },

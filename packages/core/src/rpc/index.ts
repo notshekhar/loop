@@ -9,6 +9,7 @@ export {
 } from "./server";
 export {
     startWebServer,
+    remoteTerminalFor,
     getOrCreateServeToken,
     isLoopbackHost,
     lanAddresses,

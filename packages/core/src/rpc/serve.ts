@@ -131,6 +131,20 @@ interface WsData {
     close: (() => void) | null;
 }
 
+/**
+ * Whether paired devices get the terminal: on unless the `serveTerminal`
+ * setting says otherwise, with `--terminal` / `--no-terminal` overriding the
+ * setting for one run (`--no-terminal` wins if both are given).
+ */
+export function remoteTerminalFor(
+    flags: { readonly terminal?: unknown; readonly "no-terminal"?: unknown },
+    setting: boolean | undefined,
+): boolean {
+    if (flags["no-terminal"] === true) return false;
+    if (flags.terminal === true) return true;
+    return setting !== false;
+}
+
 export function startWebServer(
     opts: {
         host?: string;

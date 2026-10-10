@@ -165,9 +165,11 @@ back.
   does not do its own.
 - `/rc` prints the URL + token and a QR code; `/rc off` stops it; the status
   line shows `rc on` while it runs.
-- Files, git and the terminal are host-machine capabilities. Exposed only behind
-  their capability flag, and the PTY only to localhost/Tailscale clients unless
-  explicitly opened up.
+- Files, git and the terminal are host-machine capabilities. Paired devices get
+  the terminal by default (they can already run the agent, which runs shell
+  commands); `loop serve --no-terminal`, "Turn on, without the terminal" at the
+  `/rc` prompt, or "terminal for other devices: off" in `/settings` keeps it to
+  this machine.
 - Slash commands from a remote client act on whatever the TUI shows, so remote
   clients get chat, new session, cancel, answers and an explicit allow-list —
   not the whole command set.
