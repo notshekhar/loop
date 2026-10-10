@@ -1698,8 +1698,8 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
         <EmptyTitle>No other computers yet</EmptyTitle>
         <EmptyDescription>
           {cloudEnabled
-            ? "Run `loop serve` (or /rc) on the other computer, then click “Add host” and type its address and 6-digit code — or connect one from Loop Connect."
-            : "Run `loop serve` (or /rc) on the other computer, then click “Add host” and type its address and 6-digit code."}
+            ? "Run loop serve (or /rc) on the other computer, then click “Add host” and type its address and 6-digit code — or connect one from Loop Connect."
+            : "Run loop serve (or /rc) on the other computer, then click “Add host” and type its address and 6-digit code."}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>

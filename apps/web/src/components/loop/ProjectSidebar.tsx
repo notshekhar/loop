@@ -47,11 +47,11 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import { isDesktopShell } from "../../env";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useClientSettings } from "../../hooks/useSettings";
-import { useProjects, useThreadShells } from "../../state/entities";
 import { useUiStateStore } from "../../uiStateStore";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { SettingsSidebarNav } from "../settings/SettingsSidebarNav";
 import { SidebarChromeFooter, SidebarChromeHeader } from "../sidebar/SidebarChrome";
+import { ComputerPicker, useScopedSidebarEntities } from "../sidebar/ComputerPicker";
 import {
   SidebarContent,
   SidebarGroup,
@@ -388,8 +388,8 @@ const NeedsYouShelf = memo(function NeedsYouShelf({
 });
 
 export default function ProjectSidebar() {
-  const projects = useProjects();
-  const threads = useThreadShells();
+  // The chosen computer's projects and threads (ComputerPicker).
+  const { projects, threads } = useScopedSidebarEntities();
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
   const lastVisitedAtByKey = useUiStateStore((state) => state.threadLastVisitedAtById);
   const rows = useMemo(() => buildProjectSidebarRows({ projects, threads }), [projects, threads]);
@@ -504,6 +504,7 @@ export default function ProjectSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupContent>
+            <ComputerPicker />
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton onClick={() => openCommandPalette()}>

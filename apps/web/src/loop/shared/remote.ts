@@ -72,6 +72,32 @@ export type RemotePairingTargetError = typeof RemotePairingTargetError.Type;
 const hasSupportedRemoteBackendProtocol = (url: URL): boolean =>
   SUPPORTED_REMOTE_BACKEND_PROTOCOLS.has(url.protocol);
 
+/**
+ * The scheme for an address typed without one. `loop serve` speaks plain http
+ * on a port (it prints `host 100.x.y.z:5667`), so an IP, `localhost`, a `.local`
+ * name or anything with a port is http; a bare name — a Tailscale HTTPS
+ * `*.ts.net`, a reverse proxy — is https. Assuming https for all of them made
+ * the address loop serve prints fail to connect.
+ */
+export function defaultRemoteScheme(address: string): "http" | "https" {
+  let hostname: string;
+  let port: string;
+  try {
+    const parsed = new URL(`http://${address.trim().replace(/^\/+/, "")}`);
+    hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    port = parsed.port;
+  } catch {
+    return "https";
+  }
+  if (port !== "") return "http";
+  if (hostname === "localhost" || hostname.endsWith(".local")) return "http";
+  if (hostname.includes(":")) return "http";
+  const octets = hostname.split(".");
+  const ipv4 =
+    octets.length === 4 && octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255);
+  return ipv4 ? "http" : "https";
+}
+
 const normalizeRemoteBaseUrl = (
   rawValue: string,
   source: RemoteBackendUrlInvalidError["source"],
@@ -84,7 +110,7 @@ const normalizeRemoteBaseUrl = (
   const withoutLeadingSlashes = trimmed.replace(/^\/+/, "");
   const normalizedInput = /^[a-zA-Z][a-zA-Z\d+-]*:\/\//.test(withoutLeadingSlashes)
     ? withoutLeadingSlashes
-    : `https://${withoutLeadingSlashes}`;
+    : `${defaultRemoteScheme(withoutLeadingSlashes)}://${withoutLeadingSlashes}`;
   let url: URL;
   try {
     url = new URL(normalizedInput);

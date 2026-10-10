@@ -34,11 +34,11 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import { isDesktopShell } from "../../env";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useClientSettings } from "../../hooks/useSettings";
-import { useProjects, useThreadShells } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useUiStateStore } from "../../uiStateStore";
 import { cn } from "../../lib/utils";
 import { SidebarChromeFooter, SidebarChromeHeader } from "../sidebar/SidebarChrome";
+import { ComputerPicker, useScopedSidebarEntities } from "../sidebar/ComputerPicker";
 import {
   SidebarContent,
   SidebarGroup,
@@ -115,8 +115,8 @@ const ThreadSection = memo(function ThreadSection({
 });
 
 export default function FocusedSidebar() {
-  const projects = useProjects();
-  const threads = useThreadShells();
+  // The chosen computer's projects and threads (ComputerPicker).
+  const { projects, threads } = useScopedSidebarEntities();
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
   const lastVisitedAtByKey = useUiStateStore((state) => state.threadLastVisitedAtById);
 
@@ -237,6 +237,7 @@ export default function FocusedSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupContent className="flex flex-col gap-1">
+            <ComputerPicker />
             <div
               className="flex min-w-0 items-center gap-1"
               onContextMenu={(event) => {

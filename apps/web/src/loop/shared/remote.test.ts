@@ -5,6 +5,7 @@ import {
   RemoteBackendUrlMissingError,
   RemotePairingTokenMissingError,
   RemotePairingUrlInvalidError,
+  defaultRemoteScheme,
   resolveRemotePairingTarget,
 } from "./remote.ts";
 
@@ -80,8 +81,9 @@ describe("remote", () => {
       }),
     ).toEqual({
       credential: "pairing-token",
-      httpBaseUrl: "https://remote.example.com:3000/",
-      wsBaseUrl: "wss://remote.example.com:3000/",
+      // A port means loop serve, which is plain http (defaultRemoteScheme).
+      httpBaseUrl: "http://remote.example.com:3000/",
+      wsBaseUrl: "ws://remote.example.com:3000/",
     });
   });
 
@@ -131,8 +133,8 @@ describe("remote", () => {
       }),
     ).toEqual({
       credential: "pairing-token",
-      httpBaseUrl: "https://myserver.com:3000/",
-      wsBaseUrl: "wss://myserver.com:3000/",
+      httpBaseUrl: "http://myserver.com:3000/",
+      wsBaseUrl: "ws://myserver.com:3000/",
     });
   });
 
@@ -219,5 +221,24 @@ describe("remote", () => {
     expect(hostError).toBeInstanceOf(RemoteBackendUrlInvalidError);
     expect(hostError).toMatchObject({ source: "direct-host" });
     expect((hostError as RemoteBackendUrlInvalidError).cause).toBeInstanceOf(TypeError);
+  });
+});
+
+describe("defaultRemoteScheme", () => {
+  it("uses http for the address loop serve prints, https for a bare name", () => {
+    expect(defaultRemoteScheme("100.101.102.103:5667")).toBe("http");
+    expect(defaultRemoteScheme("192.168.0.106")).toBe("http");
+    expect(defaultRemoteScheme("localhost")).toBe("http");
+    expect(defaultRemoteScheme("devbox:5667")).toBe("http");
+    expect(defaultRemoteScheme("shekhar-mbp.local")).toBe("http");
+    expect(defaultRemoteScheme("[::1]:5667")).toBe("http");
+    expect(defaultRemoteScheme("shekhar-mbp.tail1234.ts.net")).toBe("https");
+    expect(defaultRemoteScheme("loop.example.com")).toBe("https");
+  });
+
+  it("is what a host typed without a scheme pairs over", () => {
+    expect(
+      resolveRemotePairingTarget({ host: "100.101.102.103:5667", pairingCode: "123456" }).httpBaseUrl,
+    ).toBe("http://100.101.102.103:5667/");
   });
 });
