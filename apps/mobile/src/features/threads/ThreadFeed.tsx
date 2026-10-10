@@ -63,7 +63,7 @@ import {
   type SelectableMarkdownSkill,
 } from "../../native/SelectableMarkdownText";
 
-import { isPendingMessageId, sentMessageIdOf } from "../../lib/pendingMessages";
+import { isPendingMessageId } from "../../lib/pendingMessages";
 import { AppText as Text } from "../../components/AppText";
 import { CopyTextButton } from "../../components/CopyTextButton";
 import {
@@ -1563,11 +1563,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       resolveChatListAnchoredEndSpace(
         visibleFeed,
         props.anchorMessageId,
-        // The message just sent is first a pending row ("queued:<id>") and
-        // then loop's own — anchoring only the latter left the list chasing
-        // the bottom until the host answered, then jumping. Both are the same
-        // message, so both hold the anchor.
-        (entry) => (entry.type === "message" ? sentMessageIdOf(entry.id) : null),
+        (entry) => (entry.type === "message" ? entry.id : null),
         { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
       ),
     [visibleFeed, props.anchorMessageId, anchorTopInset],

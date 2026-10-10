@@ -1,11 +1,10 @@
 /**
- * The message a screen just sent into a thread another screen is about to show.
+ * A chat the New Thread screen just created, until the thread screen takes it.
  *
- * Sending from an open thread anchors that message to the top of the view and
- * lets the reply grow beneath it, as on desktop. A new chat's first message is
- * sent from the New Thread screen, which then hands over to the thread screen
- * — and without a hand-off the thread screen had nothing to anchor, so the
- * reply pushed the message up off screen as it streamed.
+ * The host lists a new session a beat after the turn starts, and until then
+ * the thread route has no thread to show — it said "Thread unavailable" for a
+ * moment on every new chat. While a hand-off is pending the route shows the
+ * opening state instead.
  */
 
 const justSent = new Map<string, string>();

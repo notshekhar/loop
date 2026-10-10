@@ -26,7 +26,6 @@ import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { sentMessageIdOf } from "../../lib/pendingMessages";
 import { takeJustSent } from "../../lib/justSent";
 import type {
   PendingApproval,
@@ -171,9 +170,6 @@ function useStreamingHaptics(threadId: ThreadId, feed: ReadonlyArray<ThreadFeedE
   }, [threadId, feed]);
 }
 
-/** The most an anchor scroll waits on the keyboard, or on the list, before letting go. */
-const ANCHOR_WAIT_MS = 1_200;
-
 export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const insets = useSafeAreaInsets();
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
@@ -242,8 +238,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   }, [selectedThreadKey]);
 
   useEffect(() => {
-    // A new chat's first message was sent from the New Thread screen.
-    setAnchorMessageId(takeJustSent(selectedThreadKey) as MessageId | null);
+    // Clears the New Thread screen's hand-off (lib/justSent.ts), which only
+    // has to keep the route on "opening" until this screen takes over.
+    takeJustSent(selectedThreadKey);
+    setAnchorMessageId(null);
     lastScrolledAnchorMessageIdRef.current = null;
     freeze.set(false);
   }, [freeze, selectedThreadKey]);
@@ -253,9 +251,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       anchorMessageId === null ||
       lastScrolledAnchorMessageIdRef.current === anchorMessageId ||
       contentPresentationKind !== "ready" ||
-      !selectedThreadFeed.some(
-        (entry) => entry.type === "message" && sentMessageIdOf(entry.id) === anchorMessageId,
-      )
+      !selectedThreadFeed.some((entry) => entry.type === "message" && entry.id === anchorMessageId)
     ) {
       return;
     }
@@ -271,18 +267,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       // updates while it runs, and a close event swallowed by that freeze
       // leaves the keyboard padding permanently applied — overshooting the
       // anchor and leaving a phantom bottom inset once the reply streams in.
-      //
-      // Every wait is bounded and the freeze always lifts. Neither promise is
-      // guaranteed to settle — dismiss() with no keyboard up, or a scroll on a
-      // list that remounted as the thread finished loading — and an unsettled
-      // one left `freeze` on for good: a new chat opened as a blank, unscrollable
-      // feed with the composer stranded at the keyboard's old height.
-      const settle = (promise: Promise<unknown>) =>
-        Promise.race([promise, new Promise((resolve) => setTimeout(resolve, ANCHOR_WAIT_MS))]);
-      const keyboardClosed = KeyboardController.isVisible()
-        ? settle(KeyboardController.dismiss())
-        : Promise.resolve();
-      void keyboardClosed
+      void KeyboardController.dismiss()
         .then(() => {
           if (
             selectedThreadKeyRef.current !== targetThreadKey ||
@@ -290,14 +275,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           ) {
             return;
           }
-          return settle(scrollMessageToEnd({ animated: true, closeKeyboard: false }));
+          return scrollMessageToEnd({ animated: true, closeKeyboard: false });
         })
         .catch(() => {
-          if (lastScrolledAnchorMessageIdRef.current === anchorMessageId) {
-            lastScrolledAnchorMessageIdRef.current = null;
+          if (
+            selectedThreadKeyRef.current !== targetThreadKey ||
+            lastScrolledAnchorMessageIdRef.current !== anchorMessageId
+          ) {
+            return;
           }
-        })
-        .finally(() => freeze.set(false));
+          lastScrolledAnchorMessageIdRef.current = null;
+          freeze.set(false);
+        });
     });
     return () => cancelAnimationFrame(frame);
   }, [

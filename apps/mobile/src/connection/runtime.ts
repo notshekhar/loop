@@ -42,4 +42,10 @@ const connectionLayer = mobileBackgroundActivityReporterLayer.pipe(
 export const connectionAtomRuntime: Atom.AtomRuntime<
   Layer.Success<ConnectionLayerSource>,
   Layer.Error<ConnectionLayerSource>
-> = Atom.runtime(connectionLayer);
+> = Atom.keepAlive(Atom.runtime(connectionLayer));
+// Kept alive: the connection layer is the app's one registry of machines and
+// their supervisors, and it lives as long as the app. Left to the default, the
+// runtime was disposed whenever its subscribers dipped to zero while the first
+// screens mounted, and built again — MEASURED three builds at launch, two of
+// them each running a supervisor for the same machine: two prepares, two
+// tickets, two sockets, and a first connect stalled behind the contention.
