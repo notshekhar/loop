@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.21.8] - 2026-10-10
+
+### Added
+
+- **Switch the desktop between computers.** Once a host is added, the top of the sidebar picks All computers, This machine, or the host. It narrows the sidebar, and a new chat, to that computer — so you can always get back to this one. Every sidebar style has it, and it is remembered.
+
+### Fixed
+
+- **The address `loop serve` prints can be added on the desktop.** An address typed without `http://` was always tried over https, so `100.x.y.z:5667` failed to connect. An IP, `localhost`, a `.local` name or an address with a port now uses http, as loop serve does; a bare name such as a Tailscale `*.ts.net` address still uses https. The phone follows the same rule.
+
 ## [0.21.7] - 2026-10-10
 
 ### Added
