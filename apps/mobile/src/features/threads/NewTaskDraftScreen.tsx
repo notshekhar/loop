@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
 import {
   KeyboardAvoidingView,
+  KeyboardController,
   KeyboardStickyView,
   useKeyboardState,
 } from "react-native-keyboard-controller";
@@ -864,6 +865,15 @@ export function NewTaskDraftScreen(props: {
       scopedThreadKey(result.value.environmentId, result.value.threadId),
       turnMessageId,
     );
+    // Close the keyboard here, not mid-transition: the thread screen pins its
+    // composer to the keyboard, and one that opens while this keyboard is
+    // still sliding away measured it as open and kept the composer up there.
+    if (KeyboardController.isVisible()) {
+      await Promise.race([
+        KeyboardController.dismiss(),
+        new Promise((resolve) => setTimeout(resolve, 600)),
+      ]);
+    }
     navigation.dispatch(
       StackActions.replace("Thread", {
         environmentId: String(result.value.environmentId),

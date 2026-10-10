@@ -14,6 +14,11 @@ export function rememberJustSent(threadKey: string, messageId: string): void {
   justSent.set(threadKey, messageId);
 }
 
+/** Whether a send into `threadKey` is waiting to be shown. */
+export function hasJustSent(threadKey: string): boolean {
+  return justSent.has(threadKey);
+}
+
 /** The message just sent into `threadKey`, once: a later open is not a send. */
 export function takeJustSent(threadKey: string): string | null {
   const messageId = justSent.get(threadKey) ?? null;

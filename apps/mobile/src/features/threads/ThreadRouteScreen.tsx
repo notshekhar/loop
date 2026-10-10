@@ -1,4 +1,5 @@
 import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { hasJustSent } from "../../lib/justSent";
 import {
   StackActions,
   useFocusEffect,
@@ -164,7 +165,9 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
     routeConnectionState === "connecting" ||
     routeConnectionState === "reconnecting";
 
-  if (stillHydrating) {
+  // A chat created a moment ago is not in the thread list until the host's
+  // next listing arrives; it is opening, not unavailable.
+  if (stillHydrating || (routeThreadKey !== null && hasJustSent(routeThreadKey))) {
     return <OpeningThreadLoadingScreen />;
   }
 

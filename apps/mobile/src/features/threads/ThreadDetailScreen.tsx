@@ -171,6 +171,9 @@ function useStreamingHaptics(threadId: ThreadId, feed: ReadonlyArray<ThreadFeedE
   }, [threadId, feed]);
 }
 
+/** The most an anchor scroll waits on the keyboard, or on the list, before letting go. */
+const ANCHOR_WAIT_MS = 1_200;
+
 export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const insets = useSafeAreaInsets();
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
@@ -268,7 +271,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       // updates while it runs, and a close event swallowed by that freeze
       // leaves the keyboard padding permanently applied — overshooting the
       // anchor and leaving a phantom bottom inset once the reply streams in.
-      void KeyboardController.dismiss()
+      //
+      // Every wait is bounded and the freeze always lifts. Neither promise is
+      // guaranteed to settle — dismiss() with no keyboard up, or a scroll on a
+      // list that remounted as the thread finished loading — and an unsettled
+      // one left `freeze` on for good: a new chat opened as a blank, unscrollable
+      // feed with the composer stranded at the keyboard's old height.
+      const settle = (promise: Promise<unknown>) =>
+        Promise.race([promise, new Promise((resolve) => setTimeout(resolve, ANCHOR_WAIT_MS))]);
+      const keyboardClosed = KeyboardController.isVisible()
+        ? settle(KeyboardController.dismiss())
+        : Promise.resolve();
+      void keyboardClosed
         .then(() => {
           if (
             selectedThreadKeyRef.current !== targetThreadKey ||
@@ -276,18 +290,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           ) {
             return;
           }
-          return scrollMessageToEnd({ animated: true, closeKeyboard: false });
+          return settle(scrollMessageToEnd({ animated: true, closeKeyboard: false }));
         })
         .catch(() => {
-          if (
-            selectedThreadKeyRef.current !== targetThreadKey ||
-            lastScrolledAnchorMessageIdRef.current !== anchorMessageId
-          ) {
-            return;
+          if (lastScrolledAnchorMessageIdRef.current === anchorMessageId) {
+            lastScrolledAnchorMessageIdRef.current = null;
           }
-          lastScrolledAnchorMessageIdRef.current = null;
-          freeze.set(false);
-        });
+        })
+        .finally(() => freeze.set(false));
     });
     return () => cancelAnimationFrame(frame);
   }, [
