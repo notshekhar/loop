@@ -12,7 +12,7 @@
     },
     "apps/desktop": {
       "name": "@loop/desktop",
-      "version": "0.0.14",
+      "version": "0.0.19",
       "dependencies": {
         "@notshekhar/loop-core": "workspace:*",
         "electron": "40.10.6",
@@ -28,7 +28,7 @@
     },
     "apps/mobile": {
       "name": "@loop/mobile",
-      "version": "0.0.0",
+      "version": "0.1.5",
       "dependencies": {
         "@callstack/liquid-glass": "0.7.1",
         "@clerk/expo": "4.1.2",
@@ -148,6 +148,7 @@
         "jose": "catalog:",
         "lexical": "^0.41.0",
         "lucide-react": "^0.564.0",
+        "marked": "^18.0.5",
         "react": "19.2.6",
         "react-dom": "19.2.6",
         "react-markdown": "^10.1.0",
@@ -181,7 +182,7 @@
     },
     "packages/cli": {
       "name": "@notshekhar/loop",
-      "version": "0.21.1",
+      "version": "0.21.6",
       "bin": {
         "loop": "./dist/cli.js",
         "lp": "./dist/cli.js",
@@ -200,7 +201,7 @@
     },
     "packages/core": {
       "name": "@notshekhar/loop-core",
-      "version": "0.21.1",
+      "version": "0.21.6",
       "dependencies": {
         "@ai-sdk/amazon-bedrock": "^5.0.72",
         "@ai-sdk/anthropic": "^4.0.48",
@@ -248,7 +249,7 @@
     },
     "packages/tui": {
       "name": "@notshekhar/loop-tui",
-      "version": "0.21.1",
+      "version": "0.21.6",
       "dependencies": {
         "get-east-asian-width": "^1.6.0",
         "marked": "^18.0.5",
@@ -2954,6 +2955,8 @@
     "@loop/web/react": ["react@19.2.6", "", {}, "sha512-sfWGGfavi0xr8Pg0sVsyHMAOziVYKgPLNrS7ig+ivMNb3wbCBw3KxtflsGBAwD3gYQlE/AEZsTLgToRrSCjb0Q=="],
 
     "@loop/web/react-dom": ["react-dom@19.2.6", "", { "dependencies": { "scheduler": "^0.27.0" }, "peerDependencies": { "react": "^19.2.6" } }, "sha512-0prMI+hvBbPjsWnxDLxlCGyM8PN6UuWjEUCYmZhO67xIV9Xasa/r/vDnq+Xyq4Lo27g8QSbO5YzARu0D1Sps3g=="],
+
+    "@loop/web/tailwindcss": ["tailwindcss@4.3.3", "", {}, "sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ=="],
 
     "@notshekhar/loop-core/diff": ["diff@9.0.0", "", {}, "sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw=="],
 

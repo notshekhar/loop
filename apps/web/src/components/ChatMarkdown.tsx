@@ -75,6 +75,7 @@ import {
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
+import { splitMarkdownBlocks } from "./chatMarkdownBlocks";
 import { cn } from "../lib/utils";
 import { useRightPanelStore } from "../rightPanelStore";
 import { useActiveEnvironmentId } from "../state/entities";
@@ -1264,17 +1265,27 @@ function areMarkdownFileLinkPropsEqual(
   );
 }
 
-function ChatMarkdown({
+interface ChatMarkdownBlockProps extends Omit<ChatMarkdownProps, "className"> {
+  /** Worked out over the whole message, so two `index.ts` links in different
+   * blocks still tell each other apart. */
+  fileLinkParentSuffixByPath: ReadonlyMap<string, string>;
+}
+
+/**
+ * One top-level block of a message (see chatMarkdownBlocks.ts), memoized on
+ * its source: a streaming reply re-renders only the block being written.
+ */
+const ChatMarkdownBlock = memo(function ChatMarkdownBlock({
   text,
   cwd,
   threadRef,
   onTaskListChange,
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
-  className,
   lineBreaks = false,
   sourceLines = false,
-}: ChatMarkdownProps) {
+  fileLinkParentSuffixByPath,
+}: ChatMarkdownBlockProps) {
   const { resolvedTheme } = useTheme();
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
@@ -1312,26 +1323,8 @@ function ChatMarkdown({
     }
     return metaByText;
   }, [cwd, text]);
-  const fileLinkParentSuffixByPath = useMemo(() => {
-    const filePaths = [
-      ...[...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath),
-      ...[...inlineCodeFileLinkMetaByText.values()].map((meta) => meta.filePath),
-    ];
-    return buildFileLinkParentSuffixByPath(filePaths);
-  }, [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref]);
   const markdownUrlTransform = useCallback((href: string) => {
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
-  }, []);
-  // Re-emit highlighted content as markdown so copying out of the rendered
-  // view keeps links, emphasis, lists, and code fences intact.
-  const handleCopy = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => {
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed || !event.clipboardData) return;
-    const payload = chatMarkdownClipboardPayload(selection);
-    if (!payload) return;
-    event.preventDefault();
-    event.clipboardData.setData("text/plain", payload.text);
-    event.clipboardData.setData("text/html", payload.html);
   }, []);
   const openExternalLinkInPreview = useCallback(
     (url: string) => {
@@ -1631,6 +1624,71 @@ function ChatMarkdown({
   ]);
 
   return (
+    <ReactMarkdown
+      remarkPlugins={
+        lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
+      }
+      rehypePlugins={
+        sourceLines ? CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_SOURCE_LINES : CHAT_MARKDOWN_REHYPE_PLUGINS
+      }
+      components={markdownComponents}
+      urlTransform={markdownUrlTransform}
+    >
+      {text}
+    </ReactMarkdown>
+  );
+});
+
+/** The parent-folder hints for every file link in the message, kept as the
+ * same Map until the set of linked files itself changes. */
+function useFileLinkParentSuffixByPath(text: string, cwd: string | undefined) {
+  const filePaths = useMemo(() => {
+    const paths = new Set<string>();
+    for (const href of extractMarkdownLinkHrefs(text)) {
+      const meta = resolveMarkdownFileLinkMeta(normalizeMarkdownLinkHrefKey(href), cwd);
+      if (meta) paths.add(meta.filePath);
+    }
+    for (const span of extractInlineCodeSpans(text)) {
+      const meta = resolveInlineCodeFileLinkMeta(span, cwd);
+      if (meta) paths.add(meta.filePath);
+    }
+    return [...paths].join("\u0000");
+  }, [cwd, text]);
+  return useMemo(
+    () => buildFileLinkParentSuffixByPath(filePaths.length === 0 ? [] : filePaths.split("\u0000")),
+    [filePaths],
+  );
+}
+
+function ChatMarkdown(props: ChatMarkdownProps) {
+  const {
+    text,
+    cwd,
+    className,
+    isStreaming = false,
+    onTaskListChange,
+    sourceLines = false,
+  } = props;
+  // Task-list toggles and source-line stamps count offsets from the start of
+  // the whole text, so those renderings stay in one piece.
+  const blocks = useMemo(
+    () => (onTaskListChange || sourceLines ? [text] : splitMarkdownBlocks(text)),
+    [onTaskListChange, sourceLines, text],
+  );
+  const fileLinkParentSuffixByPath = useFileLinkParentSuffixByPath(text, cwd);
+  // Re-emit highlighted content as markdown so copying out of the rendered
+  // view keeps links, emphasis, lists, and code fences intact.
+  const handleCopy = useCallback((event: ReactClipboardEvent<HTMLDivElement>) => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !event.clipboardData) return;
+    const payload = chatMarkdownClipboardPayload(selection);
+    if (!payload) return;
+    event.preventDefault();
+    event.clipboardData.setData("text/plain", payload.text);
+    event.clipboardData.setData("text/html", payload.html);
+  }, []);
+
+  return (
     <div
       className={cn(
         "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80",
@@ -1638,20 +1696,19 @@ function ChatMarkdown({
       )}
       onCopy={handleCopy}
     >
-      <ReactMarkdown
-        remarkPlugins={
-          lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
-        }
-        rehypePlugins={
-          sourceLines
-            ? CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_SOURCE_LINES
-            : CHAT_MARKDOWN_REHYPE_PLUGINS
-        }
-        components={markdownComponents}
-        urlTransform={markdownUrlTransform}
-      >
-        {text}
-      </ReactMarkdown>
+      {blocks.map((block, index) => (
+        <ChatMarkdownBlock
+          // Blocks only ever grow at the end, so the index is a stable key.
+          // eslint-disable-next-line react/no-array-index-key
+          key={index}
+          {...props}
+          text={block}
+          // Only the last block can still be mid-write; a code block above it
+          // is finished and highlights straight away.
+          isStreaming={isStreaming && index === blocks.length - 1}
+          fileLinkParentSuffixByPath={fileLinkParentSuffixByPath}
+        />
+      ))}
     </div>
   );
 }
