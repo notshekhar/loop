@@ -31,6 +31,9 @@
       "@loop/transcript": [
         "../../packages/core/src/transcript/index.ts"
       ],
+      "@loop/format": [
+        "../../packages/core/src/format.ts"
+      ],
       "~/*": [
         "./src/*"
       ],
@@ -99,6 +102,9 @@
       ],
       "@loop/runtime/state/filesystem": [
         "./src/loop/runtime/state/filesystem.ts"
+      ],
+      "@loop/runtime/state/insights": [
+        "./src/loop/runtime/state/insights.ts"
       ],
       "@loop/runtime/state/git": [
         "./src/loop/runtime/state/git.ts"

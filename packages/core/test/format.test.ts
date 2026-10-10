@@ -11,6 +11,13 @@ describe("formatTokens", () => {
         expect(formatTokens(12_000_000_000)).toBe("12B");
     });
 
+    test("past a thousand billion it reads as T", () => {
+        expect(formatTokens(999_400_000_000)).toBe("999B");
+        expect(formatTokens(999_600_000_000)).toBe("1.0T");
+        expect(formatTokens(2_100_000_000_000)).toBe("2.1T");
+        expect(formatTokens(45_000_000_000_000)).toBe("45T");
+    });
+
     test("each magnitude keeps one decimal only where it means something", () => {
         expect(formatTokens(842)).toBe("842");
         expect(formatTokens(9_400)).toBe("9.4k");
@@ -36,7 +43,7 @@ describe("formatTokens", () => {
     });
 
     test("never wider than four characters, so a status line cannot shift", () => {
-        for (const n of [0, 999, 1_000, 999_999, 9_900_000, 999_999_999, 1_000_000_000, 999_000_000_000]) {
+        for (const n of [0, 999, 1_000, 999_999, 9_900_000, 999_999_999, 1_000_000_000, 999_000_000_000, 999_600_000_000, 999_000_000_000_000]) {
             expect(formatTokens(n).length).toBeLessThanOrEqual(4);
         }
     });

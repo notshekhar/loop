@@ -14,6 +14,7 @@
  */
 import { CoinsIcon, FlameIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { formatTokens } from "@loop/format";
 
 import { cn } from "../../lib/utils";
 import {
@@ -31,12 +32,7 @@ function usd(amount: number): string {
   return `$${amount < 1 ? amount.toFixed(4) : amount.toFixed(2)}`;
 }
 
-function tokens(count: number): string {
-  if (!Number.isFinite(count) || count <= 0) return "0";
-  if (count < 1000) return String(Math.round(count));
-  if (count < 1_000_000) return `${Math.round(count / 1000)}k`;
-  return `${(count / 1_000_000).toFixed(1)}M`;
-}
+const tokens = formatTokens;
 
 /**
  * Cell shading for an intensity level.

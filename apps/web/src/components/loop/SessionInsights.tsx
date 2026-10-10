@@ -18,6 +18,7 @@
  */
 import { GaugeIcon, Loader2Icon, ScissorsIcon } from "lucide-react";
 import { memo, useCallback, useEffect, useState } from "react";
+import { formatTokens } from "@loop/format";
 
 import { cn } from "../../lib/utils";
 import {
@@ -30,13 +31,8 @@ import {
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 
-/** `128400` → `128k`, `940` → `940`. Exact under a thousand. */
-export function formatTokens(count: number): string {
-  if (!Number.isFinite(count) || count < 0) return "0";
-  if (count < 1000) return String(Math.round(count));
-  const thousands = count / 1000;
-  return `${thousands < 10 ? thousands.toFixed(1) : Math.round(thousands)}k`;
-}
+/** `128400` → `128k`, `940` → `940`, on through M, B and T. */
+export { formatTokens };
 
 /**
  * Spend, at a readable precision.

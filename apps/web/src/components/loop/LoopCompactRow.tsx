@@ -15,16 +15,11 @@
  */
 import { ChevronDownIcon, ChevronRightIcon, ScissorsIcon } from "lucide-react";
 import { memo, useState } from "react";
+import { formatTokens } from "@loop/format";
 
 import { cn } from "../../lib/utils";
 import type { LoopCompactEntry } from "./loopEntry";
 
-/** `128,400` → `128k`; small counts stay exact. */
-function formatTokens(count: number): string {
-  if (count < 1000) return String(count);
-  const thousands = count / 1000;
-  return `${thousands < 10 ? thousands.toFixed(1) : Math.round(thousands)}k`;
-}
 
 /** The one-line claim the divider makes. */
 export function compactLabel(compact: LoopCompactEntry): string {

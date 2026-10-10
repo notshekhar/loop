@@ -9,13 +9,13 @@
  */
 
 /**
- * Tokens as a compact count: `842`, `9.4k`, `183k`, `2.3M`, `412M`, `1.4B`.
+ * Tokens as a compact count: `842`, `9.4k`, `183k`, `2.3M`, `412M`, `1.4B`, `2.1T`.
  *
  * Each magnitude shows one decimal for its first order (where the digit
  * carries real information: 2.3M is meaningfully more than 2.0M) and rounds
- * beyond it (where it doesn't: nobody needs 412.4M). Every result stays four
- * characters or fewer, which is what lets it sit in a status line without
- * moving anything around it.
+ * beyond it (where it doesn't: nobody needs 412.4M). Below 1000T every
+ * result stays four characters or fewer, which is what lets it sit in a status
+ * line without moving anything around it.
  */
 export function formatTokens(n: number): string {
     if (!Number.isFinite(n)) return "0";
@@ -30,5 +30,7 @@ export function formatTokens(n: number): string {
     if (v < 10_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
     if (v < 999_500_000) return `${Math.round(v / 1_000_000)}M`;
     if (v < 10_000_000_000) return `${(v / 1_000_000_000).toFixed(1)}B`;
-    return `${Math.round(v / 1_000_000_000)}B`;
+    if (v < 999_500_000_000) return `${Math.round(v / 1_000_000_000)}B`;
+    if (v < 10_000_000_000_000) return `${(v / 1_000_000_000_000).toFixed(1)}T`;
+    return `${Math.round(v / 1_000_000_000_000)}T`;
 }

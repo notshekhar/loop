@@ -62,8 +62,12 @@ export const TRACE_CLIENT_JS = /* js */ `(function () {
   function fmtTok(n) {
     if (n < 1000) return String(n);
     if (n < 100000) return (n / 1000).toFixed(1).replace(/\\.0$/, "") + "k";
-    if (n < 1000000) return Math.round(n / 1000) + "k";
-    return (n / 1000000).toFixed(2).replace(/\\.?0+$/, "") + "M";
+    if (n < 999500) return Math.round(n / 1000) + "k";
+    var units = [["M", 1e6], ["B", 1e9], ["T", 1e12]];
+    for (var i = 0; i < units.length; i++) {
+      var v = n / units[i][1];
+      if (v < 999.5 || i === units.length - 1) return v.toFixed(2).replace(/\\.?0+$/, "") + units[i][0];
+    }
   }
   function fmtUsd(u) {
     if (u === undefined || u === null) return "—";
