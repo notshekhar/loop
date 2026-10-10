@@ -94,7 +94,7 @@ import {
     runBeforeTurn,
 } from "./turn-middleware";
 import { attachLedgerEntry, type Session } from "../sessions";
-import type { UsageBlock } from "../types";
+import type { Entry, UsageBlock } from "../types";
 import { StepTimingRecorder, type SdkStepTimingFields } from "./step-timing";
 
 export interface RunTurnOptions {
@@ -535,7 +535,11 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
     setActiveBranch(() => session.getBranch());
 
     // Persist user message verbatim (paths intact for reference in transcripts)
-    await session.append({ type: "message", ts: Date.now(), role: "user", content: userInput });
+    const userEntry: Entry = { type: "message", ts: Date.now(), role: "user", content: userInput };
+    await session.append(userEntry);
+    // Clients build the turn from the live stream alone (transcript/), so the
+    // prompt goes out on it too, under the id it was saved with.
+    emitter.emit("user-message", { id: userEntry.id ?? "", text: userInput, ts: userEntry.ts });
 
     const { provider, model: modelShortId } = parseModelId(modelId);
 

@@ -39,6 +39,8 @@ import { setAskUserBridge, type AskAnswer, type AskQuestion } from "../tools/ask
 import { killAllBashChildren, killSessionShells } from "../tools/utils/shell-registry";
 import { currentSessionId, runInSession } from "../host/session-scope";
 import { THINKING_LEVELS, type ThinkingLevel } from "../agent/thinking";
+import { applyEvent, emptyTranscript, fromEntries, type Transcript, type TranscriptTodo } from "../transcript";
+import { latestTodos } from "../tools/todo";
 import {
     artifactFilePath,
     deleteArtifact,
@@ -151,6 +153,7 @@ const RPC_METHODS = [
     "session.list",
     "session.projects",
     "session.history",
+    "session.messages",
     "session.open",
     "session.send",
     "session.cancel",
@@ -326,6 +329,13 @@ interface ActiveSession {
     seq: number;
     /** Last EVENT_RING_SIZE events, for session.attach {afterSeq} replay. */
     ring: RingEntry[];
+    /**
+     * The conversation as clients draw it (packages/core/src/transcript),
+     * kept current by every event this session broadcasts. Clients take it
+     * from `session.messages` with the seq it is good to, then apply only
+     * later events — none of them rebuilds a turn from history on its own.
+     */
+    transcript: Transcript;
 }
 
 type Transport = {
@@ -368,6 +378,12 @@ export interface SessionStatusNotice {
     readonly sessionId: string;
     readonly change: "running" | "created" | "renamed" | "archived" | "deleted";
     readonly running?: boolean;
+}
+
+/** A session's saved branch as loop's transcript, its checklist with it. */
+function transcriptOf(session: Session, running: boolean): Transcript {
+    const branch = session.getBranch();
+    return fromEntries(branch, { running, todos: (latestTodos(branch) ?? []) as TranscriptTodo[] });
 }
 
 export class RpcServer {
@@ -544,6 +560,7 @@ export class RpcServer {
         const existing = this.sessions.get(sessionId);
         if (existing) {
             existing.session = live.session;
+            existing.transcript = transcriptOf(live.session, existing.running);
             return existing;
         }
         const ctx: ActiveSession = {
@@ -556,6 +573,7 @@ export class RpcServer {
             subscribers: new Set(),
             seq: 0,
             ring: [],
+            transcript: transcriptOf(live.session, false),
         };
         this.sessions.set(sessionId, ctx);
         return ctx;
@@ -672,6 +690,7 @@ export class RpcServer {
                     subscribers: new Set([transport]),
                     seq: 0,
                     ring: [],
+                    transcript: emptyTranscript(),
                 };
                 this.wireCtx(session.id, ctx);
                 this.sessions.set(session.id, ctx);
@@ -768,6 +787,27 @@ export class RpcServer {
                     ...(at >= 0 ? { tail: { afterEntryId: after } } : {}),
                     seq: ctx.seq,
                     running: ctx.running,
+                };
+            },
+            "session.messages": async (params) => {
+                // The conversation as loop's transcript (packages/core/src/
+                // transcript): one assistant message per turn, its parts in
+                // the order they were written — the reply so far included
+                // while a turn runs. `seq` is the event it is good to: apply
+                // session.event with a higher seq, nothing at or below it.
+                const id = String(params.sessionId);
+                const ctx = await this.ensureCtx(id);
+                const model = ctx.session.lastModel();
+                return {
+                    sessionId: id,
+                    info: ctx.session.info,
+                    model,
+                    provider: providerOfModel(model) ?? ctx.session.info.provider,
+                    name: ctx.session.getName(),
+                    messages: ctx.transcript.messages,
+                    todos: ctx.transcript.todos,
+                    running: ctx.running,
+                    seq: ctx.seq,
                 };
             },
             "session.open": async (params) => {
@@ -939,6 +979,7 @@ export class RpcServer {
                 // The model in force follows the branch — `lastModel` reads the
                 // path, so a branch that ran on another model changes it.
                 ctx.modelId = ctx.session.lastModel();
+                ctx.transcript = transcriptOf(ctx.session, false);
                 return { ok: true, leafId: ctx.session.getLeafId(), model: ctx.modelId };
             },
             "session.fork": async (params) => {
@@ -1691,6 +1732,7 @@ export class RpcServer {
             subscribers: new Set(),
             seq: 0,
             ring: [],
+            transcript: transcriptOf(session, false),
         };
         this.wireCtx(id, ctx);
         this.sessions.set(id, ctx);
@@ -1721,6 +1763,11 @@ export class RpcServer {
         if (ctx.running === running) return;
         ctx.running = running;
         this.broadcast(sessionId, ctx, { type: "session-running", data: { running } });
+        // No rebuild from the saved branch here, tempting as it is as a
+        // safety net: some of what a turn showed is never saved — the error
+        // that ended it — and rebuilding at the end made it vanish the moment
+        // a client refetched. The stream-built transcript is the authority
+        // for as long as this context lives.
         this.announce({ sessionId, change: "running", running });
     }
 
@@ -1728,6 +1775,7 @@ export class RpcServer {
     private broadcast(sessionId: string, ctx: ActiveSession, part: { type: string; data: unknown }): void {
         const seq = ++ctx.seq;
         ctx.ring.push({ seq, part });
+        ctx.transcript = applyEvent(ctx.transcript, part);
         if (ctx.ring.length > EVENT_RING_SIZE) ctx.ring.shift();
         for (const sub of ctx.subscribers) {
             sub.send({

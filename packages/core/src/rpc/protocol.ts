@@ -38,15 +38,18 @@ export const RpcErrorCode = {
  * 1.1  `hello`, host-wide `session.status`, paged `session.list` +
  *      `session.projects`, live sessions under `/rc`, and
  *      `session.history {afterEntryId}` (only the tail of the branch).
+ * 1.2  loop's transcript: `session.messages` (one assistant message per turn,
+ *      its parts in written order — packages/core/src/transcript) and the
+ *      `user-message` event that opens each turn on the live stream.
  *
  * Copied by the web/mobile client (apps/web/src/loop/protocol.ts); a core
  * test keeps the two equal.
  */
-export const PROTOCOL_VERSION = [1, 1] as const;
+export const PROTOCOL_VERSION = [1, 2] as const;
 /** The oldest client this host still serves. */
 export const MIN_CLIENT_PROTOCOL = [1, 0] as const;
 /** What this host offers, for clients to gate features on. */
-export const PROTOCOL_CAPABILITIES = ["sessions", "status", "paging", "live-sessions", "pairing", "history-tail"] as const;
+export const PROTOCOL_CAPABILITIES = ["sessions", "status", "paging", "live-sessions", "pairing", "history-tail", "transcript"] as const;
 
 export type ProtocolVersion = readonly [number, number];
 

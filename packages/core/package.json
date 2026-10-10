@@ -25,6 +25,9 @@
     "./workspace": {
       "import": "./src/workspace/index.ts"
     },
+    "./transcript": {
+      "import": "./src/transcript/index.ts"
+    },
     "./embed-scheduling": {
       "types": "./src/embed-scheduling.d.ts",
       "import": "./src/embed-scheduling.ts"

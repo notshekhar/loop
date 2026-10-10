@@ -373,6 +373,57 @@ describe("session.send", () => {
     });
 });
 
+describe("session.messages", () => {
+    useTempSessionDb();
+
+    test("a turn's prompt rides the live stream, and the snapshot agrees with the stream", async () => {
+        const { applyEvent, emptyTranscript } = await import("../src/transcript");
+        const server = new RpcServer();
+        const client = fakeTransport();
+        const fs = server.attach(client);
+        const cwd = mkdtempSync(join(tmpdir(), "loop-rpc-"));
+        fs.feed(
+            JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "session.create",
+                params: { cwd, provider: "nope", model: "nope/model" },
+            }) + "\n",
+        );
+        await until(() => !!client.response(1), "session.create response");
+        const sid = (client.response(1) as { result: { sessionId: string } }).result.sessionId;
+        fs.feed(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "session.attach", params: { sessionId: sid } }) + "\n");
+        await until(() => !!client.response(2), "attach");
+        // An unknown provider fails the turn — still a prompt, an error, an end.
+        fs.feed(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "session.send", params: { sessionId: sid, input: "hello there" } }) + "\n");
+        const running = () =>
+            client.events().filter((e) => (e.part as { type: string }).type === "session-running");
+        await until(() => running().some((e) => (e.part as { data: { running: boolean } }).data.running === false), "turn end");
+
+        const prompt = client.events().find((e) => (e.part as { type: string }).type === "user-message");
+        expect((prompt?.part as { data: { text: string } }).data.text).toBe("hello there");
+
+        fs.feed(JSON.stringify({ jsonrpc: "2.0", id: 4, method: "session.messages", params: { sessionId: sid } }) + "\n");
+        await until(() => !!client.response(4), "messages");
+        const snapshot = (client.response(4) as {
+            result: { messages: { role: string; parts: { type: string }[] }[]; running: boolean; seq: number };
+        }).result;
+        expect(snapshot.running).toBe(false);
+        expect(snapshot.messages[0]).toMatchObject({ role: "user", parts: [{ type: "text", text: "hello there" }] });
+        expect(snapshot.seq).toBe(Math.max(...client.events().map((e) => e.seq)));
+
+        // A client that only ever saw the stream holds the same conversation.
+        let fromStream = emptyTranscript();
+        for (const e of client.events()) fromStream = applyEvent(fromStream, e.part as { type: string; data?: unknown });
+        const shape = (messages: readonly { role: string; parts: unknown[] }[]) =>
+            messages.map((m) => ({ id: (m as { id?: string }).id, role: m.role, parts: m.parts }));
+        expect(shape(fromStream.messages)).toEqual(shape(snapshot.messages));
+        // The failure the turn ended with is part of what it showed.
+        expect(snapshot.messages.at(-1)?.parts.some((p) => p.type === "data-error")).toBe(true);
+        server.dispose();
+    });
+});
+
 describe("startWebServer", () => {
     useTempSessionDb();
 

@@ -8,6 +8,9 @@ import type { CostBreakdown, UsageBlock } from "../types";
 import type { TodoItem } from "../tools/todo";
 
 export interface TurnEvents {
+    /** The prompt that opens the turn, once it is saved — its entry id is the
+     * turn's id in the transcript (packages/core/src/transcript). */
+    "user-message": { id: string; text: string; ts: number };
     "text-delta": string;
     "reasoning-start": void;
     "reasoning-delta": string;
@@ -81,6 +84,7 @@ export interface TurnEvents {
  * `TurnEvents` fails the build until it's listed here.
  */
 export const TURN_EVENT_NAMES = [
+    "user-message",
     "text-delta",
     "reasoning-start",
     "reasoning-delta",
