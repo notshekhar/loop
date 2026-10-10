@@ -1,3 +1,4 @@
+import type { TeamTurnMeta } from "../teams/runtime";
 import type { Entry, ProviderId, StepTiming, SubagentActivityPart, ToolTiming, UsageBlock } from "../types";
 
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -106,6 +107,9 @@ export function adaptSessionEntry(raw: unknown): Entry | null {
                     : {}),
                 // Step wall clock for the trace view — same contract.
                 ...(timing ? { timing } : {}),
+                // A user message the thread team wrote (a brief, mail): clients
+                // draw it as a team card, and it must stay one after a reload.
+                ...(mappedRole === "user" && isTeamMeta(obj.team) ? { team: obj.team } : {}),
                 ...tree,
             };
         }
@@ -200,4 +204,10 @@ export function adaptSessionEntry(raw: unknown): Entry | null {
             }
             return { type: "custom", ts, payload: obj, ...tree };
     }
+}
+
+/** A saved `team` field worth keeping: the shape teams/runtime.ts TeamTurnMeta writes. */
+function isTeamMeta(value: unknown): value is TeamTurnMeta {
+    const v = value as { kind?: unknown; teamId?: unknown } | null;
+    return !!v && typeof v === "object" && (v.kind === "spawn" || v.kind === "mail") && typeof v.teamId === "string";
 }

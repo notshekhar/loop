@@ -118,6 +118,40 @@ CREATE TABLE IF NOT EXISTS reminders (
     created_at INTEGER NOT NULL
 );
 
+-- Thread teams (teams/store.ts). New tables only, never a column on an
+-- existing one, and no schema_version bump: the desktop and the CLI share
+-- this file and update apart, and a build that finds a newer version refuses
+-- the whole database. An older build simply never looks at these.
+CREATE TABLE IF NOT EXISTS teams (
+    id         TEXT PRIMARY KEY,
+    lead_pub   TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    stopped_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS team_members (
+    session_pub TEXT PRIMARY KEY,
+    team_id     TEXT NOT NULL,
+    role        TEXT NOT NULL,
+    state       TEXT NOT NULL,
+    activity    TEXT,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id);
+CREATE TABLE IF NOT EXISTS team_messages (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id      TEXT NOT NULL,
+    from_pub     TEXT NOT NULL,
+    to_pub       TEXT,
+    kind         TEXT NOT NULL,
+    board_key    TEXT,
+    body         TEXT NOT NULL,
+    ts           INTEGER NOT NULL,
+    delivered_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_team_messages_inbox ON team_messages(to_pub, delivered_at);
+CREATE INDEX IF NOT EXISTS idx_team_messages_team ON team_messages(team_id, kind);
+
 CREATE TABLE IF NOT EXISTS goals (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     pub_id              TEXT NOT NULL UNIQUE,

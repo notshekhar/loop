@@ -1,4 +1,5 @@
 import {
+    type TeamTurnMeta,
     isRecapPayload,
     latestTodos,
     parseModelId,
@@ -127,7 +128,14 @@ export function renderBranchEntries(
         if (e.type === "message") {
             const currentMessageIndex = messageIndex++;
             if (currentMessageIndex >= cutAt) drawBoundary();
-            if (e.role === "user") {
+            const team = (e as { team?: TeamTurnMeta }).team;
+            if (e.role === "user" && team) {
+                // Written by the thread team, not typed: a card. Mail that
+                // arrived mid-turn sits inside that turn's reply.
+                if (!team.midTurn) flushSubagents();
+                history.addTeamCard(team, String(e.content ?? ""));
+                if (team.midTurn) history.ensureAssistant(provider, modelId, e.ts);
+            } else if (e.role === "user") {
                 flushSubagents(); // turn boundary — anything left renders first
                 history.addUser(String(e.content ?? ""), e.ts);
             } else if (e.role === "assistant") {

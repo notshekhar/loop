@@ -444,6 +444,20 @@ export const OrchestrationProjectShell = Schema.Struct({
 });
 export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
+/**
+ * Where a thread sits in a loop thread team (packages/core/src/teams): the
+ * lead that started it, or the lead itself. `leadThreadId` is the CLIENT id
+ * of the lead, so a "Back to lead" link and a nested sidebar resolve it the
+ * same way they resolve any thread.
+ */
+export const ThreadTeamRef = Schema.Struct({
+  teamId: TrimmedNonEmptyString,
+  role: Schema.Literals(["lead", "member"]),
+  leadThreadId: ThreadId,
+  state: Schema.String,
+});
+export type ThreadTeamRef = typeof ThreadTeamRef.Type;
+
 export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -471,6 +485,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  team: Schema.optional(Schema.NullOr(ThreadTeamRef)),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 

@@ -96,6 +96,28 @@ import {
 import { attachLedgerEntry, type Session } from "../sessions";
 import type { Entry, UsageBlock } from "../types";
 import { StepTimingRecorder, type SdkStepTimingFields } from "./step-timing";
+import { subagentArgSummary } from "./subagent";
+import {
+    buildTeamLeadNote,
+    buildTeamMemberNote,
+    createTeamTools,
+    emitTeamChange,
+    formatMailForModel,
+    isThreadTeamsEnabled,
+    isWaiting,
+    listTeam,
+    markTurnActive,
+    mailViews,
+    maxTeamThreads,
+    moveMember,
+    REPORT_TOOL,
+    setMemberActivity,
+    SPAWN_THREADS_TOOL,
+    takeInbox,
+    teamOf,
+    WAIT_FOR_TEAM_TOOL,
+    type TeamTurnMeta,
+} from "../teams";
 
 export interface RunTurnOptions {
     session: Session;
@@ -113,6 +135,12 @@ export interface RunTurnOptions {
     recap?: boolean;
     /** internal: recursion depth for Stop-hook continuations */
     hookDepth?: number;
+    /**
+     * The team started this turn (teams/): a member's brief, or mail that
+     * woke an idle thread. Saved on the opening user entry so every client
+     * draws a team card instead of a user bubble, and billed as "team".
+     */
+    team?: TeamTurnMeta;
 }
 
 // AI SDK prints advisory warnings (e.g. about system messages inside the
@@ -381,6 +409,15 @@ async function assembleTurnTools(
     if (getSetting("todos") === true && (!allowedTools?.length || allowedTools.includes(TODO_TOOL_NAME))) {
         toolsForTurn[TODO_TOOL_NAME] = createTodoTool({ sessionId: session.id, session, emitter });
     }
+    // Thread teams: opt-in `threadTeams` setting (default off), unrestricted
+    // agents only — a read-only agent has no business starting writers.
+    // Added AFTER the task tool so subagents never inherit them: a subagent
+    // spawning threads or reporting for its parent would make no sense.
+    // Native agents (Claude Code, Cursor) run their own loop with their own
+    // tools; loop's never reach them, so they are not told about these either.
+    if (isThreadTeamsEnabled() && !allowedTools?.length && !isNativeAgentProvider(extra.provider)) {
+        Object.assign(toolsForTurn, createTeamTools({ session, modelId, cwd, abortSignal }));
+    }
     // Ask tool: opt-in `askUser` setting (default off) AND a live interactive
     // UI bridge (registered by the CLI at startup; absent in print mode, so
     // the tool is never offered there). Restricted agents opt in by naming
@@ -458,7 +495,79 @@ async function assembleTurnTools(
     return { toolsForTurn, fullToolSet, turnContext, agentPrompt };
 }
 
+/** Stop condition: the step just finished called `report`. */
+function reportedThisStep({ steps }: { steps: ReadonlyArray<{ toolCalls: ReadonlyArray<{ toolName?: string }> }> }): boolean {
+    return steps.at(-1)?.toolCalls.some((c) => c.toolName === REPORT_TOOL) === true;
+}
+
 export async function runTurn(opts: RunTurnOptions): Promise<void> {
+    const id = opts.session.id;
+    // A Stop-hook continuation is the same turn going on; only the outermost
+    // call owns the active flag (teams/runtime.ts markTurnActive).
+    const outermost = (opts.hookDepth ?? 0) === 0;
+    if (outermost) markTurnActive(id, true);
+    let failed = false;
+    try {
+        // A session in no team runs exactly as it always did.
+        if (!teamOf(id)) await runTurnInner(opts);
+        else await runTeamTurn(opts, () => (failed = true));
+    } catch (err) {
+        failed = true;
+        throw err;
+    } finally {
+        if (outermost) markTurnActive(id, false);
+        // How the turn ended, for the team panels. Also reached by a lead
+        // whose team was created mid-turn (it spawned its first threads).
+        // A report already said "done"; a stopped team stays stopped.
+        const now = outermost ? teamOf(id) : null;
+        if (now && now.state !== "done" && now.state !== "stopped") {
+            moveMember(id, opts.abortSignal?.aborted ? "idle" : failed ? "failed" : "idle", null);
+        } else if (now?.activity) {
+            setMemberActivity(id, null);
+        }
+    }
+}
+
+/**
+ * A turn in a team member (or lead): the same turn, plus the bookkeeping the
+ * team panels read — the member is "running" while it goes, and what it is
+ * doing follows its tool calls.
+ */
+async function runTeamTurn(opts: RunTurnOptions, onError: () => void): Promise<void> {
+    const id = opts.session.id;
+    moveMember(id, "running", null);
+    const inner = opts.emitter;
+    // Watches the stream on its way out without touching what anyone hears.
+    const emitter = new Proxy(inner, {
+        get(target, prop) {
+            if (prop === "emit") {
+                return (event: string, ...args: unknown[]) => {
+                    if (event === "error") onError();
+                    else if (event === "tool-call") {
+                        const call = args[0] as { toolName?: string; input?: unknown } | undefined;
+                        if (call?.toolName && call.toolName !== WAIT_FOR_TEAM_TOOL) {
+                            const team = teamOf(id);
+                            const activity = `${call.toolName}${subagentArgSummary(call.input)}`;
+                            // The stream can deliver a call after it already
+                            // ran — a report that finished the member must not
+                            // come back as what it is "doing".
+                            const working = team?.state === "running" || team?.state === "starting";
+                            if (team && working && setMemberActivity(id, activity)) {
+                                emitTeamChange({ teamId: team.teamId, kind: "activity", sessionId: id });
+                            }
+                        }
+                    }
+                    return (target.emit as (e: string, ...a: unknown[]) => boolean)(event, ...args);
+                };
+            }
+            const value = Reflect.get(target, prop, target);
+            return typeof value === "function" ? value.bind(target) : value;
+        },
+    }) as TurnEmitter;
+    await runTurnInner({ ...opts, emitter });
+}
+
+async function runTurnInner(opts: RunTurnOptions): Promise<void> {
     const { session, modelId, userInput, cwd, abortSignal, tracker, emitter } = opts;
     // Step cap is only an upper safety bound — the loop ends naturally when the
     // model returns no tool call. 0 / unset means "run until the model decides".
@@ -535,11 +644,22 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
     setActiveBranch(() => session.getBranch());
 
     // Persist user message verbatim (paths intact for reference in transcripts)
-    const userEntry: Entry = { type: "message", ts: Date.now(), role: "user", content: userInput };
+    const userEntry: Entry = {
+        type: "message",
+        ts: Date.now(),
+        role: "user",
+        content: userInput,
+        ...(opts.team ? { team: opts.team } : {}),
+    };
     await session.append(userEntry);
     // Clients build the turn from the live stream alone (transcript/), so the
     // prompt goes out on it too, under the id it was saved with.
-    emitter.emit("user-message", { id: userEntry.id ?? "", text: userInput, ts: userEntry.ts });
+    emitter.emit("user-message", {
+        id: userEntry.id ?? "",
+        text: userInput,
+        ts: userEntry.ts,
+        ...(opts.team ? { team: opts.team } : {}),
+    });
 
     const { provider, model: modelShortId } = parseModelId(modelId);
 
@@ -577,6 +697,16 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
     // rejected edit. Only when it can actually exit — everyone else is told by
     // the plan tool's own description.
     const planModeNote = EXIT_PLAN_MODE_TOOL_NAME in toolsForTurn ? buildPlanModeNote() : "";
+    // Keyed off the assembled tools like every note here: a lead is offered
+    // spawn_threads, a member report.
+    const teamNow = SPAWN_THREADS_TOOL in toolsForTurn || REPORT_TOOL in toolsForTurn ? teamOf(session.id) : null;
+    const teamRoster = teamNow ? listTeam(teamNow.teamId) : [];
+    const teamNote =
+        SPAWN_THREADS_TOOL in toolsForTurn
+            ? buildTeamLeadNote({ maxThreads: maxTeamThreads(), roster: teamRoster, selfId: session.id })
+            : REPORT_TOOL in toolsForTurn
+              ? buildTeamMemberNote({ roster: teamRoster, selfId: session.id })
+              : "";
     // Keyed off the assembled toolset, not the settings that produced it: a
     // restricted agent that was denied MCP tools — or an extension that removed
     // them in onAssembleTools — must not be told how to use tools it hasn't got.
@@ -610,6 +740,7 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
             tools: Object.keys(toolsForTurn),
         }) +
         subagentNote +
+        teamNote +
         todoNote +
         backgroundShellsNote +
         planModeNote +
@@ -861,16 +992,61 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
     // the model falls back to sleeping and polling.
     const shellNotices =
         SHELLS_TOOL_NAME in toolsForTurn ? () => formatShellNotices(takeShellNotices(session.id)) : null;
+    // Team mail (teams/) reaches a thread mid-turn here, before its next
+    // step. Unlike the two notices below it is NOT ephemeral: it is saved as
+    // its own entry — through persistChain, so it lands after the step that
+    // preceded it — and spliced back in at the same place on every later
+    // step of this attempt, so the model keeps seeing it and the cached
+    // prefix never moves. A rebuilt attempt reads it from the session.
+    const teamInjections: Array<{ at: number; message: ModelMessage }> = [];
+    const takeTeamMail = teamOf(session.id)
+        ? (at: number): void => {
+              // wait_for_team takes the mail itself and returns it as its result.
+              if (isWaiting(session.id)) return;
+              const team = teamOf(session.id);
+              if (!team) return;
+              const mail = mailViews(takeInbox(session.id));
+              if (mail.length === 0) return;
+              const text = formatMailForModel(mail);
+              teamInjections.push({ at, message: { role: "user", content: text } });
+              const meta: TeamTurnMeta = { kind: "mail", teamId: team.teamId, mail, midTurn: true };
+              persistChain = persistChain
+                  .then(async () => {
+                      const entry: Entry = {
+                          type: "message",
+                          ts: Date.now(),
+                          role: "user",
+                          content: text,
+                          team: meta,
+                      };
+                      await session.append(entry);
+                      emitter.emit("team-message", { id: entry.id ?? "", team: meta, ts: entry.ts });
+                  })
+                  .catch((err) => debugLog("persist", `team mail persistence failed for session ${session.id}:`, err));
+          }
+        : null;
+    const withTeamMail = (messages: ModelMessage[]): ModelMessage[] => {
+        if (teamInjections.length === 0) return messages;
+        const out: ModelMessage[] = [];
+        let k = 0;
+        for (let i = 0; i <= messages.length; i++) {
+            while (k < teamInjections.length && teamInjections[k]!.at === i) out.push(teamInjections[k++]!.message);
+            if (i < messages.length) out.push(messages[i]!);
+        }
+        // An injection past the end (a shorter rebuilt list) still goes in, last.
+        while (k < teamInjections.length) out.push(teamInjections[k++]!.message);
+        return out;
+    };
     const basePrepareStep = call.prepareStep;
     const prepareStep =
-        todoNudger || shellNotices || basePrepareStep
+        todoNudger || shellNotices || basePrepareStep || takeTeamMail
             ? (opts: {
                   messages: ModelMessage[];
                   steps?: ReadonlyArray<{ toolCalls?: ReadonlyArray<{ toolName?: string }> }>;
               }) => {
-                  let stepMessages = basePrepareStep
-                      ? basePrepareStep({ messages: opts.messages }).messages
-                      : opts.messages;
+                  takeTeamMail?.(opts.messages.length);
+                  const withMail = withTeamMail(opts.messages);
+                  let stepMessages = basePrepareStep ? basePrepareStep({ messages: withMail }).messages : withMail;
                   if (shellNotices) {
                       const notice = shellNotices();
                       if (notice) {
@@ -907,7 +1083,8 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
     // the row can be attributed. One pending id per usage-bearing step;
     // persist and billing race per step, so an empty shift just skips
     // attribution (the money row itself is already safe).
-    const billing = createStepBilling(tracker, modelId, { cwd, sessionPub: session.info.id, source: "turn" });
+    const ledgerSource = opts.team ? "team" : "turn";
+    const billing = createStepBilling(tracker, modelId, { cwd, sessionPub: session.info.id, source: ledgerSource });
     // Serialize appends so each step's messages land in order even if onStepEnd
     // callbacks overlap.
     let persistChain: Promise<void> = Promise.resolve();
@@ -1032,10 +1209,13 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
             tools,
             // A plan-capable turn also stops once a substantial plan is delivered
             // (stub deliveries keep the loop alive — see planDeliveredThisStep).
-            stopWhen:
-                PLAN_TOOL_NAME in toolsForTurn
-                    ? [isStepCount(remainingSteps), planDeliveredThisStep, compactionDue]
-                    : [isStepCount(remainingSteps), compactionDue],
+            stopWhen: [
+                isStepCount(remainingSteps),
+                ...(PLAN_TOOL_NAME in toolsForTurn ? [planDeliveredThisStep] : []),
+                // A member's report is its last word: the turn ends there.
+                ...(REPORT_TOOL in toolsForTurn ? [reportedThisStep] : []),
+                compactionDue,
+            ],
             abortSignal,
             // v7 portable reasoning effort for first-party providers (off → "none").
             // Undefined for community providers / non-reasoning models, which use
@@ -1293,6 +1473,7 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
             if (outcome === "compacted") {
                 streamError = undefined;
                 pendingFinish = undefined;
+                teamInjections.length = 0;
                 attemptMessages = buildMessages();
                 continue streamAttempts;
             }
@@ -1314,6 +1495,7 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
                 const outcome = await compactOverThreshold(used, modelInfo.contextWindow, "mid-turn");
                 if (outcome === "aborted") break streamAttempts;
                 if (outcome === "declined") midTurnCompaction = false;
+                teamInjections.length = 0;
                 attemptMessages = buildMessages();
                 continue streamAttempts;
             }
@@ -1366,7 +1548,8 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
         await abortableDelay(resumeDelayMs(resumes - 1), abortSignal);
         timing.retryWaited(Date.now() - waitFrom);
         if (abortSignal?.aborted) break streamAttempts;
-        attemptMessages = buildMessages();
+        teamInjections.length = 0;
+                attemptMessages = buildMessages();
     }
 
     // Flush any in-flight step persistence before deciding on the fallback /
@@ -1407,7 +1590,7 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
                 contextOverheadTokens,
             );
             if (est) {
-                tracker.addEstimated(modelId, est, { cwd, sessionPub: session.info.id, source: "turn" });
+                tracker.addEstimated(modelId, est, { cwd, sessionPub: session.info.id, source: ledgerSource });
                 emitter.emit("step-usage", { usage: est, breakdown: tracker.sessionBreakdown() });
             }
         }

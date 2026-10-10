@@ -65,6 +65,30 @@ export interface LoopCompactEntry {
   readonly error?: string;
 }
 
+/** A teammate on a team card: loop's session id and the id this client routes by. */
+export interface LoopTeamPeer {
+  readonly id: string;
+  readonly threadId: string;
+  readonly title: string;
+}
+
+/** Something the thread team wrote into this thread (a brief, mail). */
+export interface LoopTeamEntry {
+  readonly kind: "spawn" | "mail";
+  readonly teamId: string;
+  readonly from?: LoopTeamPeer;
+  readonly title?: string;
+  readonly text?: string;
+  readonly mail?: ReadonlyArray<{
+    readonly id: number;
+    readonly from: LoopTeamPeer;
+    readonly kind: "message" | "report" | "update";
+    readonly text: string;
+    readonly ts: number;
+  }>;
+  readonly midTurn?: boolean;
+}
+
 interface LoopCarrier {
   readonly loop?: {
     tool?: unknown;
@@ -72,6 +96,7 @@ interface LoopCarrier {
     recap?: unknown;
     compact?: unknown;
     hook?: unknown;
+    team?: unknown;
   };
 }
 
@@ -169,4 +194,39 @@ export function loopHookOf(entry: LoopCarrier): LoopHookEntry | null {
   const hook = record(entry.loop?.hook);
   if (!hook || typeof hook.text !== "string" || hook.text.trim() === "") return null;
   return { text: hook.text };
+}
+
+function peerOf(value: unknown): LoopTeamPeer | null {
+  const peer = record(value);
+  if (!peer || typeof peer.id !== "string") return null;
+  return {
+    id: peer.id,
+    threadId: typeof peer.threadId === "string" ? peer.threadId : peer.id,
+    title: typeof peer.title === "string" && peer.title.trim() ? peer.title : "a thread",
+  };
+}
+
+export function loopTeamOf(entry: LoopCarrier): LoopTeamEntry | null {
+  const team = record(entry.loop?.team);
+  if (!team || (team.kind !== "spawn" && team.kind !== "mail") || typeof team.teamId !== "string") return null;
+  const from = peerOf(team.from);
+  const mail = Array.isArray(team.mail)
+    ? team.mail.flatMap((raw) => {
+        const item = record(raw);
+        const sender = peerOf(item?.from);
+        if (!item || !sender || typeof item.text !== "string") return [];
+        const kind: "message" | "report" | "update" =
+          item.kind === "report" || item.kind === "update" ? item.kind : "message";
+        return [{ id: typeof item.id === "number" ? item.id : 0, from: sender, kind, text: item.text, ts: typeof item.ts === "number" ? item.ts : 0 }];
+      })
+    : undefined;
+  return {
+    kind: team.kind,
+    teamId: team.teamId,
+    ...(from ? { from } : {}),
+    ...(typeof team.title === "string" ? { title: team.title } : {}),
+    ...(typeof team.text === "string" ? { text: team.text } : {}),
+    ...(mail ? { mail } : {}),
+    ...(team.midTurn === true ? { midTurn: true } : {}),
+  };
 }

@@ -6,7 +6,7 @@
  * Tools loop doesn't ship are summarized by their own extension, via the
  * renderer seam below — nothing here knows about any extension's arguments.
  */
-import { getExtensionHost, type ExtensionTheme } from "@notshekhar/loop-core";
+import { getExtensionHost, sessionTitle, type ExtensionTheme } from "@notshekhar/loop-core";
 import { theme, type Theme } from "./theme";
 import { highlightShellCommand } from "./shell-highlight";
 
@@ -39,6 +39,15 @@ const extensionTheme: ExtensionTheme = {
     italic: (text) => theme.italic(text),
     underline: (text) => theme.underline(text),
 };
+
+/** A team thread's title for a row, never its bare id. */
+function threadName(id: string): string {
+    try {
+        return `"${sessionTitle(id)}"`;
+    } catch {
+        return id;
+    }
+}
 
 /** Shorten an absolute path under `cwd` to a repo-relative one (or `.` for cwd). */
 function rel(p: unknown, cwd: string): string {
@@ -126,6 +135,35 @@ export function formatToolArgs(toolName: string, args: Record<string, unknown>, 
             const agent = typeof a.agent === "string" ? a.agent : "default";
             const prompt = taskPromptSnippet(a);
             return prompt ? `${agent} · ${prompt}` : agent;
+        }
+        // Thread teams (packages/core/src/teams): threads are addressed by id,
+        // which reads as nothing — the row names them by title instead.
+        case "spawn_threads": {
+            const threads = Array.isArray(a.threads) ? (a.threads as Array<{ title?: unknown }>) : [];
+            const titles = threads.map((t) => (typeof t?.title === "string" ? t.title : "")).filter(Boolean);
+            return titles.length > 0
+                ? `${titles.length} thread${titles.length === 1 ? "" : "s"} · ${clamp(titles.join(", "))}`
+                : "";
+        }
+        case "send_message": {
+            const to = typeof a.to === "string" ? a.to : "";
+            const who = to === "all" ? "everyone" : to ? threadName(to) : "";
+            const message = typeof a.message === "string" ? a.message.replace(/\s+/g, " ").trim() : "";
+            return [who ? `→ ${who}` : "", clamp(message)].filter(Boolean).join(" · ");
+        }
+        case "team_board": {
+            const action = typeof a.action === "string" ? a.action : "";
+            const key = typeof a.key === "string" ? a.key : "";
+            return [action, key].filter(Boolean).join(" ");
+        }
+        case "wait_for_team": {
+            const until = a.until;
+            if (Array.isArray(until)) return `for ${until.map((id) => threadName(String(id))).join(", ")}`;
+            return until === "any" ? "for the next message" : "for every thread";
+        }
+        case "report": {
+            const summary = typeof a.summary === "string" ? a.summary : "";
+            return clamp(summary.split("\n")[0] ?? "");
         }
         case "plan":
         case "exit_plan_mode": {

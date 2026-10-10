@@ -30,6 +30,7 @@ export * from "./recipes";
 export * from "./tools";
 export * from "./artifacts";
 export * from "./agent";
+export * from "./teams";
 export * from "./commands";
 export * from "./rpc";
 export * from "./host";

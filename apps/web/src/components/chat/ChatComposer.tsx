@@ -179,6 +179,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { CircleAlertIcon, ListTodoIcon, XIcon } from "lucide-react";
+import { ComposerTeamControl } from "../loop/ComposerTeamControl";
 import { proposedPlanTitle } from "../../proposedPlan";
 import { getProviderDisplayName, getProviderInteractionModeToggle } from "../../providerModels";
 import {
@@ -3318,6 +3319,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   planSidebarOpen={planSidebarOpen}
                   onTogglePlanSidebar={togglePlanSidebar}
                 />
+                <ComposerTeamControl threadRef={routeKind === "server" ? routeThreadRef : null} />
               </>
             )}
           </div>

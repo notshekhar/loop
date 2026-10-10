@@ -1,5 +1,5 @@
 import type { TUI } from "@notshekhar/loop-tui";
-import { asTurnEmitter, type TodoItem, type UsageBlock } from "@notshekhar/loop-core";
+import { asTurnEmitter, type TeamTurnMeta, type TodoItem, type UsageBlock } from "@notshekhar/loop-core";
 import type { ChatHistory } from "./components/chat-history";
 import type { TodoPanel } from "./components/todo-panel";
 import type { AppState } from "./state";
@@ -28,6 +28,13 @@ export interface TurnEmitterDeps {
     /** The turn hit an error that ends it. Reported, not printed: the runner
      * closes every turn with one line that says how it went. */
     onTurnError: (err: unknown) => void;
+    /**
+     * Draw the team card a turn opens with (a member's brief, mail that woke
+     * it) from the stream. A turn this TUI starts itself draws it before the
+     * turn runs; one it only watches (another machine's, or one the `/rc`
+     * server runs) has nothing else to draw it from.
+     */
+    drawsTeamOpening?: boolean;
 }
 
 /**
@@ -45,6 +52,22 @@ export function wireTurnEmitter(emitter: TurnEmitter, deps: TurnEmitterDeps): vo
         history.appendAssistantDelta(t, turnProvider, state.modelId);
         tui.requestRender();
     });
+    // Team mail that reached the model between two steps (core teams/).
+    emitter.on("team-message", (event: { team: TeamTurnMeta }) => {
+        history.addTeamCard({ ...event.team, midTurn: true }, "");
+        tui.requestRender();
+    });
+    if (deps.drawsTeamOpening) {
+        emitter.on("user-message", (event: { text: string; team?: TeamTurnMeta }) => {
+            if (!event.team) return;
+            // The watcher opened an (empty) reply before this arrived; the
+            // card goes above the reply, so that one is closed first.
+            history.finishAssistant();
+            history.addTeamCard(event.team, event.text);
+            history.ensureAssistant(turnProvider, state.modelId);
+            tui.requestRender();
+        });
+    }
     emitter.on("reasoning-delta", (t: string) => {
         history.appendAssistantThinking(t, turnProvider, state.modelId);
         tui.requestRender();

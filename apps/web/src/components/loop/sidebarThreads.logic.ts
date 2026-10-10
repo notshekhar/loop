@@ -44,6 +44,14 @@ export interface SidebarThreadRow {
   readonly status: ThreadStatusPill | null;
   /** How long it has been asking, for the "needs you" ordering. */
   readonly waitingSince: number;
+  /** Its place in a thread team (packages/core/src/teams), or null. */
+  readonly team: { readonly role: "lead" | "member"; readonly state: string } | null;
+  /**
+   * A lead's threads, drawn nested under it rather than scattered through the
+   * list by recency. Empty for every other row — including a thread whose
+   * lead is not in this list (it then stands alone and says whose it is).
+   */
+  readonly children: readonly SidebarThreadRow[];
 }
 
 export interface SidebarThreadSections {
@@ -125,8 +133,12 @@ export function classifySidebarThread(
     state,
     status,
     waitingSince: Number.isFinite(waitingSince) ? waitingSince : 0,
+    team: thread.team ? { role: thread.team.role, state: thread.team.state } : null,
+    children: [],
   };
 }
+
+const STATE_URGENCY: Record<SidebarThreadState, number> = { "needs-you": 0, working: 1, recent: 2, settled: 3 };
 
 const byRecency = (left: SidebarThreadRow, right: SidebarThreadRow): number =>
   Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
@@ -151,9 +163,40 @@ export function buildSidebarThreadSections(
   const recent: SidebarThreadRow[] = [];
   const settled: SidebarThreadRow[] = [];
 
-  for (const thread of threads) {
-    if (thread.archivedAt !== null) continue;
-    const row = classifySidebarThread(thread, options);
+  // Thread teams: a member whose lead is listed here goes under its lead.
+  const live = threads.filter((thread) => thread.archivedAt === null);
+  const listed = new Set(live.map((thread) => `${thread.environmentId}:${thread.id}`));
+  const membersByLead = new Map<string, SidebarThreadRow[]>();
+  const nestedKey = (thread: EnvironmentThreadShell): string | null =>
+    thread.team?.role === "member" && listed.has(`${thread.environmentId}:${thread.team.leadThreadId}`)
+      ? `${thread.environmentId}:${thread.team.leadThreadId}`
+      : null;
+  for (const thread of live) {
+    const leadKey = nestedKey(thread);
+    if (leadKey === null) continue;
+    const list = membersByLead.get(leadKey) ?? [];
+    list.push(classifySidebarThread(thread, options));
+    membersByLead.set(leadKey, list);
+  }
+
+  for (const thread of live) {
+    if (nestedKey(thread) !== null) continue;
+    let row = classifySidebarThread(thread, options);
+    const children = membersByLead.get(`${thread.environmentId}:${thread.id}`);
+    if (children && children.length > 0) {
+      // A team is as urgent as its most urgent thread: a member waiting on
+      // you surfaces its lead in "Needs you".
+      const loudest = children.reduce(
+        (worst, child) => (STATE_URGENCY[child.state] < STATE_URGENCY[worst] ? child.state : worst),
+        row.state,
+      );
+      row = {
+        ...row,
+        state: loudest,
+        // Session ids are ULIDs: by id is the order the lead started them in.
+        children: children.toSorted((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)),
+      };
+    }
     if (row.state === "needs-you") needsYou.push(row);
     else if (row.state === "working") working.push(row);
     else if (row.state === "settled") settled.push(row);

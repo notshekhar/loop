@@ -47,6 +47,7 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { ThreadTeamsSettingsSection } from "./ThreadTeamsSettingsSection";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
@@ -130,6 +131,8 @@ function LocalSettingsRouteScreen() {
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
         </SettingsSection>
+
+        <ThreadTeamsSettingsSection />
 
         <BetaSettingsSection />
 
@@ -518,6 +521,8 @@ function ConfiguredSettingsRouteScreen() {
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
         </SettingsSection>
+
+        <ThreadTeamsSettingsSection />
 
         <BetaSettingsSection />
 

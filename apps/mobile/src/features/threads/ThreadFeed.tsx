@@ -102,6 +102,7 @@ import {
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
+import { ThreadTeamCard } from "./team/ThreadTeamCard";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
 
@@ -1016,6 +1017,10 @@ function renderFeedEntry(
       </Animated.View>
     );
   }
+
+  // Something the thread team wrote into this chat: a card, not a log row.
+  const team = entry.activities.length === 1 ? entry.activities[0]!.team : undefined;
+  if (team) return <ThreadTeamCard environmentId={String(props.environmentId)} team={team} />;
 
   return (
     <ThreadWorkLog

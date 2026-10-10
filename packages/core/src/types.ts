@@ -1,3 +1,4 @@
+import type { TeamTurnMeta } from "./teams/runtime";
 export type BuiltinProviderId =
     | "xai"
     | "anthropic"
@@ -289,6 +290,11 @@ export type Entry = EntryTreeFields &
                * Kept OUTSIDE content: reasoning parts round-trip verbatim to
                * the provider, and unknown keys on them risk strict-API 400s. */
               reasoningMs?: number[];
+              /** Set on a user message the team wrote rather than the user:
+               * a member's brief, or mail between threads (teams/). Clients
+               * draw it as a team card, not a user bubble. `midTurn` marks
+               * mail handed over between two steps of a running turn. */
+              team?: TeamTurnMeta;
               /** Wall-clock stamps for the step this assistant message closed —
                * display metadata for the trace view, never sent to the provider
                * (kept outside content for the same reason as reasoningMs).

@@ -837,6 +837,13 @@ export function subscribeLiveTurns(host: LoopHost = defaultLoopHost): void {
   host.onEvent((event) => {
     const part = event.part as LoopTurnPart | undefined;
     if (!part || typeof part.type !== "string") return;
+    // A team's activity, spend and board change with every tool call and
+    // step. The team panel follows those itself (team.ts); rebuilding every
+    // session row for each would cost the sidebar a redraw per tool call.
+    if (part.type === "session-status") {
+      const notice = part.data as { change?: unknown; teamChange?: unknown } | undefined;
+      if (notice?.change === "team" && notice.teamChange !== "members") return;
+    }
     // seq 0 is not a turn event (the host-wide `session.status` news).
     if (typeof event.seq === "number" && event.seq > 0) {
       const seen = lastSeqs.get(event.sessionId) ?? 0;

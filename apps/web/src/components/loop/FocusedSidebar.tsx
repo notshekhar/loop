@@ -102,6 +102,7 @@ const ThreadSection = memo(function ThreadSection({
           {rows.map((row) => (
             <SidebarThreadRow
               active={row.id === activeThreadId}
+              activeThreadId={activeThreadId}
               key={row.id}
               onArchive={onArchive}
               onContextMenu={onContextMenu}

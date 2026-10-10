@@ -70,6 +70,7 @@ export function createSettingsHandlers(state: AppState, deps: AppDeps): Settings
         todos: false,
         artifacts: false,
         backgroundShells: false,
+        threadTeams: false,
         clock: false,
         reminders: true,
         mcp: true,
@@ -215,6 +216,12 @@ export function createSettingsHandlers(state: AppState, deps: AppDeps): Settings
                         label: `background shells: ${boolSetting("backgroundShells") ? "on" : "off"}`,
                         description:
                             "let bash start servers/watchers that keep running (shells tool + panel); off bounds every command to its own call",
+                    },
+                    {
+                        value: "threadTeams",
+                        label: `thread teams: ${boolSetting("threadTeams") ? "on" : "off"}`,
+                        description:
+                            "let the agent split a job across threads that work in parallel, message each other and report back (/team)",
                     },
                     {
                         value: "serve",

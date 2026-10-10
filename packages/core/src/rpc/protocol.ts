@@ -41,15 +41,18 @@ export const RpcErrorCode = {
  * 1.2  loop's transcript: `session.messages` (one assistant message per turn,
  *      its parts in written order — packages/core/src/transcript) and the
  *      `user-message` event that opens each turn on the live stream.
+ * 1.3  thread teams: `team.get` / `team.stop`, a `team` field on
+ *      `session.list` rows, `session.status` change "team", the
+ *      `team-message` event and the transcript's `data-team` part.
  *
  * Copied by the web/mobile client (apps/web/src/loop/protocol.ts); a core
  * test keeps the two equal.
  */
-export const PROTOCOL_VERSION = [1, 2] as const;
+export const PROTOCOL_VERSION = [1, 3] as const;
 /** The oldest client this host still serves. */
 export const MIN_CLIENT_PROTOCOL = [1, 0] as const;
 /** What this host offers, for clients to gate features on. */
-export const PROTOCOL_CAPABILITIES = ["sessions", "status", "paging", "live-sessions", "pairing", "history-tail", "transcript"] as const;
+export const PROTOCOL_CAPABILITIES = ["sessions", "status", "paging", "live-sessions", "pairing", "history-tail", "transcript", "teams"] as const;
 
 export type ProtocolVersion = readonly [number, number];
 

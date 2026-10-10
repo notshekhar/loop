@@ -79,6 +79,9 @@
       "@loop/runtime/state/insights": [
         "../web/src/loop/runtime/state/insights.ts"
       ],
+      "@loop/runtime/state/team": [
+        "../web/src/loop/runtime/state/team.ts"
+      ],
       "@loop/runtime/state/git": [
         "../web/src/loop/runtime/state/git.ts"
       ],

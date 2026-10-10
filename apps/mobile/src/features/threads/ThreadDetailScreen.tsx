@@ -1,4 +1,5 @@
 import { type EnvironmentConnectionPhase } from "@loop/runtime/connection";
+import { ThreadTeamPill } from "./team/ThreadTeamPill";
 import type { EnvironmentThreadStatus } from "@loop/runtime/state/threads";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
@@ -376,6 +377,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
             skills={selectedProviderSkills}
           />
+          {props.selectedThread.team ? (
+            <ThreadTeamPill environmentId={String(props.environmentId)} threadId={String(props.selectedThread.id)} />
+          ) : null}
         </View>
       ) : (
         <View className="flex-1" />

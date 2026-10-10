@@ -60,5 +60,6 @@ export function createCommandContext(state: AppState, deps: AppDeps): CommandCon
         manageGoalMode: (args: string) => goalModeEngine(state, deps).manageGoalMode(args),
         manageHosts: (args: string) => deps.remote?.manageHosts(args),
         remoteControl: (args: string) => deps.remote?.remoteControl(args),
+        manageTeam: (args: string) => deps.team?.manageTeam(args),
     };
 }

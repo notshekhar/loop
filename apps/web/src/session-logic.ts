@@ -66,6 +66,7 @@ export interface LoopEntryPayload {
   recap?: unknown;
   compact?: unknown;
   hook?: unknown;
+  team?: unknown;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -782,12 +783,14 @@ function extractLoopPayload(payload: Record<string, unknown> | null): LoopEntryP
   const recap = payload.loopRecap;
   const compact = payload.loopCompact;
   const hook = payload.loopHook;
+  const team = payload.loopTeam;
   if (
     tool === undefined &&
     thinking === undefined &&
     recap === undefined &&
     compact === undefined &&
-    hook === undefined
+    hook === undefined &&
+    team === undefined
   ) {
     return null;
   }
@@ -797,6 +800,7 @@ function extractLoopPayload(payload: Record<string, unknown> | null): LoopEntryP
     ...(recap === undefined ? {} : { recap }),
     ...(compact === undefined ? {} : { compact }),
     ...(hook === undefined ? {} : { hook }),
+    ...(team === undefined ? {} : { team }),
   };
 }
 

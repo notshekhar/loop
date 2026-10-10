@@ -5,7 +5,7 @@
  * a phone left un-updated for months is exactly the client this exists for.
  * `packages/core/test/protocol.test.ts` keeps the two copies equal.
  */
-export const CLIENT_PROTOCOL = [1, 2] as const;
+export const CLIENT_PROTOCOL = [1, 3] as const;
 
 export type ProtocolVersion = readonly [number, number];
 

@@ -145,6 +145,7 @@ import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
+import { TeamPanel } from "./loop/TeamPanel";
 import { ArtifactPanel, ArtifactsListPanel } from "./loop/ArtifactPanel";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
@@ -5762,6 +5763,8 @@ function ChatViewContent(props: ChatViewProps) {
       </Suspense>
     ) : activeRightPanelSurface?.kind === "artifacts" ? (
       <ArtifactsListPanel threadRef={activeThreadRef} />
+    ) : activeRightPanelSurface?.kind === "team" ? (
+      <TeamPanel threadRef={activeThreadRef} />
     ) : activeRightPanelSurface?.kind === "artifact" ? (
       <ArtifactPanel artifactId={activeRightPanelSurface.resourceId} />
     ) : activeRightPanelSurface?.kind === "plan" ? (

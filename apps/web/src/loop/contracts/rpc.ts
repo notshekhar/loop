@@ -243,6 +243,10 @@ export const WS_METHODS = {
 
   // loop's /context, /cost and /steak for one session
   sessionInsights: "session.insights",
+  subscribeTeam: "subscribeTeam",
+  teamStop: "team.stop",
+  teamSettingGet: "team.setting.get",
+  teamSettingSet: "team.setting.set",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -841,6 +845,84 @@ export const WsSessionInsightsRpc = Rpc.make(WS_METHODS.sessionInsights, {
   error: EnvironmentAuthorizationError,
 });
 
+/** One thread of a team, as the team panel draws it (packages/core/src/teams TeamSnapshotMember). */
+export const TeamMember = Schema.Struct({
+  /** loop's session id. */
+  id: Schema.String,
+  /** The id this client knows the thread by (its route). */
+  threadId: Schema.String,
+  title: Schema.String,
+  role: Schema.Literals(["lead", "member"]),
+  state: Schema.String,
+  activity: Schema.optional(Schema.String),
+  running: Schema.Boolean,
+  usd: Schema.Number,
+  /** Of `usd`, what turns the team started cost; the rest is the user's own messages. */
+  teamUsd: Schema.Number,
+  inputTokens: Schema.Number,
+  outputTokens: Schema.Number,
+});
+export type TeamMember = typeof TeamMember.Type;
+
+/** A thread team, live (`subscribeTeam`): null while the thread is in none. */
+export const TeamSnapshot = Schema.Struct({
+  teamId: Schema.String,
+  stopped: Schema.Boolean,
+  lead: TeamMember,
+  members: Schema.Array(TeamMember),
+  board: Schema.Array(
+    Schema.Struct({
+      key: Schema.String,
+      body: Schema.String,
+      fromTitle: Schema.String,
+      ts: Schema.Number,
+    }),
+  ),
+  cost: Schema.Struct({
+    usd: Schema.Number,
+    inputTokens: Schema.Number,
+    outputTokens: Schema.Number,
+    estimated: Schema.Boolean,
+  }),
+});
+export type TeamSnapshot = typeof TeamSnapshot.Type;
+
+export const TeamStreamEvent = Schema.NullOr(TeamSnapshot);
+export type TeamStreamEvent = typeof TeamStreamEvent.Type;
+
+export const WsSubscribeTeamRpc = Rpc.make(WS_METHODS.subscribeTeam, {
+  payload: Schema.Struct({ threadId: Schema.String }),
+  success: TeamStreamEvent,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+export const WsTeamStopRpc = Rpc.make(WS_METHODS.teamStop, {
+  payload: Schema.Struct({ threadId: Schema.String }),
+  success: Schema.Struct({ ok: Schema.Boolean }),
+  error: EnvironmentAuthorizationError,
+});
+
+/** The host's `threadTeams` setting: whether the agent may start thread teams there. */
+export const TeamSetting = Schema.Struct({
+  enabled: Schema.Boolean,
+  /** False on a loop that predates thread teams — the switch is then hidden. */
+  supported: Schema.Boolean,
+});
+export type TeamSetting = typeof TeamSetting.Type;
+
+export const WsTeamSettingGetRpc = Rpc.make(WS_METHODS.teamSettingGet, {
+  payload: Schema.Struct({}),
+  success: TeamSetting,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsTeamSettingSetRpc = Rpc.make(WS_METHODS.teamSettingSet, {
+  payload: Schema.Struct({ enabled: Schema.Boolean }),
+  success: TeamSetting,
+  error: EnvironmentAuthorizationError,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -863,6 +945,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,
   WsSessionInsightsRpc,
+  WsSubscribeTeamRpc,
+  WsTeamStopRpc,
+  WsTeamSettingGetRpc,
+  WsTeamSettingSetRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsSourceControlLookupRepositoryRpc,

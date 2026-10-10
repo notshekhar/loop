@@ -848,3 +848,50 @@ describe("a core that restarts", () => {
     }
   });
 });
+
+describe("a thread team's words in the conversation", () => {
+  it("draws a member's brief as a team card, not as something the user typed", async () => {
+    const thread = await threadOf([
+      {
+        type: "message",
+        role: "user",
+        id: "u1",
+        ts: 1_700_000_001_000,
+        content: "Build the endpoint.",
+        team: { kind: "spawn", teamId: "tm_1", from: { id: "LEAD", title: "Add CSV export" }, title: "Endpoint" },
+      },
+      { type: "message", role: "assistant", id: "a1", ts: 1_700_000_002_000, content: [{ type: "text", text: "on it" }] },
+    ]);
+    expect(thread.messages.map((m) => m.role)).toEqual(["assistant"]);
+    const card = thread.activities.find((a) => a.kind === "loop.team");
+    expect(card?.summary).toBe("Brief from Add CSV export");
+    expect((card?.payload as { loopTeam?: { from?: { threadId?: string } } }).loopTeam?.from?.threadId).toBe("LEAD");
+  });
+
+  it("draws mail that arrived mid-turn inside that turn", async () => {
+    const thread = await threadOf([
+      userEntry("start"),
+      { type: "message", role: "assistant", id: "a1", ts: 1_700_000_002_000, content: [{ type: "tool-call", toolCallId: "c1", toolName: "ls", input: {} }] },
+      { type: "message", role: "tool", id: "t1", ts: 1_700_000_002_500, content: [{ type: "tool-result", toolCallId: "c1", toolName: "ls", output: { type: "text", value: "a" } }] },
+      {
+        type: "message",
+        role: "user",
+        id: "m1",
+        ts: 1_700_000_003_000,
+        content: "<team-message>…</team-message>",
+        team: {
+          kind: "mail",
+          teamId: "tm_1",
+          midTurn: true,
+          mail: [{ id: 1, from: { id: "B", title: "Export button" }, kind: "message", text: "use ISO dates", ts: 1 }],
+        },
+      },
+      { type: "message", role: "assistant", id: "a2", ts: 1_700_000_004_000, content: [{ type: "text", text: "ok" }] },
+    ]);
+    expect(thread.messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual(["start"]);
+    const card = thread.activities.find((a) => a.kind === "loop.team");
+    expect(card?.summary).toBe("Message from Export button");
+    expect(card?.turnId).toBe(thread.activities.find((a) => a.kind === "tool.ls")?.turnId);
+  });
+});
+

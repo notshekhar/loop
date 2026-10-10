@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
+    teamSnapshotForSession,
     buildSteakGrid,
     filterAttachmentsByModalities,
     getCatalog,
@@ -145,6 +146,27 @@ export function createMiscHandlers(state: AppState, deps: AppDeps): MiscHandlers
                 s.usd,
                 `in:${fmtTok(s.inputTokens)} out:${fmtTok(s.outputTokens)} cache:${fmtTok(s.cachedInputTokens)}`,
             );
+            // Thread teams: the whole team's spend, thread by thread. Summed
+            // from the ledger rather than copied anywhere, so the totals below
+            // still count every dollar once.
+            const team = state.session ? teamSnapshotForSession(state.session.id) : null;
+            if (team) {
+                history.addSystem("");
+                history.addSystem(heading(`team · ${team.members.length} thread${team.members.length === 1 ? "" : "s"}`));
+                for (const member of [team.lead, ...team.members]) {
+                    const mine = member.id === state.session?.id ? " (here)" : "";
+                    const yours = member.usd - member.teamUsd;
+                    const extra =
+                        member.role === "member" && yours > 0.00005 ? ` · incl. ${fmtUsd(yours)} from your messages` : "";
+                    row(
+                        `${member.role === "lead" ? "lead" : "thread"}`,
+                        member.usd,
+                        `${member.title}${mine} · in:${fmtTok(member.inputTokens)} out:${fmtTok(member.outputTokens)}${extra}`,
+                    );
+                }
+                row("team total", team.cost.usd, team.cost.estimated ? "includes an estimate" : "");
+                history.addSystem("");
+            }
             row("directory", st.cwdUsd, state.cwd.replace(process.env.HOME ?? "", "~"));
             row("today", st.todayUsd);
             row("last 7 days", st.last7Usd);

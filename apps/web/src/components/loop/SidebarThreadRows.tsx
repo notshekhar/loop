@@ -10,8 +10,8 @@
  * same colours for the same states, so a thread that reads amber in one place
  * never reads grey in another.
  */
-import { ArchiveIcon, ChevronDownIcon, GitBranchIcon } from "lucide-react";
-import { memo } from "react";
+import { ArchiveIcon, ChevronDownIcon, GitBranchIcon, NetworkIcon } from "lucide-react";
+import { memo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 
 import { cn } from "../../lib/utils";
@@ -62,16 +62,64 @@ export const ThreadStatusDot = memo(function ThreadStatusDot({
  * on two branches of the same repo were indistinguishable. It collapses to one
  * line when a thread has no branch, rather than leaving an empty row half.
  */
-export const SidebarThreadRow = memo(function SidebarThreadRow({
+export const SidebarThreadRow = memo(function SidebarThreadRow(props: {
+  row: ThreadRowModel;
+  active: boolean;
+  /** The thread on screen — marks a nested team thread active. */
+  activeThreadId?: string | null;
+  indent?: boolean;
+  onContextMenu?: (row: ThreadRowModel, position: { x: number; y: number }) => void;
+  onArchive?: (row: ThreadRowModel) => void;
+}) {
+  const { row, activeThreadId } = props;
+  const childActive = row.children.some((child) => child.id === activeThreadId);
+  // Open while the team is doing something, or while you are in it; a
+  // finished team folds to one line until you want it.
+  const lively = row.children.some((child) => child.state === "working" || child.state === "needs-you");
+  const [open, setOpen] = useState<boolean | null>(null);
+  const expanded = open ?? (lively || childActive || props.active);
+  if (row.children.length === 0) return <SidebarThreadRowItem {...props} />;
+  return (
+    <div className="flex flex-col">
+      <SidebarThreadRowItem
+        {...props}
+        teamToggle={{ count: row.children.length, expanded, onToggle: () => setOpen(!expanded) }}
+      />
+      {expanded ? (
+        <div className="ml-[13px] flex flex-col gap-px border-sidebar-border/60 border-l pl-1">
+          {row.children.map((child) => (
+            <SidebarThreadRowItem
+              active={child.id === activeThreadId}
+              key={child.id}
+              nested
+              {...(props.onArchive ? { onArchive: props.onArchive } : {})}
+              {...(props.onContextMenu ? { onContextMenu: props.onContextMenu } : {})}
+              row={child}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+});
+
+const SidebarThreadRowItem = memo(function SidebarThreadRowItem({
   row,
   active,
   indent = false,
+  nested = false,
+  teamToggle,
   onContextMenu,
   onArchive,
 }: {
   row: ThreadRowModel;
   active: boolean;
+  activeThreadId?: string | null;
   indent?: boolean;
+  /** A thread drawn under its team's lead. */
+  nested?: boolean;
+  /** On a lead: its threads' fold. */
+  teamToggle?: { count: number; expanded: boolean; onToggle: () => void };
   onContextMenu?: (row: ThreadRowModel, position: { x: number; y: number }) => void;
   onArchive?: (row: ThreadRowModel) => void;
 }) {
@@ -102,7 +150,31 @@ export const SidebarThreadRow = memo(function SidebarThreadRow({
     >
       <ThreadStatusDot row={row} />
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-[13px] leading-5">{row.title}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className={cn("truncate leading-5", nested ? "text-[12.5px]" : "text-[13px]")}>{row.title}</span>
+          {teamToggle ? (
+            <span
+              aria-expanded={teamToggle.expanded}
+              aria-label={`${teamToggle.expanded ? "Hide" : "Show"} ${teamToggle.count} team threads`}
+              className="flex shrink-0 cursor-pointer items-center gap-0.5 rounded px-1 text-[10.5px] text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+              onClick={(event) => {
+                // The row is a link; folding the team must not also open it.
+                event.preventDefault();
+                event.stopPropagation();
+                teamToggle.onToggle();
+              }}
+              role="button"
+              tabIndex={-1}
+            >
+              <NetworkIcon aria-hidden className="size-2.5" />
+              {teamToggle.count}
+              <ChevronDownIcon
+                aria-hidden
+                className={cn("size-2.5 transition-transform", !teamToggle.expanded && "-rotate-90")}
+              />
+            </span>
+          ) : null}
+        </span>
         {row.branch ? (
           <span className="flex min-w-0 items-center gap-1 text-[10.5px] text-sidebar-muted-foreground/70">
             <GitBranchIcon aria-hidden className="size-2.5 shrink-0" />

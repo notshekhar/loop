@@ -17,6 +17,9 @@ import {
     setProjectModel,
     settingsStore,
     LIVE_STATUS_ORDER,
+    sessionTitle,
+    teamOf,
+    teamsOf,
     type CommandContext,
 } from "@notshekhar/loop-core";
 import type { AppDeps } from "../deps";
@@ -295,9 +298,28 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
                     const slot = live.get(id);
                     return slot ? LIVE_STATUS_ORDER.indexOf(slot.status) : LIVE_STATUS_ORDER.length;
                 };
-                const filtered = sessions
+                const sorted = sessions
                     .filter((s) => filter.test(s.mtime))
                     .sort((a, b) => rank(a.id) - rank(b.id));
+                // Thread teams: a lead's threads sit right under it, indented,
+                // instead of scattered through the list by recency.
+                const teams = teamsOf(sorted.map((s) => s.id));
+                const present = new Set(sorted.map((s) => s.id));
+                const nested = (s: (typeof sessions)[number]) => {
+                    const team = teams.get(s.id);
+                    return team?.role === "member" && present.has(team.leadId);
+                };
+                const filtered: typeof sorted = [];
+                for (const s of sorted) {
+                    if (nested(s)) continue;
+                    filtered.push(s);
+                    if (teams.get(s.id)?.role !== "lead") continue;
+                    filtered.push(
+                        ...sorted
+                            .filter((m) => teams.get(m.id)?.role === "member" && teams.get(m.id)?.leadId === s.id)
+                            .sort((x, y) => x.createdAt - y.createdAt),
+                    );
+                }
                 const liveCount = filtered.filter((s) => live.get(s.id)).length;
                 const row = (s: (typeof sessions)[number]): SelectItem => {
                         const slot = live.get(s.id) ?? deps.sessions.findLive(s.id);
@@ -308,10 +330,18 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
                         const title = s.name
                             ? `${s.name}  ·  ${s.id.slice(0, 12)}`
                             : `${s.id.slice(0, 12)}  ${s.model || "?"}`;
+                        const team = teamOf(s.id);
+                        const indent = team?.role === "member" && present.has(team.leadId) ? "  ├ " : "";
+                        const teamNote =
+                            team?.role === "member"
+                                ? indent
+                                    ? `${team.state} · `
+                                    : `thread of “${sessionTitle(team.leadId)}” · `
+                                : (deps.team?.teamLabel(s.id) ?? "");
                         return {
                             value: s.path,
-                            label: `${badge} ${title}`,
-                            description: `${here}${slot ? liveActivity(slot) : ""}${formatSessionTime(s.mtime)}  ·  ${s.firstUserMessage?.slice(0, 80) ?? "(no messages)"}`,
+                            label: `${indent}${badge} ${title}`,
+                            description: `${here}${teamNote}${slot ? liveActivity(slot) : ""}${formatSessionTime(s.mtime)}  ·  ${s.firstUserMessage?.slice(0, 80) ?? "(no messages)"}`,
                         };
                 };
                 const items: SelectItem[] = [

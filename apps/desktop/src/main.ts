@@ -320,6 +320,21 @@ app.whenReady().then(() => {
 
   loop.on("notification", (message) => {
     if (message.method === "session.event") forwardToRenderer("loop:event", message.params);
+    // Host-wide news — a session created, renamed, started or stopped
+    // somewhere, a thread team moving — in the shape the WebSocket transport
+    // gives it (apps/web loop/transport.ts): a `session-status` part with no
+    // seq. Dropped here before, the desktop learned of a session another part
+    // of the app created (a team's threads) only on its next unrelated
+    // refresh, and a team panel opened on a draft never heard its team begin.
+    if (message.method === "session.status") {
+      const status = message.params as { sessionId?: unknown } | undefined;
+      if (typeof status?.sessionId !== "string") return;
+      forwardToRenderer("loop:event", {
+        sessionId: status.sessionId,
+        seq: 0,
+        part: { type: "session-status", data: status },
+      });
+    }
   });
   loop.on("stderr", (line) => {
     // loop's own diagnostics belong in the shell's log, not swallowed.

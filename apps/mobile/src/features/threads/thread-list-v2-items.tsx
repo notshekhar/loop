@@ -305,6 +305,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly variant: "card" | "slim";
   /** Snoozed-shelf row: shows its wake time and offers Wake. */
   readonly snoozed?: boolean;
+  /** A thread team member drawn right under its lead: indented. */
+  readonly teamNested?: boolean;
   /** Preformatted against the parent minute tick so this memoized row's
       countdown keeps moving. */
   readonly snoozeWakeLabelText?: string;
@@ -383,6 +385,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const drawerColor = useThemeColor("--color-drawer");
   const pressedBackgroundColor = useThemeColor("--color-subtle");
   const selectedBackgroundColor = useThemeColor("--color-user-bubble");
+  const teamTint = useThemeColor("--color-icon-subtle");
   const sidebarPane = props.pane === "sidebar";
   const selected = props.selected === true;
 
@@ -578,6 +581,25 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       >
         {thread.title}
       </Text>
+      {thread.team ? (
+        <View className="mt-1 flex-row items-center gap-1">
+          <SymbolView
+            name="point.3.connected.trianglepath.dotted"
+            size={11}
+            tintColor={selected ? "#ffffff" : teamTint}
+            type="monochrome"
+          />
+          <Text
+            className={cn(
+              "text-xs font-t3-medium",
+              selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+            )}
+          >
+            {thread.team.role === "lead" ? "Team lead" : "Team thread"}
+            {thread.team.role === "member" && thread.team.state !== "idle" ? ` · ${thread.team.state}` : ""}
+          </Text>
+        </View>
+      ) : null}
       {props.searchMatch ? (
         <View className="mt-1">
           <ThreadSearchMatchExcerpt
@@ -682,14 +704,25 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         }
       >
         {sidebarPane ? (
-          cardContent
+          props.teamNested ? (
+            <View className="ml-4 border-l border-border pl-3">{cardContent}</View>
+          ) : (
+            cardContent
+          )
         ) : (
           /* Flat native list rows: no tonal containers — colored status
              labels and text hierarchy carry state, an inset hairline
              separates rows. The opaque screen background stays so swipe
-             actions reveal behind the row. */
+             actions reveal behind the row. A team thread under its lead
+             is indented on a rail. */
           <View className="bg-screen">
-            <View className="px-5 py-2.5">{cardContent}</View>
+            <View className={props.teamNested ? "py-2.5 pr-5 pl-9" : "px-5 py-2.5"}>
+              {props.teamNested ? (
+                <View className="border-l border-border pl-3">{cardContent}</View>
+              ) : (
+                cardContent
+              )}
+            </View>
             <View className="ml-5 h-px bg-border-subtle" />
           </View>
         )}

@@ -44,7 +44,7 @@ import {
 } from "./liveTurn.ts";
 import { parsePartialInput } from "./streamingInput.ts";
 import { defaultLoopHost, type LoopHost } from "../transport.ts";
-import { isToolPart, type Transcript } from "@loop/transcript";
+import { isToolPart, type TeamPart, type Transcript } from "@loop/transcript";
 import { readTranscript, snapshotOf, watchTranscript, type TranscriptView } from "../transcript/store.ts";
 
 /** `kind` the work log turns into a thinking-toned row. */
@@ -493,6 +493,46 @@ function livePreviewTail(content: string | undefined): string | undefined {
     : lines.slice(lines.length - LIVE_PREVIEW_LINES).join("\n");
 }
 
+/** Payload key for something the thread team wrote into this thread. */
+export const LOOP_TEAM_PAYLOAD_KEY = "loopTeam";
+/** Activity kind for a team card (a brief, a message, a report). */
+export const TEAM_ACTIVITY_KIND = "loop.team";
+
+/** loop's data-team part as a card payload, its senders routable by this client's ids. */
+function teamPayloadOf(data: TeamPart["data"]): Record<string, unknown> {
+  const peer = (p: { id: string; title: string }) => ({ id: p.id, threadId: clientThreadIdFor(p.id), title: p.title });
+  return {
+    kind: data.kind,
+    teamId: data.teamId,
+    ...(data.from ? { from: peer(data.from) } : {}),
+    ...(data.title ? { title: data.title } : {}),
+    ...(data.text ? { text: data.text } : {}),
+    ...(data.mail ? { mail: data.mail.map((m) => ({ ...m, from: peer(m.from) })) } : {}),
+    ...(data.midTurn ? { midTurn: true } : {}),
+  };
+}
+
+function pushTeamActivity(out: Accumulator, id: string, turnId: string | null, createdAt: string, data: TeamPart["data"]): void {
+  const first = data.mail?.[0];
+  out.activities.push({
+    id,
+    tone: "info",
+    kind: TEAM_ACTIVITY_KIND,
+    summary:
+      data.kind === "spawn"
+        ? `Brief from ${data.from?.title ?? "the lead"}`
+        : first?.kind === "report"
+          ? `Report from ${first.from.title}`
+          : `Message from ${first?.from.title ?? "a teammate"}`,
+    payload: {
+      detail: data.kind === "spawn" ? (data.text ?? "") : (data.mail ?? []).map((m) => m.text).join("\n\n"),
+      [LOOP_TEAM_PAYLOAD_KEY]: teamPayloadOf(data),
+    },
+    turnId,
+    createdAt,
+  });
+}
+
 /** Payload key for a line a hook wrote. */
 export const LOOP_HOOK_PAYLOAD_KEY = "loopHook";
 /** Activity kind for a line a hook wrote. */
@@ -734,6 +774,16 @@ function foldTranscript(transcript: Transcript, sessionId: string): Accumulator 
   for (const message of transcript.messages) {
     const at = message.metadata.createdAt;
     if (message.role === "user") {
+      // A turn the thread team opened: a card, never a user bubble.
+      const team = message.parts.find((part): part is TeamPart => part.type === "data-team");
+      if (team) {
+        turnId = message.id;
+        out.lastTurnId = message.id;
+        // Outside the turn it opens, like the prompt it stands in for: a
+        // finished turn folds its work away, and the brief is not work.
+        pushTeamActivity(out, `${message.id}-team`, null, out.order.next(at), team.data);
+        continue;
+      }
       const raw = message.parts.map((part) => (part.type === "text" ? part.text : "")).join("");
       const { text, attachments } = splitUserAttachments(raw);
       if (text.trim() === "" && attachments.length === 0) continue;
@@ -865,6 +915,8 @@ function foldTranscript(transcript: Transcript, sessionId: string): Accumulator 
         });
       } else if (part.type === "data-branch-summary") {
         pushRecapActivity(out, id, null, stamp, part.data.summary);
+      } else if (part.type === "data-team") {
+        pushTeamActivity(out, id, rowTurn, stamp, part.data);
       }
     }
   }

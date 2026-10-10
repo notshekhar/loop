@@ -737,6 +737,7 @@ export function HomeScreen(props: HomeScreenProps) {
           thread={thread}
           variant={item.item.variant}
           snoozed={item.item.snoozed}
+          teamNested={item.item.teamNested === true}
           snoozePresetMinute={nowMinute}
           snoozeWakeLabelText={item.snoozeWakeLabelText}
           project={

@@ -49,6 +49,7 @@ import {
 import { ArtifactChip } from "./ArtifactChip";
 import { artifactResultSummary, parseArtifactResult } from "./artifacts";
 import type { LoopSubagentStep, LoopToolEntry } from "./loopEntry";
+import { LoopTeamToolRow, TEAM_TOOL_NAMES } from "./LoopTeam";
 
 /** Live tail while input streams — the terminal's `thinking.liveTailLines`. */
 const LIVE_TAIL_LINES = 3;
@@ -351,7 +352,17 @@ function argsOf(input: unknown): Record<string, unknown> {
     : {};
 }
 
-export const LoopToolRow = memo(function LoopToolRow({
+export const LoopToolRow = memo(function LoopToolRow(props: {
+  threadRef: ScopedThreadRef | null;
+  tool: LoopToolEntry;
+  workspaceRoot: string | undefined;
+}) {
+  // Thread teams draw their own cards: live thread states, names for ids.
+  if (TEAM_TOOL_NAMES.has(props.tool.name)) return <LoopTeamToolRow threadRef={props.threadRef} tool={props.tool} />;
+  return <LoopToolRowBody {...props} />;
+});
+
+const LoopToolRowBody = memo(function LoopToolRowBody({
   threadRef,
   tool,
   workspaceRoot,

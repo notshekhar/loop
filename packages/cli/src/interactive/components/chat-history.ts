@@ -1,5 +1,5 @@
 import { Container, logRenderError, Markdown, Spacer, Text, truncateToWidth, type TUI } from "@notshekhar/loop-tui";
-import { formatSubagentActivity, type SubagentActivityPart } from "@notshekhar/loop-core";
+import { formatSubagentActivity, type SubagentActivityPart, type TeamTurnMeta } from "@notshekhar/loop-core";
 import { getMarkdownTheme, theme } from "../ui/theme";
 import { renderToolGroup } from "../ui/blocks/tool-group";
 import { getToolDetail } from "../ui/tool-detail";
@@ -18,7 +18,7 @@ import { ToolExecutionComponent } from "../ui/tool-execution";
 import type { FoldSpan, RunStep } from "../transcript-folds";
 import { FoldView, OpenFolds, type FoldParticipant, type FoldSlot } from "./transcript-fold-view";
 import { matchSessionHookContext } from "@notshekhar/loop-core";
-import { accentTitle, dim, err } from "../ui/text";
+import { accent, accentTitle, dim, err, ok } from "../ui/text";
 
 interface PiAssistantMessage {
     role: "assistant";
@@ -580,6 +580,47 @@ export class ChatHistory extends Container {
         } else {
             this.addUserComponent(text, ts);
         }
+        this.assistantTurn = null;
+    }
+
+    /**
+     * Something the thread team wrote into this conversation (core teams/):
+     * a member's brief from its lead, or mail between threads. Drawn as a
+     * card, not a user box — the user never typed it.
+     *
+     * Mail that reached the model between two steps (`midTurn`) goes inside
+     * the turn it interrupted; anything else opens a turn, like a prompt.
+     */
+    addTeamCard(team: TeamTurnMeta, text: string): void {
+        const lines: string[] = [];
+        if (team.kind === "spawn") {
+            const from = team.from ? `"${team.from.title}"` : "the lead";
+            lines.push(accent("⧉ ") + accentTitle(`Brief from ${from}`) + (team.title ? dim(` · this thread is "${team.title}"`) : ""));
+            const brief = text.replace(/\n\n\(Brief from "[^"]*"\. Your thread is "[^"]*"\. Call report when you are done\.\)$/, "");
+            for (const line of brief.split("\n")) lines.push(`  ${line}`);
+        } else {
+            for (const mail of team.mail ?? []) {
+                const head =
+                    mail.kind === "report"
+                        ? ok("✔ ") + accentTitle(`Report from "${mail.from.title}"`)
+                        : mail.kind === "update"
+                          ? accent("⧉ ") + dim("Team update")
+                          : accent("✉ ") + accentTitle(`Message from "${mail.from.title}"`);
+                lines.push(head);
+                for (const line of mail.text.trim().split("\n")) lines.push(`  ${dim(line)}`);
+            }
+        }
+        if (lines.length === 0) return;
+        const card = new Text(lines.join("\n"), 1, 0);
+        if (team.midTurn) {
+            // Inside the reply it interrupted: the next text block starts below it.
+            this.finishAssistant();
+            this.tail.addChild(new Spacer(1));
+            this.tail.addChild(card);
+            return;
+        }
+        this.addChild(new Spacer(1));
+        this.addChild(card);
         this.assistantTurn = null;
     }
 

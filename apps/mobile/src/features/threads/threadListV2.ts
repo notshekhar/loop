@@ -181,6 +181,45 @@ export interface ThreadListV2Item {
   /** Snoozed-shelf row: shows the wake countdown and offers Wake. */
   readonly snoozed: boolean;
   readonly isLast: boolean;
+  /** A thread team member drawn right under its lead (packages/core/src/teams). */
+  readonly teamNested?: boolean;
+}
+
+/**
+ * Thread teams: each member whose lead is in `threads` moves to just after
+ * its lead, in the order the lead started them. Everything else keeps its
+ * place. Returns the order plus which rows are nested.
+ */
+export function nestTeamThreads(threads: readonly EnvironmentThreadShell[]): {
+  readonly ordered: EnvironmentThreadShell[];
+  readonly nested: ReadonlySet<string>;
+} {
+  const key = (environmentId: string, id: string) => `${environmentId}:${id}`;
+  const present = new Set(threads.map((thread) => key(thread.environmentId, thread.id)));
+  const leadKeyOf = (thread: EnvironmentThreadShell): string | null =>
+    thread.team?.role === "member" && present.has(key(thread.environmentId, thread.team.leadThreadId))
+      ? key(thread.environmentId, thread.team.leadThreadId)
+      : null;
+  const membersByLead = new Map<string, EnvironmentThreadShell[]>();
+  for (const thread of threads) {
+    const lead = leadKeyOf(thread);
+    if (lead === null) continue;
+    const list = membersByLead.get(lead) ?? [];
+    list.push(thread);
+    membersByLead.set(lead, list);
+  }
+  const ordered: EnvironmentThreadShell[] = [];
+  const nested = new Set<string>();
+  for (const thread of threads) {
+    if (leadKeyOf(thread) !== null) continue;
+    ordered.push(thread);
+    const members = membersByLead.get(key(thread.environmentId, thread.id)) ?? [];
+    for (const member of [...members].sort((a, b) => a.id.localeCompare(b.id))) {
+      ordered.push(member);
+      nested.add(key(member.environmentId, member.id));
+    }
+  }
+  return { ordered, nested };
 }
 
 export interface ThreadListV2Layout {
@@ -434,12 +473,14 @@ export function buildThreadListV2Items(input: {
         );
 
   const items: ThreadListV2Item[] = [];
-  for (const thread of orderedActive) {
+  const activeTeams = nestTeamThreads(orderedActive);
+  for (const thread of activeTeams.ordered) {
     items.push({
       thread,
       variant: "card",
       snoozed: false,
       isLast: false,
+      ...(activeTeams.nested.has(`${thread.environmentId}:${thread.id}`) ? { teamNested: true } : {}),
     });
   }
   const snoozedShelfHeaderIndex = orderedSnoozed.length > 0 ? items.length : null;
@@ -452,12 +493,14 @@ export function buildThreadListV2Items(input: {
     });
   }
   const settledShelfHeaderIndex = orderedSettled.length > 0 ? items.length : null;
-  for (const thread of visibleSettled) {
+  const settledTeams = nestTeamThreads(visibleSettled);
+  for (const thread of settledTeams.ordered) {
     items.push({
       thread,
       variant: "slim",
       snoozed: false,
       isLast: false,
+      ...(settledTeams.nested.has(`${thread.environmentId}:${thread.id}`) ? { teamNested: true } : {}),
     });
   }
   const last = items.at(-1);

@@ -33,7 +33,11 @@ export type LedgerSource =
     // sessionPub, unlike every source above.
     | "commit-message"
     | "recipe"
-    | "handoff";
+    | "handoff"
+    // A turn a thread team started (teams/): a member's first job, a message
+    // from a teammate, a report reaching its lead. Turns the user starts in
+    // the same session stay "turn", so /cost can tell the two apart.
+    | "team";
 
 export interface LedgerContext {
     source: LedgerSource;
@@ -118,7 +122,22 @@ export function addLedgerRow(opts: {
             opts.estimated ? 1 : 0,
             opts.backfilled ? 1 : 0,
         );
-    return Number(res.lastInsertRowid);
+    const rowId = Number(res.lastInsertRowid);
+    if (opts.ctx.sessionPub) for (const listener of ledgerListeners) listener(opts.ctx.sessionPub);
+    return rowId;
+}
+
+const ledgerListeners = new Set<(sessionPub: string) => void>();
+
+/**
+ * Called with the session's id each time a row is billed to it. How a thread
+ * team's total stays live (teams/runtime.ts): a member's spend is never copied
+ * into its lead — the total is summed when asked — so the lead has to be told
+ * when there is something new to sum.
+ */
+export function onLedgerRow(listener: (sessionPub: string) => void): () => void {
+    ledgerListeners.add(listener);
+    return () => ledgerListeners.delete(listener);
 }
 
 /** Attribution back-fill: link a billed row to the entry that carried its usage. */

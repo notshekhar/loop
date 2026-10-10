@@ -26,6 +26,7 @@ import type {
     TranscriptTodo,
 } from "./types";
 import { isToolPart } from "./types";
+import { teamPartOf } from "./team";
 
 /** A subagent's log keeps its newest steps; the row says how many it dropped. */
 export const MAX_SUBAGENT_STEPS = 60;
@@ -234,14 +235,30 @@ export function applyEvent(transcript: Transcript, event: TranscriptEvent, at: n
             if (transcript.messages.some((message) => message.id === id)) return transcript;
             const createdAt = typeof record.ts === "number" ? record.ts : at;
             const text = String(record.text ?? "");
+            // A turn the thread team opened draws as a team card.
+            const team = teamPartOf(record.team as Parameters<typeof teamPartOf>[0], text);
             return {
                 ...transcript,
                 running: true,
                 messages: [
                     ...transcript.messages,
-                    { id, role: "user", parts: text ? [{ type: "text", text, state: "done" }] : [], metadata: { createdAt } },
+                    {
+                        id,
+                        role: "user",
+                        parts: team ? [team] : text ? [{ type: "text", text, state: "done" }] : [],
+                        metadata: { createdAt },
+                    },
                 ],
             };
+        }
+        case "team-message": {
+            // Mail reaching the model between two steps of this reply.
+            const team = teamPartOf(record.team as Parameters<typeof teamPartOf>[0], "");
+            if (!team) return transcript;
+            return editReply(transcript, at, (parts) => {
+                closeOpenBlock(parts, at);
+                parts.push({ ...team, data: { ...team.data, midTurn: true } });
+            });
         }
         case "attached-images": {
             const urls = Array.isArray(data) ? data.filter((url): url is string => typeof url === "string") : [];

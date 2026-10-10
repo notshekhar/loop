@@ -89,6 +89,11 @@ export interface AppDeps {
         /** Draw a turn the `/rc` server is running in this session (a phone started it). */
         followServerTurn(sessionId: string): void;
     };
+    /** Thread teams (team-sessions.ts); set once the roster exists. */
+    team?: {
+        manageTeam(args: string): Promise<void>;
+        teamLabel(sessionId: string | undefined): string;
+    };
     /** App version (undefined in dev runs). */
     version?: string;
     /** Undo the console→chat bridge before handing the terminal to a child process. */

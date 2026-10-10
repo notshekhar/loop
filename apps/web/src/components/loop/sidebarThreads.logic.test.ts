@@ -254,3 +254,41 @@ describe("one folder on two paired machines", () => {
     ]);
   });
 });
+
+describe("a thread team in the sidebar", () => {
+  const member = (id: string, extra: Record<string, unknown> = {}) =>
+    thread({
+      id,
+      title: `thread ${id}`,
+      team: { teamId: "tm_1", role: "member", leadThreadId: "lead", state: "running" },
+      ...extra,
+    });
+  const lead = thread({
+    id: "lead",
+    title: "Add CSV export",
+    team: { teamId: "tm_1", role: "lead", leadThreadId: "lead", state: "idle" },
+  });
+
+  it("draws a lead's threads under it, in the order they were started, and nowhere else", () => {
+    const sections = buildSidebarThreadSections([member("02B"), lead, member("01A"), thread({ id: "solo" })], OPTIONS);
+    const all = [...sections.needsYou, ...sections.working, ...sections.recent, ...sections.settled];
+    expect(all.map((row) => row.id).sort()).toEqual(["lead", "solo"]);
+    const leadRow = all.find((row) => row.id === "lead")!;
+    expect(leadRow.children.map((row) => row.id)).toEqual(["01A", "02B"]);
+    expect(leadRow.team).toEqual({ role: "lead", state: "idle" });
+  });
+
+  it("surfaces the lead where its most urgent thread belongs", () => {
+    const sections = buildSidebarThreadSections(
+      [lead, member("01A", { hasPendingApprovals: true }), member("02B")],
+      OPTIONS,
+    );
+    expect(sections.needsYou.map((row) => row.id)).toEqual(["lead"]);
+  });
+
+  it("leaves a thread whose lead is not listed standing on its own", () => {
+    const sections = buildSidebarThreadSections([member("01A")], OPTIONS);
+    expect(sections.recent.map((row) => row.id)).toEqual(["01A"]);
+    expect(sections.recent[0]!.team?.role).toBe("member");
+  });
+});

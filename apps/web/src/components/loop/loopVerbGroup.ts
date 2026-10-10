@@ -143,6 +143,13 @@ const KIND = {
   // work proceeds against it. Folding it into a count would hide the one thing
   // on screen that the rest of the turn is judged against.
   plan: { past: "Planned", present: "Planning", nounOne: "plan", nounMany: "plans", folds: false },
+  // Thread teams (packages/core/src/teams): what you follow a team by keeps
+  // its own card; the chatter between threads folds like any run.
+  spawn: { past: "Started", present: "Starting", nounOne: "thread team", nounMany: "thread teams", folds: false },
+  wait: { past: "Waited for", present: "Waiting for", nounOne: "the team", nounMany: "the team", folds: false },
+  report: { past: "Reported", present: "Reporting", nounOne: "to the lead", nounMany: "to the lead", folds: false },
+  message: { past: "Messaged", present: "Messaging", nounOne: "teammate", nounMany: "teammates", folds: true },
+  board: { past: "Updated", present: "Updating", nounOne: "team board", nounMany: "team board", folds: true },
 } as const satisfies Record<string, VerbGroupKind>;
 
 export type VerbGroupKindId = keyof typeof KIND;
@@ -171,6 +178,11 @@ const BUILTIN: Record<string, VerbGroupKindId> = {
   plan: "plan",
   enter_plan_mode: "plan",
   exit_plan_mode: "plan",
+  spawn_threads: "spawn",
+  wait_for_team: "wait",
+  report: "report",
+  send_message: "message",
+  team_board: "board",
 };
 
 /**

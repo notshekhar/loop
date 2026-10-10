@@ -18,6 +18,7 @@ import type {
 } from "./types";
 import { isToolPart } from "./types";
 import { resultFailure } from "./reduce";
+import { teamPartOf, type TeamEntryMeta } from "./team";
 
 /** The parts of a saved entry this reads (packages/core/src/types.ts Entry). */
 interface EntryLike {
@@ -47,7 +48,10 @@ interface EntryLike {
     readonly usd?: number;
     // custom
     readonly payload?: unknown;
+    // a user message the thread team wrote (teams/)
+    readonly team?: TeamEntryMeta;
 }
+
 
 interface ContentPart {
     readonly type?: string;
@@ -215,13 +219,18 @@ export function fromEntries(
         const at = entry.ts ?? 0;
         if (entry.type === "message") {
             if (messageIndex++ >= cutAt) drawBoundary();
-            if (entry.role === "user") {
+            const team = entry.role === "user" ? teamPartOf(entry.team, typeof entry.content === "string" ? entry.content : "") : null;
+            if (team?.data.midTurn) {
+                // Mail handed over between two steps: part of the reply it
+                // interrupted, drawn where it arrived.
+                currentReply(at).parts.push(team);
+            } else if (entry.role === "user") {
                 attachRuns();
                 reply = null;
                 messages.push({
                     id: entry.id ?? `entry-${position}`,
                     role: "user",
-                    parts: userParts(entry.content),
+                    parts: team ? [team] : userParts(entry.content),
                     metadata: { createdAt: at },
                 });
             } else if (entry.role === "assistant") {

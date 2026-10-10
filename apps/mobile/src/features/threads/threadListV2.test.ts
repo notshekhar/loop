@@ -21,6 +21,7 @@ import {
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
   resolveThreadListV2SwipeActions,
+  nestTeamThreads,
   sortThreadsForListV2,
 } from "./threadListV2";
 
@@ -800,3 +801,30 @@ describe("buildThreadListV2ListItems", () => {
     ]);
   });
 });
+
+describe("thread teams in the list", () => {
+  const team = (role: "lead" | "member") => ({
+    teamId: "tm_1",
+    role,
+    leadThreadId: ThreadId.make("lead"),
+    state: "running",
+  });
+
+  it("puts a lead's threads right under it, in the order they were started", () => {
+    const threads = [
+      makeThread({ id: ThreadId.make("02b"), title: "UI", team: team("member") }),
+      makeThread({ id: ThreadId.make("solo"), title: "Solo" }),
+      makeThread({ id: ThreadId.make("lead"), title: "Lead", team: team("lead") }),
+      makeThread({ id: ThreadId.make("01a"), title: "API", team: team("member") }),
+    ];
+    const { ordered, nested } = nestTeamThreads(threads);
+    expect(ordered.map((t) => t.id)).toEqual(["solo", "lead", "01a", "02b"]);
+    expect([...nested].sort()).toEqual([`${environmentId}:01a`, `${environmentId}:02b`]);
+  });
+
+  it("leaves a thread whose lead is not in the list where it was", () => {
+    const threads = [makeThread({ id: ThreadId.make("01a"), title: "API", team: team("member") })];
+    expect(nestTeamThreads(threads)).toMatchObject({ ordered: threads, nested: new Set() });
+  });
+});
+

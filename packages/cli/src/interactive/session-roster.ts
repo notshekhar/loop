@@ -13,6 +13,7 @@ import {
     type CommandContext,
     type LiveStatus,
     type SessionManager,
+    type TeamTurnMeta,
     type UsageBlock,
 } from "@notshekhar/loop-core";
 import type { Editor, SelectItem, TUI } from "@notshekhar/loop-tui";
@@ -141,8 +142,11 @@ export interface SessionRoster {
     setRemoteRunner(factory: (slot: SessionSlot) => (raw: string) => Promise<void>): void;
 }
 
-/** What a slot's input goes through; `chatOnly` marks a remote client's message. */
-export type SlotRunner = (raw: string, opts?: { chatOnly?: boolean }) => Promise<void>;
+/**
+ * What a slot's input goes through; `chatOnly` marks a remote client's
+ * message, `team` a turn the thread team started (core teams/).
+ */
+export type SlotRunner = (raw: string, opts?: { chatOnly?: boolean; team?: TeamTurnMeta }) => Promise<void>;
 
 export function createSessionRoster(host: SessionRosterHost): SessionRoster {
     const { slots, shared, deps, tui, editor, statusLine, manager, indicator } = host;
@@ -264,7 +268,7 @@ export function createSessionRoster(host: SessionRosterHost): SessionRoster {
             // only forwards what is typed and renders what comes back.
             const runner =
                 slot.remote && remoteRunner ? remoteRunner(slot) : createTurnRunner(viewOf(slot), depsFor(slot), host.ctx);
-            run = (raw: string, opts?: { chatOnly?: boolean }) => {
+            run = (raw: string, opts?: { chatOnly?: boolean; team?: TeamTurnMeta }) => {
                 const text = raw.trim();
                 if (!slot.firstPrompt && text && !text.startsWith("/") && !text.startsWith("!")) {
                     slot.firstPrompt = text.split("\n")[0].slice(0, 120);
@@ -368,7 +372,7 @@ export function createSessionRoster(host: SessionRosterHost): SessionRoster {
                     label: `${liveGlyph(slot)} ${slotTitle(slot)}`,
                     // The machine leads the description: a host name is long,
                     // and the label column is cut to fit.
-                    description: `${slots.isForeground(slot) ? HERE : ""}${slot.remote ? `on ${slot.remote.host.label} · ` : ""}${liveActivity(slot)}${formatAge(now - slot.lastActivityAt)}`,
+                    description: `${slots.isForeground(slot) ? HERE : ""}${slot.remote ? `on ${slot.remote.host.label} · ` : ""}${deps.team?.teamLabel(slot.session?.id) ?? ""}${liveActivity(slot)}${formatAge(now - slot.lastActivityAt)}`,
                 };
             }),
         ];

@@ -18,6 +18,7 @@ export {
     attachLedgerEntry,
     auditLedger,
     getCostBaseline,
+    onLedgerRow,
     sumLedgerForSession,
     type LedgerAudit,
     type LedgerSource,

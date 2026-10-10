@@ -23,6 +23,7 @@ export const RIGHT_PANEL_KINDS = [
   "terminal",
   "artifacts",
   "artifact",
+  "team",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -67,7 +68,9 @@ export type RightPanelSurface =
    */
   | { id: `artifact:${string}`; kind: "artifact"; resourceId: string }
   /** The index: every artifact, this chat's first. A singleton, like Files. */
-  | { id: "artifacts"; kind: "artifacts" };
+  | { id: "artifacts"; kind: "artifacts" }
+  /** The thread team this chat is in (lead or thread): every thread, live. */
+  | { id: "team"; kind: "team" };
 
 const RIGHT_PANEL_STORAGE_KEY = "loop:right-panel-state:v2";
 /**
@@ -141,6 +144,8 @@ const singletonSurface = (
       return { id: "plan", kind };
     case "artifacts":
       return { id: "artifacts", kind };
+    case "team":
+      return { id: "team", kind };
   }
 };
 

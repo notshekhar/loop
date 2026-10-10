@@ -92,6 +92,16 @@ export interface AppSettings {
      * start as slots free up. Default 4; 0 = unlimited.
      */
     subagentMaxParallel?: number;
+    /**
+     * Thread teams (teams/): the agent may split a job across threads that run
+     * in parallel, message each other and report back. Default OFF — while off
+     * the team tools are never offered and nothing team-shaped is created.
+     */
+    threadTeams?: boolean;
+    /** Most threads one team may hold (lead not counted). Default 5, max 20. */
+    threadTeamsMaxThreads?: number;
+    /** Stop a team once everything billed to it reaches this many USD. Unset = no limit. */
+    threadTeamsBudgetUsd?: number;
     /** Post-turn recap under responses that wrote/edited files. Default off. */
     recap?: boolean;
     /** Let the agent pause mid-turn to ask multiple-choice questions (ask

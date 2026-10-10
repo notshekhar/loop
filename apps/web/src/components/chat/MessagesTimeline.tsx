@@ -44,6 +44,7 @@ import {
   loopCompactOf,
   loopHookOf,
   loopRecapOf,
+  loopTeamOf,
   loopThinkingOf,
   loopToolOf,
 } from "../loop/loopEntry";
@@ -54,6 +55,7 @@ import { LoopThinkingRow } from "../loop/LoopThinkingRow";
 import { GeneratingIndicator } from "./GeneratingIndicator";
 import { LoopToolGroupRow } from "../loop/LoopToolGroupRow";
 import { LoopToolRow } from "../loop/LoopToolRow";
+import { LoopTeamCard } from "../loop/LoopTeam";
 import { groupToolRuns } from "../loop/loopVerbGroup";
 import {
   BotIcon,
@@ -1983,6 +1985,8 @@ const WorkEntryRow = memo(function WorkEntryRow(props: {
   if (recap) return <LoopRecapRow recap={recap} />;
   const hook = loopHookOf(workEntry);
   if (hook) return <LoopHookRow hook={hook} />;
+  const team = loopTeamOf(workEntry);
+  if (team) return <LoopTeamCard team={team} threadRef={threadRef} />;
   const thinking = loopThinkingOf(workEntry);
   if (thinking) return <LoopThinkingRow thinking={thinking} />;
   const tool = loopToolOf(workEntry);

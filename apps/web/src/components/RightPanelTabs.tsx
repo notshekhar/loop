@@ -7,6 +7,7 @@ import {
   FileTextIcon,
   Globe2,
   LayersIcon,
+  NetworkIcon,
   Plus,
   TerminalSquare,
   X,
@@ -230,6 +231,8 @@ function surfaceTitle(
       return "Plan";
     case "artifacts":
       return "Artifacts";
+    case "team":
+      return "Team";
     case "artifact":
       // The id, until the panel below resolves the real title. A tab that said
       // "Artifact" would be indistinguishable from the next one.
@@ -284,6 +287,8 @@ function SurfaceIcon({
       return <Files className="size-3.5 shrink-0" />;
     case "artifacts":
       return <LayersIcon className="size-3.5 shrink-0" />;
+    case "team":
+      return <NetworkIcon className="size-3.5 shrink-0" />;
     case "artifact":
       return <FileTextIcon className="size-3.5 shrink-0" />;
     case "file":

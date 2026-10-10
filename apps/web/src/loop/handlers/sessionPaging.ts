@@ -128,6 +128,15 @@ export function pinSession(hostId: string, sessionId: string): () => void {
   };
 }
 
+/**
+ * Rebuild the shell for a host now. For news the shell cannot hear on its own
+ * — a thread team's threads starting and stopping, which the team panel learns
+ * from its own subscription (team.ts).
+ */
+export function refreshSessionWindow(hostId: string): void {
+  changed(hostId);
+}
+
 // ── what the UI calls ────────────────────────────────────────────────────
 
 /**

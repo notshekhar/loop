@@ -11,7 +11,10 @@ import {
     parseModelId,
     runInSession,
     runTurn,
+    teamOf,
     TURN_EVENT_NAMES,
+    wakeTeamInbox,
+    type TeamTurnMeta,
 } from "@notshekhar/loop-core";
 import { wrapSessionHookContext } from "@notshekhar/loop-core";
 import type { AppDeps } from "./deps";
@@ -134,8 +137,12 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
         if (editor.onSubmit) void editor.onSubmit(next);
     };
 
-    /** `chatOnly`: a message from a remote client — never a command here. */
-    const onSubmit = async (raw: string, opts?: { chatOnly?: boolean }) => {
+    /**
+     * `chatOnly`: a message from a remote client — never a command here.
+     * `team`: the thread team started this turn (a member's brief, mail that
+     * woke it) — drawn as a team card and passed to the turn as such.
+     */
+    const onSubmit = async (raw: string, opts?: { chatOnly?: boolean; team?: TeamTurnMeta }) => {
         const text = raw.trim();
         if (!text) {
             drainNext();
@@ -229,8 +236,14 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
         // SessionStart hook context must persist in the transcript (the model
         // needs it in history on every later turn), but the tag lets the TUI
         // collapse it instead of rendering it as if the user typed it.
-        const finalInput = state.pendingInjection ? wrapSessionHookContext(state.pendingInjection, text) : text;
-        state.pendingInjection = null;
+        // A team turn carries the team's words, not the user's: the user's own
+        // pending `!` context waits for the next thing they type.
+        const finalInput = opts?.team
+            ? text
+            : state.pendingInjection
+              ? wrapSessionHookContext(state.pendingInjection, text)
+              : text;
+        if (!opts?.team) state.pendingInjection = null;
 
         // One-shot agent (/<agent> <message>) applies to exactly this turn.
         const turnAgent = state.oneShotAgent ?? state.agent;
@@ -238,7 +251,8 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
 
         const activeSession = await ensureSession();
         state.busy = true;
-        history.addUser(finalInput);
+        if (opts?.team) history.addTeamCard(opts.team, finalInput);
+        else history.addUser(finalInput);
         // The message just sent is the thing to look at — and this is the one
         // place a pinned transcript should move on its own.
         deps.scrollTranscriptToEnd();
@@ -338,6 +352,7 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
                     emitter,
                     thinkingLevel: state.thinkingLevel,
                     agent: turnAgent,
+                    ...(opts?.team ? { team: opts.team } : {}),
                 }),
             );
         } catch (err) {
@@ -388,6 +403,9 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
             // Drain the next queued input (FIFO), whatever its type. Each fresh
             // turn/command re-reads state.
             drainNext();
+            // A thread team member: mail that arrived after its last step
+            // starts its next turn (no-op while a queued input is running).
+            if (teamOf(activeSession.id)) wakeTeamInbox(activeSession.id);
         }
     };
 

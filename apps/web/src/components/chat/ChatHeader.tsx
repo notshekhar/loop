@@ -17,6 +17,7 @@ import ProjectScriptsControl, {
 import { OpenInPicker } from "./OpenInPicker";
 import { SessionInsights } from "../loop/SessionInsights";
 import { SessionTreeDialog } from "../loop/SessionTreeDialog";
+import { TeamHeaderButton, TeamLeadCrumb } from "../loop/TeamHeader";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useLoopProjectFileScripts } from "~/hooks/useLoopProjectFileScripts";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -133,12 +134,13 @@ export const ChatHeader = memo(function ChatHeader({
             </span>
           </span>
         ) : null}
+        <TeamLeadCrumb environmentId={activeThreadEnvironmentId} threadId={activeThreadId} />
         <Tooltip>
           <TooltipTrigger
             render={
               <h2
                 aria-label={activeThreadTitle}
-                className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
+                className="min-w-24 flex-1 truncate text-sm font-medium text-foreground"
               >
                 {activeThreadTitle}
               </h2>
@@ -171,6 +173,7 @@ export const ChatHeader = memo(function ChatHeader({
         )}
         {/* Ahead of the per-project controls, because it is about THIS
             conversation rather than the project it lives in. */}
+        <TeamHeaderButton environmentId={activeThreadEnvironmentId} threadId={activeThreadId} />
         <SessionInsights cwd={activeProjectCwd} running={isTurnRunning} sessionId={loopSessionId} />
         <SessionTreeDialog
           cwd={activeProjectCwd}

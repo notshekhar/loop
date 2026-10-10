@@ -113,7 +113,46 @@ export interface BranchSummaryPart {
     data: { summary: string };
 }
 
+/** One teammate, as a team card names them. */
+export interface TeamPeerRef {
+    readonly id: string;
+    readonly title: string;
+}
+
+/** One piece of team mail on a card. */
+export interface TeamMailItem {
+    readonly id: number;
+    readonly from: TeamPeerRef;
+    readonly kind: "message" | "report" | "update";
+    readonly text: string;
+    readonly ts: number;
+}
+
+/**
+ * Something the thread team wrote into this conversation (packages/core/src/
+ * teams): a member's brief from its lead ("spawn"), or mail between threads
+ * ("mail"). Opens a turn as the user message's only part, or — `midTurn` —
+ * sits inside a reply where it reached the model between two steps.
+ */
+export interface TeamPart {
+    readonly type: "data-team";
+    data: {
+        kind: "spawn" | "mail";
+        teamId: string;
+        /** spawn: the lead that started this thread. */
+        from?: TeamPeerRef;
+        /** spawn: this thread's title. */
+        title?: string;
+        /** spawn: the brief, as the thread received it. */
+        text?: string;
+        /** mail: what arrived. */
+        mail?: TeamMailItem[];
+        midTurn?: boolean;
+    };
+}
+
 export type TranscriptPart =
+    | TeamPart
     | TextPart
     | ReasoningPart
     | ToolPart

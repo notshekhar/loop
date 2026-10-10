@@ -57,6 +57,22 @@ export interface ThreadFeedActivity {
   readonly status: "success" | "failure" | "neutral" | null;
   /** loop's own record of the call (payload.loopTool), when this is one. */
   readonly loopTool?: GroupableTool;
+  /** Something the thread team wrote into this thread (payload.loopTeam), drawn as a card. */
+  readonly team?: ThreadFeedTeamCard;
+}
+
+/** A thread team's brief or mail (packages/core/src/teams), as the feed's card reads it. */
+export interface ThreadFeedTeamCard {
+  readonly kind: "spawn" | "mail";
+  readonly from?: { readonly threadId: string; readonly title: string };
+  readonly title?: string;
+  readonly text?: string;
+  readonly mail?: ReadonlyArray<{
+    readonly id: number;
+    readonly kind: "message" | "report" | "update";
+    readonly from: { readonly threadId: string; readonly title: string };
+    readonly text: string;
+  }>;
 }
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
@@ -78,6 +94,7 @@ interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   toolData?: unknown;
+  team?: ThreadFeedTeamCard;
   loopTool?: GroupableTool;
 }
 
@@ -271,6 +288,40 @@ function extractLoopTool(payload: Record<string, unknown> | null): GroupableTool
   return { name: record.name, isError: record.isError === true, isPartial: record.isPartial === true };
 }
 
+/** A team card's data (payload.loopTeam, written by apps/web loop/handlers/thread.ts). */
+function extractLoopTeam(payload: Record<string, unknown> | null): ThreadFeedTeamCard | null {
+  const team = payload?.loopTeam;
+  if (!team || typeof team !== "object") return null;
+  const record = team as Record<string, unknown>;
+  if (record.kind !== "spawn" && record.kind !== "mail") return null;
+  const peer = (value: unknown) => {
+    const p = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+    if (!p || typeof p.id !== "string") return null;
+    return {
+      threadId: typeof p.threadId === "string" ? p.threadId : p.id,
+      title: typeof p.title === "string" && p.title.trim() ? p.title : "a thread",
+    };
+  };
+  const from = peer(record.from);
+  const mail = Array.isArray(record.mail)
+    ? record.mail.flatMap((raw) => {
+        const item = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+        const sender = peer(item?.from);
+        if (!item || !sender || typeof item.text !== "string") return [];
+        const kind: "message" | "report" | "update" =
+          item.kind === "report" || item.kind === "update" ? item.kind : "message";
+        return [{ id: typeof item.id === "number" ? item.id : 0, kind, from: sender, text: item.text }];
+      })
+    : undefined;
+  return {
+    kind: record.kind,
+    ...(from ? { from } : {}),
+    ...(typeof record.title === "string" ? { title: record.title } : {}),
+    ...(typeof record.text === "string" ? { text: record.text } : {}),
+    ...(mail ? { mail } : {}),
+  };
+}
+
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
   if (activity.kind !== "tool.updated" && activity.kind !== "tool.completed") {
     return false;
@@ -319,6 +370,8 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   };
   const loopTool = extractLoopTool(payload);
   if (loopTool) entry.loopTool = loopTool;
+  const team = extractLoopTeam(payload);
+  if (team) entry.team = team;
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
   if (
@@ -1516,6 +1569,7 @@ export function buildThreadFeed(
               toolLike: workLogEntryIsToolLike(entry),
               status: workEntryStatus(entry),
               ...(entry.loopTool ? { loopTool: entry.loopTool } : {}),
+              ...(entry.team ? { team: entry.team } : {}),
             },
           };
         }),

@@ -74,6 +74,7 @@ import {
 } from "./terminal.ts";
 import { threadStream } from "./thread.ts";
 import { readSessionInsights } from "./insights.ts";
+import { getTeamSetting, setTeamSetting, stopTeam, teamStream } from "./team.ts";
 import { subscribeLiveTurns } from "./liveTurn.ts";
 
 const notPorted = (method: string) =>
@@ -218,6 +219,10 @@ export const makeHandlers = (options: HandlerOptions) => {
   "server.retryResourceTelemetry": () => fail("server.retryResourceTelemetry"),
   "server.signalProcess": () => fail("server.signalProcess"),
   "session.insights": (input) => readSessionInsights(input, host),
+  subscribeTeam: (input) => teamStream(input.threadId, host),
+  "team.stop": (input) => stopTeam(input, host),
+  "team.setting.get": () => getTeamSetting(host),
+  "team.setting.set": (input) => setTeamSetting(input, host),
   "cloud.getRelayClientStatus": () => fail("cloud.getRelayClientStatus"),
   "cloud.installRelayClient": () => failStream("cloud.installRelayClient"),
   "server.reportClientActivity": () => fail("server.reportClientActivity"),

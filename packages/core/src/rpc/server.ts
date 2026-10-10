@@ -111,6 +111,19 @@ import {
     type RpcResponse,
 } from "./protocol";
 import type { ProviderId } from "../types";
+import {
+    claimTeamRuntime,
+    forgetTeamSession,
+    onTeamChange,
+    releaseTeamRuntime,
+    stopTeam,
+    teamOf,
+    teamsOf,
+    teamSnapshot,
+    teamSnapshotForSession,
+    wakeTeamInbox,
+    type TeamTurnMeta,
+} from "../teams";
 
 /**
  * The provider half of a `provider/model` id, or null when it has no provider.
@@ -167,6 +180,8 @@ const RPC_METHODS = [
     "session.branch",
     "session.fork",
     "session.archive",
+    "team.get",
+    "team.stop",
     "agent.list",
     "agent.get",
     "agent.save",
@@ -234,6 +249,12 @@ const WEB_SETTINGS: ReadonlyArray<{ key: keyof AppSettings; label: string; descr
         def: false,
     },
     { key: "todos", label: "todos", description: "visible checklist during multi-step tasks", def: false },
+    {
+        key: "threadTeams",
+        label: "thread teams",
+        description: "let the agent split a job across threads that work in parallel and report back",
+        def: false,
+    },
     {
         key: "backgroundShells",
         label: "background shells",
@@ -336,6 +357,8 @@ interface ActiveSession {
      * later events — none of them rebuilds a turn from history on its own.
      */
     transcript: Transcript;
+    /** Team turns handed over while one was running — run next (teams/). */
+    pendingTeam?: Array<{ input: string; team: TeamTurnMeta }>;
 }
 
 type Transport = {
@@ -376,8 +399,11 @@ export interface LiveSessionProvider {
 /** What `session.status` tells every client (see `announce`). */
 export interface SessionStatusNotice {
     readonly sessionId: string;
-    readonly change: "running" | "created" | "renamed" | "archived" | "deleted";
+    readonly change: "running" | "created" | "renamed" | "archived" | "deleted" | "team";
     readonly running?: boolean;
+    /** change "team": which team, and what moved in it (teams/runtime.ts TeamChange). */
+    readonly teamId?: string;
+    readonly teamChange?: "members" | "activity" | "cost" | "board";
 }
 
 /** A session's saved branch as loop's transcript, its checklist with it. */
@@ -409,6 +435,8 @@ export class RpcServer {
      * otherwise an early session.send could run a turn before extension
      * tools/providers exist. */
     private ready: Promise<void>;
+
+    private readonly offTeamChange: () => void;
 
     /** askId -> the tool call waiting on `session.answer`. */
     private pendingAsks = new Map<string, (answers: AskAnswer[]) => void>();
@@ -445,6 +473,25 @@ export class RpcServer {
                 ask: (questions, opts) => this.askOverRpc(questions, opts),
             });
         }
+        // Thread teams: this server runs a team's member turns itself — unless
+        // it is embedded in a TUI (`live`), whose own sessions they are.
+        if (!this.live) {
+            claimTeamRuntime(this, {
+                deliver: (sessionId, input, team) => this.deliverTeamTurn(sessionId, input, team),
+                isRunning: (sessionId) => this.sessions.get(sessionId)?.running === true,
+                cancel: (sessionId) => this.cancelOwnTurn(sessionId),
+            });
+        }
+        // Every client hears when a team moves, the way it hears a session
+        // start running — the panels and lists redraw from it.
+        this.offTeamChange = onTeamChange((change) => {
+            this.announce({
+                sessionId: change.sessionId ?? "",
+                change: "team",
+                teamId: change.teamId,
+                teamChange: change.kind,
+            });
+        });
         this.ready = (async () => {
             await getExtensionHost().init();
             await registerBuiltins(this.commands);
@@ -659,6 +706,8 @@ export class RpcServer {
      * Idempotent — a surface may reach it from both a signal and a stream end.
      */
     dispose(): number {
+        this.offTeamChange();
+        releaseTeamRuntime(this);
         for (const ctx of this.sessions.values()) {
             ctx.abort.abort();
             ctx.subscribers.clear();
@@ -709,6 +758,7 @@ export class RpcServer {
     private get handlers(): Record<string, RpcMethodHandler> {
         this.methodHandlers ??= {
             ...this.sessionHandlers(),
+            ...this.teamHandlers(),
             ...this.agentHandlers(),
             ...this.authHandlers(),
             ...this.catalogHandlers(),
@@ -796,8 +846,11 @@ export class RpcServer {
                     ...(typeof params.offset === "number" ? { offset: params.offset } : {}),
                     ...(Array.isArray(params.ids) ? { ids: params.ids.map(String) } : {}),
                 };
-                return this.manager.list(params.cwd as string | undefined, scope, page).map((row) => {
+                const rows = this.manager.list(params.cwd as string | undefined, scope, page);
+                const teams = teamsOf(rows.map((row) => row.id));
+                return rows.map((row) => {
                     const ctx = this.sessions.get(row.id);
+                    const team = teams.get(row.id);
                     // `model`/`provider` on the row are the session's CREATION
                     // model. `lastModel` is what it is actually running now, so
                     // a client that shows a model never contradicts /model.
@@ -808,6 +861,11 @@ export class RpcServer {
                         lastProvider: providerOfModel(model) ?? row.provider,
                         running: ctx?.running ?? false,
                         attached: ctx?.subscribers.size ?? 0,
+                        // Thread teams: where this session sits in one, so a
+                        // list can nest members under their lead.
+                        ...(team
+                            ? { team: { id: team.teamId, role: team.role, leadId: team.leadId, state: team.state } }
+                            : {}),
                     };
                 });
             },
@@ -962,32 +1020,7 @@ export class RpcServer {
                 const agent = typeof params.agent === "string" ? params.agent.trim() : "";
                 if (agent && !agentExists(agent)) throw new Error(`Unknown agent: ${agent}`);
                 ctx.modelId = modelId;
-                this.setRunning(id, ctx, true);
-                // run async; events stream via notifications
-                // Inside runInSession so the ask tool can tell which session
-                // is asking — it follows the call through every await.
-                void runInSession(id, () =>
-                    runTurn({
-                        session: ctx.session,
-                        modelId,
-                        userInput: input,
-                        cwd: ctx.session.info.cwd,
-                        abortSignal: ctx.abort.signal,
-                        tracker: ctx.tracker,
-                        emitter: ctx.emitter,
-                        thinkingLevel: thinking,
-                        ...(agent ? { agent } : {}),
-                    })
-                        .catch((err) => {
-                            // Same channel + shape as the emitter's "error" event, so a
-                            // client has one error path to handle, not two. Broadcast
-                            // (not just the sender): every watcher needs the turn end.
-                            this.broadcast(id, ctx, { type: "error", data: String(err) });
-                        })
-                        .finally(() => {
-                            this.setRunning(id, ctx, false);
-                        }),
-                );
+                this.startTurn(id, ctx, input, { modelId, ...(thinking ? { thinking } : {}), ...(agent ? { agent } : {}) });
                 return { ok: true };
             },
             "session.rename": async (params) => {
@@ -1132,6 +1165,7 @@ export class RpcServer {
                 // or killed again by anyone.
                 killSessionShells(id);
                 const deleted = this.manager.delete(id);
+                if (deleted) forgetTeamSession(id);
                 if (deleted) this.announce({ sessionId: id, change: "deleted" });
                 return { ok: deleted, sessionId: id };
             },
@@ -1173,6 +1207,97 @@ export class RpcServer {
                 }
             },
         };
+    }
+
+    /** Thread teams (teams/): the panel's data, and its Stop button. */
+    private teamHandlers(): Record<string, RpcMethodHandler> {
+        return {
+            "team.get": (params) => {
+                // By team or by any thread in it — a member's view asks with
+                // its own session id and gets the whole team back.
+                if (typeof params.teamId === "string" && params.teamId) return teamSnapshot(params.teamId);
+                if (typeof params.sessionId === "string" && params.sessionId) {
+                    return teamSnapshotForSession(params.sessionId);
+                }
+                throw new Error("team.get needs a teamId or a sessionId");
+            },
+            "team.stop": (params) => {
+                const teamId =
+                    typeof params.teamId === "string" && params.teamId
+                        ? params.teamId
+                        : typeof params.sessionId === "string"
+                          ? teamOf(params.sessionId)?.teamId
+                          : undefined;
+                if (!teamId) throw new Error("team.stop needs a teamId or a sessionId in a team");
+                stopTeam(teamId);
+                // A turn in a TUI-run session is the TUI's to stop.
+                const snapshot = teamSnapshot(teamId);
+                for (const member of snapshot ? [snapshot.lead, ...snapshot.members] : []) {
+                    this.live?.get(member.id)?.cancel();
+                }
+                return { ok: true, teamId };
+            },
+        };
+    }
+
+    /**
+     * Run a team turn in a session this server holds (TeamRuntime.deliver).
+     * Queued behind a turn already running there, which the team only does
+     * in a race — mail to a busy thread normally waits in its inbox.
+     */
+    private async deliverTeamTurn(sessionId: string, input: string, team: TeamTurnMeta): Promise<void> {
+        const ctx = await this.ensureCtx(sessionId);
+        if (ctx.running) {
+            (ctx.pendingTeam ??= []).push({ input, team });
+            return;
+        }
+        this.startTurn(sessionId, ctx, input, { modelId: ctx.modelId, team, ...(team.agent ? { agent: team.agent } : {}) });
+    }
+
+    /**
+     * Start a turn this server runs itself; events stream to every subscriber.
+     * The turn's end is where a team thread picks up mail that arrived too
+     * late for its last step.
+     */
+    private startTurn(
+        id: string,
+        ctx: ActiveSession,
+        input: string,
+        opts: { modelId: string; thinking?: ThinkingLevel; agent?: string; team?: TeamTurnMeta },
+    ): void {
+        this.setRunning(id, ctx, true);
+        // run async; events stream via notifications
+        // Inside runInSession so the ask tool can tell which session
+        // is asking — it follows the call through every await.
+        void runInSession(id, () =>
+            runTurn({
+                session: ctx.session,
+                modelId: opts.modelId,
+                userInput: input,
+                cwd: ctx.session.info.cwd,
+                abortSignal: ctx.abort.signal,
+                tracker: ctx.tracker,
+                emitter: ctx.emitter,
+                thinkingLevel: opts.thinking,
+                ...(opts.agent ? { agent: opts.agent } : {}),
+                ...(opts.team ? { team: opts.team } : {}),
+            })
+                .catch((err) => {
+                    // Same channel + shape as the emitter's "error" event, so a
+                    // client has one error path to handle, not two. Broadcast
+                    // (not just the sender): every watcher needs the turn end.
+                    this.broadcast(id, ctx, { type: "error", data: String(err) });
+                })
+                .finally(() => {
+                    this.setRunning(id, ctx, false);
+                    const next = ctx.pendingTeam?.shift();
+                    if (next) {
+                        this.startTurn(id, ctx, next.input, { modelId: ctx.modelId, team: next.team });
+                        return;
+                    }
+                    wakeTeamInbox(id);
+                }),
+        );
     }
 
     /** Named agents and the tools each may use. */

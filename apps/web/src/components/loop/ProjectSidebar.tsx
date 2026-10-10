@@ -130,6 +130,7 @@ const ProjectThreadList = memo(function ProjectThreadList({
       {open.map((row) => (
         <SidebarThreadRow
           active={row.id === activeThreadId}
+              activeThreadId={activeThreadId}
           key={row.id}
           onArchive={onArchiveThread}
           onContextMenu={onThreadContextMenu}
@@ -149,6 +150,7 @@ const ProjectThreadList = memo(function ProjectThreadList({
           {settled.map((row) => (
             <SidebarThreadRow
               active={row.id === activeThreadId}
+              activeThreadId={activeThreadId}
               key={row.id}
               onArchive={onArchiveThread}
               onContextMenu={onThreadContextMenu}
@@ -376,6 +378,7 @@ const NeedsYouShelf = memo(function NeedsYouShelf({
         {rows.map((row) => (
           <SidebarThreadRow
             active={row.id === activeThreadId}
+              activeThreadId={activeThreadId}
             key={row.id}
             onArchive={onArchiveThread}
             onContextMenu={onThreadContextMenu}

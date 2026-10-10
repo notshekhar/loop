@@ -94,6 +94,7 @@ import { isEventTraceEnabled, setEventTraceSink, toggleEventTrace } from "./debu
 import { forwardTo, makeStateView, SlotManager, type SharedState } from "./slots";
 import { createSessionRoster, type SessionRoster } from "./session-roster";
 import { createRemoteSessions, type RemoteSessions } from "./remote-sessions";
+import { createTeamSessions, type TeamSessions } from "./team-sessions";
 import { createStatusLineRefresher } from "./status-line-refresh";
 import { createScrollbackFocus } from "./scrollback-focus";
 import { scrollTopFor } from "./transcript-scroll";
@@ -521,6 +522,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     // it before then is a closure that only runs after startup.
     let roster!: SessionRoster;
     let remoteSessions: RemoteSessions | null = null;
+    let teamSessions: TeamSessions | null = null;
 
     // Agent-status bus: the semantic working/blocked/idle state of this pane.
     // Fed by the two seams that already see everything — the working
@@ -922,6 +924,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         stopTicker();
         // Sockets to other machines, and /rc's server if it is on.
         remoteSessions?.dispose();
+        teamSessions?.dispose();
         // BEFORE tui.stop(): the exit path renders this frame one last time,
         // without a viewport, and that render is what lands in the user's
         // scrollback. A dock still mounted would print its rows there — a band
@@ -1098,6 +1101,9 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         version: opts.version,
     });
     deps.remote = remoteSessions;
+    // Thread teams: this loop runs the threads its sessions start.
+    teamSessions = createTeamSessions({ slots, roster, deps, tui, manager });
+    deps.team = teamSessions;
     tui.addInputListener(createInputHandler(state, deps, ctx));
     // The editor submits to whichever session is on screen.
     editor.onSubmit = (raw) => roster.runnerFor(slots.foreground)(raw);

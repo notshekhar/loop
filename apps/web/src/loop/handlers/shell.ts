@@ -48,6 +48,13 @@ export interface LoopSessionRow {
   readonly attached?: number;
   /** Epoch ms it was archived; absent while it is active. */
   readonly archivedAt?: number;
+  /** Its place in a thread team (packages/core/src/teams); absent when in none. */
+  readonly team?: {
+    readonly id: string;
+    readonly role: "lead" | "member";
+    readonly leadId: string;
+    readonly state: string;
+  };
 }
 
 /** A row of loop's `session.projects`: every folder with a session. */
@@ -245,6 +252,14 @@ export const buildShellSnapshot = Effect.fnUntraced(function* (
       hasPendingApprovals: false,
       hasPendingUserInput: false,
       hasActionableProposedPlan: false,
+      team: row.team
+        ? {
+            teamId: row.team.id,
+            role: row.team.role,
+            leadThreadId: clientThreadIdFor(row.team.leadId),
+            state: row.team.state,
+          }
+        : null,
     })),
     updatedAt: iso(Date.now()),
   });

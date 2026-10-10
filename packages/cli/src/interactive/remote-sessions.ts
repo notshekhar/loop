@@ -190,6 +190,8 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
             showWorking: d.showWorking,
             refreshStatusLine: d.refreshStatusLine,
             onTurnError: (e) => errors.push(e),
+            // Nothing here typed what opened this turn; a team card comes from the stream.
+            drawsTeamOpening: true,
         });
         // Esc / Ctrl+C here cancels the turn THERE.
         const signal = slot.abort.signal;
@@ -661,6 +663,8 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
             showWorking: d.showWorking,
             refreshStatusLine: d.refreshStatusLine,
             onTurnError: (e) => errors.push(e),
+            // Nothing here typed what opened this turn; a team card comes from the stream.
+            drawsTeamOpening: true,
         });
         const signal = slot.abort.signal;
         const onAbort = () => server.live.cancel(sessionId);

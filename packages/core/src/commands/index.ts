@@ -25,6 +25,13 @@ export interface CommandContext {
     manageHosts(args: string): Promise<void> | void;
     /** /rc — let other devices control this loop (`/rc off` stops). */
     remoteControl(args: string): Promise<void> | void;
+    /**
+     * /team — the thread team this session is in (teams/): every thread, its
+     * state and cost, jump to one; `stop` stops them all; `lead` (also
+     * `/lead`) goes back to the thread that started this one. Optional:
+     * surfaces without a screen to jump around on leave it out.
+     */
+    manageTeam?(args: string): Promise<void> | void;
     exit(): void;
     cwd: string;
     setCwd(p: string): void;
@@ -268,6 +275,22 @@ export async function registerBuiltins(reg: CommandRegistry, opts: { cwd?: strin
             description: "Remote control: let your phone or another loop drive this one (/rc off to stop)",
             handler: async (ctx, args) => {
                 await ctx.remoteControl(args);
+            },
+        },
+        {
+            name: "team",
+            description: "Thread team: see every thread and jump to one (/team stop stops them all)",
+            handler: async (ctx, args) => {
+                if (ctx.manageTeam) await ctx.manageTeam(args);
+                else ctx.stub("team");
+            },
+        },
+        {
+            name: "lead",
+            description: "Back to the thread that started this one (thread teams)",
+            handler: async (ctx) => {
+                if (ctx.manageTeam) await ctx.manageTeam("lead");
+                else ctx.stub("lead");
             },
         },
         {
