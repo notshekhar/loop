@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.21.11] - 2026-10-11
+
+### Fixed
+
+- **Team reports read as formatted text.** A thread's report, its brief and messages between threads showed raw markdown on the desktop and the phone. They now render like a reply — headings, lists, tables, code and file links — and copying a selection still copies the markdown.
+
 ## [0.21.10] - 2026-10-11
 
 ### Added
