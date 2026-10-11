@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.21.12] - 2026-10-11
+
+### Added
+
+- **Idle compaction.** A chat whose context is at least 70% full is compacted on its own just before its prompt cache expires, if you have not sent anything since the last reply — so coming back to it is cheaper and faster. The summary request reuses the cached conversation, so it is billed at the cached rate, and your most recent messages stay word for word. Sending anything (from the terminal, the desktop or the phone) cancels it. Only for providers with prompt caching. On by default: "idle compaction" in `/settings`, and `idleCompactMinPercent` sets the threshold.
+
 ## [0.21.11] - 2026-10-11
 
 ### Fixed
