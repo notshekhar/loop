@@ -1735,7 +1735,7 @@ label:has(> select#reasoning-effort) select {
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
   mask-composite: exclude;
-  animation: ultrathink-rainbow 10s linear infinite;
+  animation: ultrathink-rainbow 10s steps(60) infinite;
 }
 
 .ultrathink-frame > * {
@@ -1743,7 +1743,7 @@ label:has(> select#reasoning-effort) select {
 }
 
 .ultrathink-chroma {
-  animation: ultrathink-chroma-shift 10s linear infinite;
+  animation: ultrathink-chroma-shift 10s steps(60) infinite;
 }
 
 .ultrathink-pill {
@@ -1756,7 +1756,7 @@ label:has(> select#reasoning-effort) select {
   background-position:
     0 0,
     0% 50%;
-  animation: ultrathink-rainbow 10s linear infinite;
+  animation: ultrathink-rainbow 10s steps(60) infinite;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--card) 82%, transparent);
 }
 
@@ -1768,7 +1768,7 @@ label:has(> select#reasoning-effort) select {
   background-position: 0% 50%;
   background-clip: text;
   -webkit-background-clip: text;
-  animation: ultrathink-rainbow 10s linear infinite;
+  animation: ultrathink-rainbow 10s steps(60) infinite;
 }
 
 /* Composer chips are non-editable decorators, so the browser skips them when
@@ -1907,8 +1907,9 @@ label:has(> select#reasoning-effort) select {
   --loop-gen-b: #7c5cff;
   --loop-gen-c: #22d3ee;
   color: var(--muted-foreground);
-  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--loop-gen-b) 45%, transparent));
-  animation: loop-gen-hue 6s ease-in-out infinite alternate;
+  /* A still glow: an animated filter repaints the mark every frame, and was
+     the single most expensive thing on screen while an agent worked. */
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--loop-gen-b) 50%, transparent));
 }
 
 .dark .loop-gen-mark {
@@ -1929,10 +1930,14 @@ label:has(> select#reasoning-effort) select {
 }
 
 /* The comet and its tail share one clock; the tail starts 20 units behind
-   and is 20 units longer, so both end on the comet's head. */
+   and is 20 units longer, so both end on the comet's head.
+
+   Stepped, not linear: a dash offset cannot run on the compositor, so every
+   frame is a repaint — 120 a second on a ProMotion display. Sixteen steps over
+   1.6s is 10fps, which still reads as motion for a comet this small. */
 .loop-gen-comet,
 .loop-gen-tail {
-  animation: loop-gen-run 1.6s linear infinite;
+  animation: loop-gen-run 1.6s steps(16) infinite;
 }
 
 .loop-gen-comet {
@@ -1954,17 +1959,6 @@ label:has(> select#reasoning-effort) select {
   }
 }
 
-@keyframes loop-gen-hue {
-  from {
-    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--loop-gen-b) 45%, transparent))
-      hue-rotate(0deg);
-  }
-  to {
-    filter: drop-shadow(0 0 5px color-mix(in srgb, var(--loop-gen-b) 60%, transparent))
-      hue-rotate(-40deg);
-  }
-}
-
 .loop-gen-shimmer {
   color: transparent;
   background-image: linear-gradient(
@@ -1978,7 +1972,8 @@ label:has(> select#reasoning-effort) select {
   background-size: 250% 100%;
   -webkit-background-clip: text;
   background-clip: text;
-  animation: loop-gen-shimmer 2.4s linear infinite;
+  /* Stepped for the same reason as the comet: ~10fps of repaint, not 120. */
+  animation: loop-gen-shimmer 2.4s steps(24) infinite;
 }
 
 @keyframes loop-gen-shimmer {
@@ -1993,7 +1988,7 @@ label:has(> select#reasoning-effort) select {
 .loop-gen-verb {
   animation:
     loop-gen-verb-in 320ms cubic-bezier(0.2, 0.9, 0.3, 1.2),
-    loop-gen-shimmer 2.4s linear infinite;
+    loop-gen-shimmer 2.4s steps(24) infinite;
 }
 
 @keyframes loop-gen-verb-in {
@@ -2022,4 +2017,29 @@ label:has(> select#reasoning-effort) select {
     color: var(--muted-foreground);
     background: none;
   }
+}
+
+/*
+ * Nobody is looking: pause the ambient loops. Set on <html> while the window
+ * is hidden or not in front (lib/appActivity.ts). The page keeps updating —
+ * text still streams in — only decoration stops drawing frames.
+ */
+:root[data-window-inactive]
+  :is(
+    .loop-gen-comet,
+    .loop-gen-tail,
+    .loop-gen-shimmer,
+    .loop-gen-verb,
+    .ultrathink-chroma,
+    .ultrathink-pill,
+    .ultrathink-word,
+    .animate-status-pulse,
+    .animate-status-ping,
+    .animate-sidebar-working-text,
+    .animate-skeleton,
+    .animate-pulse,
+    .animate-spin
+  ),
+:root[data-window-inactive] .ultrathink-frame::before {
+  animation-play-state: paused;
 }

@@ -261,6 +261,12 @@ function createWindow(): void {
   mainWindow.on("enter-full-screen", () => forwardToRenderer("loop:fullscreen", true));
   mainWindow.on("leave-full-screen", () => forwardToRenderer("loop:fullscreen", false));
 
+  // Ambient animations pause and display-only polls slow down while the window
+  // is not in front (apps/web lib/appActivity.ts). Sent from here because the
+  // document's own blur also fires when focus moves into a preview <webview>.
+  mainWindow.on("focus", () => forwardToRenderer("loop:window.focus", true));
+  mainWindow.on("blur", () => forwardToRenderer("loop:window.focus", false));
+
   void mainWindow.loadURL(`${RENDERER_ORIGIN}/`);
 }
 
@@ -409,6 +415,8 @@ app.whenReady().then(() => {
     "git.fileAtRevision",
     "git.refs",
     "git.status",
+    "git.watch",
+    "git.unwatch",
     "git.init",
     "git.diffPreview",
     "git.runStackedAction",
@@ -619,6 +627,7 @@ app.whenReady().then(() => {
   // Asked once on mount, because a reload mid-fullscreen would otherwise wait
   // for a transition that already happened.
   ipcMain.handle("loop:window.isFullscreen", () => mainWindow?.isFullScreen() ?? false);
+  ipcMain.handle("loop:window.isFocused", () => mainWindow?.isFocused() ?? false);
 
   createWindow();
 

@@ -15,6 +15,7 @@ import {
   forgetEventSeq,
   lastEventSeq,
   liveTurnText,
+  onLiveTurnChange,
   readLiveTurn,
 } from "./liveTurn.ts";
 
@@ -493,5 +494,31 @@ describe("a reconnected host", () => {
     host.emit(id, 2, { type: "text-delta", data: "x" });
     const turn = readLiveTurn(id);
     expect(turn && liveTurnText(turn)).toBe("x");
+  });
+});
+
+describe("streaming re-renders", () => {
+  it("coalesces a burst of deltas into one notify, and flushes before anything else", async () => {
+    const id = session();
+    beginLiveTurn(id);
+    const calls: Array<[structural: boolean]> = [];
+    const off = onLiveTurnChange((sessionId, structural) => {
+      if (sessionId === id) calls.push([structural]);
+    });
+    for (let i = 0; i < 30; i++) applyLoopEvent(id, { type: "text-delta", data: "x" });
+    // The turn has every byte at once; only listeners wait.
+    expect(liveTurnText(readLiveTurn(id)!)).toBe("x".repeat(30));
+    expect(calls).toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(calls).toEqual([[false]]);
+
+    calls.length = 0;
+    applyLoopEvent(id, { type: "text-delta", data: "y" });
+    applyLoopEvent(id, { type: "tool-input-start", data: { toolCallId: "t1", toolName: "read" } });
+    // The structural event goes out at once and carries the pending delta.
+    expect(calls).toEqual([[true]]);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(calls).toEqual([[true]]);
+    off();
   });
 });

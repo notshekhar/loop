@@ -20,11 +20,14 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
+import { installAppActivity } from "./lib/appActivity";
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
 const history = isElectron ? createHashHistory() : createBrowserHistory();
 
 const router = getRouter(history);
+
+installAppActivity();
 
 if (isElectron) {
   syncDocumentElectronPlatformClasses(navigator.platform);

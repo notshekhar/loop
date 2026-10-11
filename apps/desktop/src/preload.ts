@@ -91,9 +91,19 @@ ipcRenderer.on("loop:update.state", (_event, state: unknown) => {
   for (const listener of updateStateListeners) listener(state);
 });
 
+const gitChangeListeners = new Set<(event: { cwd: string }) => void>();
+ipcRenderer.on("loop:gitChanged", (_event, payload: { cwd: string }) => {
+  for (const listener of gitChangeListeners) listener(payload);
+});
+
 const gitActionListeners = new Set<(event: unknown) => void>();
 ipcRenderer.on("loop:gitAction", (_event, payload: unknown) => {
   for (const listener of gitActionListeners) listener(payload);
+});
+
+const focusListeners = new Set<(focused: boolean) => void>();
+ipcRenderer.on("loop:window.focus", (_event, focused: boolean) => {
+  for (const listener of focusListeners) listener(focused);
 });
 
 const fullscreenListeners = new Set<(fullscreen: boolean) => void>();
@@ -193,6 +203,13 @@ contextBridge.exposeInMainWorld("loop", {
   git: {
     refs: (cwd: string) => ipcRenderer.invoke("loop:git.refs", { cwd }),
     status: (cwd: string) => ipcRenderer.invoke("loop:git.status", { cwd }),
+    /** Push instead of poll; see core's workspace/gitWatch.ts. */
+    watch: (cwd: string, id: string) => ipcRenderer.invoke("loop:git.watch", { cwd, id }),
+    unwatch: (id: string) => ipcRenderer.invoke("loop:git.unwatch", { id }),
+    onChanged(listener: (event: { cwd: string }) => void): () => void {
+      gitChangeListeners.add(listener);
+      return () => gitChangeListeners.delete(listener);
+    },
     init: (cwd: string) => ipcRenderer.invoke("loop:git.init", { cwd }),
     diffPreview: (cwd: string, options: { baseRef?: string; ignoreWhitespace?: boolean; contextLines?: number }) =>
       ipcRenderer.invoke("loop:git.diffPreview", { cwd, ...options }),
@@ -323,6 +340,15 @@ contextBridge.exposeInMainWorld("loop", {
     onFullscreenChange(listener: (fullscreen: boolean) => void): () => void {
       fullscreenListeners.add(listener);
       return () => fullscreenListeners.delete(listener);
+    },
+    /** From BrowserWindow, not the document: focusing a <webview> blurs the
+        document while the window is still in front. */
+    isFocused(): Promise<boolean> {
+      return ipcRenderer.invoke("loop:window.isFocused");
+    },
+    onFocusChange(listener: (focused: boolean) => void): () => void {
+      focusListeners.add(listener);
+      return () => focusListeners.delete(listener);
     },
   },
   anchorCwd(): Promise<string | undefined> {

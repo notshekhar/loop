@@ -383,6 +383,13 @@ const loadSecondaryConnectionRegistration = Effect.fn(
 // the bridge, so the renderer polls; successful registrations are cached by a
 // signature of their endpoint + token until bearer credentials approach expiry.
 const PLATFORM_POLL_INTERVAL = "3 seconds";
+/**
+ * Without a desktop bridge (loop's own desktop and every browser) the
+ * topology cannot change under us — there is no secondary backend to appear —
+ * so the poll only refreshes cached credentials and need not wake the CPU
+ * every three seconds.
+ */
+const PLATFORM_POLL_INTERVAL_NO_BRIDGE = "60 seconds";
 const SECONDARY_BEARER_REFRESH_SKEW_MS = 5_000;
 
 export function secondaryBearerExpiresAtEpochMs(
@@ -588,9 +595,11 @@ const platformConnectionSourceLayer = Layer.effect(
     }).pipe(Effect.provide(FetchHttpClient.layer));
 
     return PlatformConnectionSource.of({
-      registrations: Stream.tick(PLATFORM_POLL_INTERVAL).pipe(
-        Stream.mapEffect(() => buildPlatformRegistrations),
-      ),
+      registrations: Stream.tick(
+        window.desktopBridge?.getLocalEnvironmentBootstraps
+          ? PLATFORM_POLL_INTERVAL
+          : PLATFORM_POLL_INTERVAL_NO_BRIDGE,
+      ).pipe(Stream.mapEffect(() => buildPlatformRegistrations)),
     });
   }),
 );

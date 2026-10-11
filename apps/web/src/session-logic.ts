@@ -565,6 +565,19 @@ export function deriveActivePlanState(
   };
 }
 
+/**
+ * Whether a task list still has something to do. The composer's Tasks button
+ * goes away once every step is completed or cancelled — a finished list is
+ * history, not something to keep a control open for.
+ */
+export function isTaskListFinished(
+  plan: { readonly steps?: ReadonlyArray<{ readonly status: string }> } | null,
+): boolean {
+  const steps = plan?.steps;
+  if (!steps || steps.length === 0) return false;
+  return steps.every((step) => step.status === "completed" || step.status === "cancelled");
+}
+
 export function findLatestProposedPlan(
   proposedPlans: ReadonlyArray<ProposedPlan>,
   latestTurnId: TurnId | string | null | undefined,

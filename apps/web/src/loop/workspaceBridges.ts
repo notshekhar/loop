@@ -27,6 +27,7 @@ export type WorkspaceSubscribe = (channel: string, listener: (payload: unknown) 
 export const WORKSPACE_CHANNELS = {
   terminal: "loop:terminal",
   gitAction: "loop:gitAction",
+  gitChanged: "loop:gitChanged",
 } as const;
 
 export interface WorkspaceBridges {
@@ -75,6 +76,10 @@ export function createWorkspaceBridges(call: WorkspaceCall, on: WorkspaceSubscri
     git: {
       refs: (cwd) => ask("git.refs", { cwd }),
       status: (cwd) => ask("git.status", { cwd }),
+      watch: (cwd, id) => ask("git.watch", { cwd, id }),
+      unwatch: (id) => ask("git.unwatch", { id }),
+      onChanged: (listener) =>
+        on(WORKSPACE_CHANNELS.gitChanged, (payload) => listener(payload as { cwd: string })),
       init: (cwd) => ask("git.init", { cwd }),
       diffPreview: (cwd, options) => ask("git.diffPreview", { cwd, ...options }),
       runStackedAction: (input) => ask("git.runStackedAction", input),

@@ -20,6 +20,8 @@ export function useDesktopLocalBootstraps(): ReadonlyArray<DesktopEnvironmentBoo
   useEffect(() => {
     const read = () => setBootstraps(readDesktopSecondaryBootstraps());
     read();
+    // No bridge, no topology to change: one read is the whole answer.
+    if (!window.desktopBridge?.getLocalEnvironmentBootstraps) return;
     const interval = setInterval(read, DESKTOP_LOCAL_BOOTSTRAP_POLL_MS);
     return () => clearInterval(interval);
   }, []);

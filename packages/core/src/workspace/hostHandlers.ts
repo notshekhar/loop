@@ -27,6 +27,7 @@ import {
     type GitStackedActionResult,
 } from "./gitActions";
 import { HOST_CALLBACKS, HOST_CHANNELS } from "./channels";
+import { GitWatchers } from "./gitWatch";
 import { launch, revealCommand, whichCommands } from "./launcher";
 import { cloneRepository, lookupRepository, publishRepository } from "./sourceControl";
 import { TerminalManager, type PtySpawner } from "./terminals";
@@ -67,11 +68,16 @@ export interface HostTable {
     readonly handlers: Record<string, HostHandler>;
     /** Killed when the window goes away; see `closeAll`. */
     readonly terminals: TerminalManager;
+    /** Closed with the host; see `git.watch`. */
+    readonly gitWatchers: GitWatchers;
 }
 
 export function createHostHandlers(services: HostServices): HostTable {
     const terminals = new TerminalManager(services.spawnPty);
     terminals.on("output", (event) => services.notify(HOST_CHANNELS.terminal, event));
+    const gitWatchers = new GitWatchers({
+        onChange: (cwd) => services.notify(HOST_CHANNELS.gitChanged, { cwd }),
+    });
 
     const handlers: Record<string, HostHandler> = {
         // ─── the filesystem ───────────────────────────────────────────────────
@@ -87,6 +93,16 @@ export function createHostHandlers(services: HostServices): HostTable {
         "git.refs": (p) => listRefs(p["cwd"] as string),
         "git.status": (p) => gitStatus(p["cwd"] as string),
         "git.init": (p) => gitInit(p["cwd"] as string),
+        /**
+         * Push instead of poll: `loop:gitChanged { cwd }` fires once per settled
+         * burst of changes, and the panel re-reads status then. Renewed by the
+         * client every minute (see gitWatch.ts on leases); `native: false` means
+         * the platform refused a watcher and the client should keep polling.
+         */
+        "git.watch": (p) => gitWatchers.watch(p["cwd"] as string, p["id"] as string),
+        "git.unwatch": (p) => {
+            gitWatchers.unwatch(p["id"] as string);
+        },
         /**
          * The index writes. Each returns the fresh status rather than nothing, so
          * the panel repaints from what git actually did instead of predicting it —
@@ -211,5 +227,5 @@ export function createHostHandlers(services: HostServices): HostTable {
         },
     };
 
-    return { handlers, terminals };
+    return { handlers, terminals, gitWatchers };
 }

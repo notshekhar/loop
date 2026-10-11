@@ -365,6 +365,26 @@ function emptyTurn(): LiveTurn {
  * `structural` is false for the three delta events that only extend a block
  * already held here — see `LiveTurn.historyRevision`.
  */
+/**
+ * How long a streamed delta may wait before listeners hear of it.
+ *
+ * A model streams 30–60 chunks a second and each notify re-renders the turn —
+ * style, layout and markdown for the whole growing message. The turn itself is
+ * updated at once (anyone reading it sees every byte); only the notify is
+ * coalesced, to at most twenty a second, which still reads as live typing.
+ * Anything that is not a delta flushes first, so order is never lost.
+ */
+const DELTA_NOTIFY_MS = 50;
+const pendingDeltaNotify = new Map<string, ReturnType<typeof setTimeout>>();
+
+function flushDeltaNotify(sessionId: string): void {
+  const timer = pendingDeltaNotify.get(sessionId);
+  if (timer === undefined) return;
+  clearTimeout(timer);
+  pendingDeltaNotify.delete(sessionId);
+  notify(sessionId, false, lifecycleMoved(sessionId));
+}
+
 function touch(
   sessionId: string,
   mutate: (turn: LiveTurn) => void,
@@ -376,6 +396,21 @@ function touch(
   existing.lastEventAt = Date.now();
   if (structural) existing.historyRevision += 1;
   turns.set(sessionId, existing);
+  if (!structural) {
+    if (!pendingDeltaNotify.has(sessionId)) {
+      pendingDeltaNotify.set(
+        sessionId,
+        setTimeout(() => flushDeltaNotify(sessionId), DELTA_NOTIFY_MS),
+      );
+    }
+    return;
+  }
+  // A structural notify re-reads everything, so it carries any pending delta.
+  const pending = pendingDeltaNotify.get(sessionId);
+  if (pending !== undefined) {
+    clearTimeout(pending);
+    pendingDeltaNotify.delete(sessionId);
+  }
   notify(sessionId, structural, lifecycleMoved(sessionId));
 }
 

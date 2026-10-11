@@ -8,6 +8,7 @@ import { isWorkspaceImagePreviewPath } from "@loop/shared/filePreview";
 import { VirtualizedFile, type SelectedLineRange } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/editor";
 import { EditProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
+import { useDiffWorkers } from "../diffWorkerDemand";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -431,6 +432,7 @@ function EditableFileSurface({
   onPostRender,
   onPendingChange,
 }: EditableFileSurfaceProps) {
+  const diffsReady = useDiffWorkers();
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
   const [lineAnnotations, setLineAnnotations] = useState<FileCommentLineAnnotation[]>([]);
@@ -597,7 +599,8 @@ function EditableFileSurface({
       isBlocked: () => hasOpenCommentForm,
       onDismiss: () => setSelectedRange(null),
     });
-  }, [editor, hasOpenCommentForm, setSelectedRange]);
+    // diffsReady: the surface mounts a frame later, once the pool is up.
+  }, [editor, hasOpenCommentForm, setSelectedRange, diffsReady]);
   /**
    * The save. Scoped to this pane's root so it only fires for the file the
    * keystroke was aimed at, and so `mod+s` still stashes the composer draft
@@ -611,7 +614,7 @@ function EditableFileSurface({
       isEnabled: isFileEditorFocused,
       onSave: () => void saveCoordinator.save(),
     });
-  }, [saveCoordinator]);
+  }, [saveCoordinator, diffsReady]);
   const handleLineSelectionEnd = useCallback(
     (range: SelectedLineRange | null) => {
       setSelectedRange(range);
@@ -641,6 +644,7 @@ function EditableFileSurface({
     [onPostRender, selectedRange],
   );
 
+  if (!diffsReady) return null;
   return (
     <EditProvider editor={editor}>
       <div ref={surfaceRef} className="flex min-h-0 flex-1">
@@ -785,6 +789,7 @@ export default function FilePreviewPanel({
   onOpenFile,
   onPendingChange,
 }: FilePreviewPanelProps) {
+  useDiffWorkers();
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const primaryEnvironmentId = usePrimaryEnvironmentId();

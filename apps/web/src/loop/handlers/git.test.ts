@@ -1,5 +1,6 @@
 import { SourceControlDiscoveryResult } from "@loop/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -12,6 +13,7 @@ import {
   listRefs,
   refreshStatus,
   runStackedAction,
+  statusStream,
 } from "./git.ts";
 import type {
   GitActionProgressMessage,
@@ -416,5 +418,65 @@ describe("initializing a repository", () => {
       () => Effect.runPromise(Effect.flip(initRepo({ cwd: "/w/fresh" }))),
     );
     expect(failure.detail).toBe("permission denied");
+  });
+});
+
+describe("status without polling", () => {
+  it("re-reads git when the host says the repository changed, not on a timer", async () => {
+    let reads = 0;
+    let changed: ((event: { cwd: string }) => void) | undefined;
+    const watches: string[] = [];
+    const unwatched: string[] = [];
+    const watching: LoopGitBridge = {
+      refs: () => Promise.resolve({ refs: [], isRepo: true, hasPrimaryRemote: true, totalCount: 0 }),
+      status: () => {
+        reads += 1;
+        return Promise.resolve({ ...status, refName: `branch-${reads}` });
+      },
+      watch: (cwd, id) => {
+        watches.push(`${cwd}:${id}`);
+        return Promise.resolve({ native: true });
+      },
+      unwatch: (id) => {
+        unwatched.push(id);
+        return Promise.resolve();
+      },
+      onChanged: (listener) => {
+        changed = listener;
+        return () => {
+          changed = undefined;
+        };
+      },
+    };
+    const host = { git: () => watching } as unknown as Parameters<typeof statusStream>[1];
+    const seen: Array<string | null> = [];
+    const fiber = Effect.runFork(
+      Stream.runForEach(statusStream("/w", host), (event) =>
+        Effect.sync(() => {
+          if (event._tag === "snapshot") seen.push(event.local.refName);
+        }),
+      ),
+    );
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
+    await settle();
+    expect(reads).toBe(1);
+    expect(watches).toHaveLength(1);
+
+    // Nothing changed: no re-read, however long it sits (the safety poll is a minute).
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(reads).toBe(1);
+
+    changed?.({ cwd: "/elsewhere" });
+    await settle();
+    expect(reads).toBe(1);
+
+    changed?.({ cwd: "/w" });
+    await settle();
+    expect(reads).toBe(2);
+    expect(seen).toEqual(["branch-1", "branch-2"]);
+
+    await Effect.runPromise(Fiber.interrupt(fiber));
+    expect(unwatched).toHaveLength(1);
+    expect(changed).toBeUndefined();
   });
 });

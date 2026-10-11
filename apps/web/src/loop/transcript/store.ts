@@ -101,9 +101,24 @@ export async function snapshotOf(
   };
 }
 
+/**
+ * Streamed chunks that only grow a block already on screen. Their notify is
+ * coalesced (see DELTA_NOTIFY_MS); the view itself is updated at once.
+ */
+const DELTA_EVENTS: ReadonlySet<string> = new Set(["text-delta", "reasoning-delta", "tool-input-delta"]);
+/** At most twenty re-renders a second while a reply streams. */
+const DELTA_NOTIFY_MS = 50;
+
 function start(entry: Watched, host: LoopHost, sessionId: string): () => void {
   let stopped = false;
   let buffer: LoopEvent[] | null = [];
+  let pendingNotify: ReturnType<typeof setTimeout> | null = null;
+
+  const notifyNow = () => {
+    if (pendingNotify !== null) clearTimeout(pendingNotify);
+    pendingNotify = null;
+    notify(entry);
+  };
 
   const apply = (event: LoopEvent) => {
     // Already in the snapshot, or a replay of what arrived live.
@@ -113,7 +128,11 @@ function start(entry: Watched, host: LoopHost, sessionId: string): () => void {
       ...entry.view,
       transcript: applyEvent(entry.view.transcript, event.part as TranscriptEvent),
     };
-    notify(entry);
+    if (DELTA_EVENTS.has((event.part as { type?: string }).type ?? "")) {
+      pendingNotify ??= setTimeout(notifyNow, DELTA_NOTIFY_MS);
+      return;
+    }
+    notifyNow();
   };
 
   const offEvent = host.onEvent((event) => {
@@ -150,6 +169,7 @@ function start(entry: Watched, host: LoopHost, sessionId: string): () => void {
 
   return () => {
     stopped = true;
+    if (pendingNotify !== null) clearTimeout(pendingNotify);
     offEvent();
     offConnection();
   };

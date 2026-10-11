@@ -286,6 +286,15 @@ export interface LoopGitBridge {
     totalCount: number;
   }>;
   status(cwd: string): Promise<GitStatus>;
+  /**
+   * Push instead of poll (core's workspace/gitWatch.ts): `watch` starts or
+   * renews a leased watch, `onChanged` fires once per settled burst of changes.
+   * `native: false` means the platform refused a watcher — keep polling.
+   * Optional: a shell that predates them is polled as before.
+   */
+  watch?(cwd: string, id: string): Promise<{ native: boolean }>;
+  unwatch?(id: string): Promise<void>;
+  onChanged?(listener: (event: { cwd: string }) => void): () => void;
   /** Absent on a half-updated shell, so callers must check before calling. */
   init?(cwd: string): Promise<void>;
   /** Same: added after `init`, so an older shell has no diff pane. */
@@ -429,6 +438,9 @@ export interface LoopSourceControlBridge {
 export interface LoopWindowBridge {
   isFullscreen(): Promise<boolean>;
   onFullscreenChange(listener: (fullscreen: boolean) => void): () => void;
+  /** Whether the window is in front. Optional: older shells lack it. */
+  isFocused?(): Promise<boolean>;
+  onFocusChange?(listener: (focused: boolean) => void): () => void;
 }
 
 /** The preload bridge. Kept structural so the renderer needs no Electron types. */

@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  isTaskListFinished,
   derivePendingApprovals,
   derivePendingUserInputs,
   deriveTimelineEntries,
@@ -1713,5 +1714,19 @@ describe("deriveActiveWorkStartedAt", () => {
         "2026-02-27T21:11:00.000Z",
       ),
     ).toBe("2026-02-27T21:11:00.000Z");
+  });
+});
+
+describe("isTaskListFinished", () => {
+  it("is finished only when every step is completed or cancelled", () => {
+    expect(isTaskListFinished(null)).toBe(false);
+    expect(isTaskListFinished({ steps: [] })).toBe(false);
+    expect(
+      isTaskListFinished({ steps: [{ status: "completed" }, { status: "inProgress" }] }),
+    ).toBe(false);
+    expect(isTaskListFinished({ steps: [{ status: "pending" }] })).toBe(false);
+    expect(
+      isTaskListFinished({ steps: [{ status: "completed" }, { status: "cancelled" }] }),
+    ).toBe(true);
   });
 });

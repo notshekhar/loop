@@ -29,6 +29,8 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { isAppActive, isAppVisible, subscribeAppActivity } from "../../lib/appActivity";
+
 import {
   defaultLoopHost,
   type GitStackedAction,
@@ -41,8 +43,21 @@ const decodeRefs = Schema.decodeUnknownEffect(VcsListRefsResultSchema);
 const decodeStatus = Schema.decodeUnknownEffect(VcsStatusResultSchema);
 const decodeDiffPreview = Schema.decodeUnknownEffect(ReviewDiffPreviewResultSchema);
 
-/** How often the status panel re-reads git while a project is open. */
+/**
+ * How often the status panel re-reads git without being told to.
+ *
+ * With a watcher (every current shell, see core's workspace/gitWatch.ts) the
+ * poll is only a safety net — editors keep one too, because a file watcher can
+ * miss a change on a network drive or after sleep — so it is slow, and slower
+ * still while nobody is looking. Without one (an older shell, or a platform
+ * that refused the watch) it is the old five seconds, but only while visible.
+ */
 const STATUS_POLL_MS = 5_000;
+const STATUS_SAFETY_POLL_MS = 60_000;
+const STATUS_IDLE_POLL_MS = 5 * 60_000;
+/** Watches are leased by the host; renew well inside the lease. */
+const WATCH_RENEW_MS = 60_000;
+let nextWatchId = 0;
 
 const malformed = (what: string) =>
   new EnvironmentAuthorizationError({
@@ -127,12 +142,15 @@ export const refreshStatus = Effect.fnUntraced(function* (
 });
 
 /**
- * The status subscription: a snapshot now, then a poll.
+ * The status subscription: a snapshot now, then one each time the repository
+ * changes.
  *
- * git has no change feed worth the complexity here — a filesystem watcher over
- * a whole repo costs more than re-reading `git status` — so this polls, and
- * only emits when something actually differs so the UI does not re-render on a
- * timer.
+ * The host watches the working tree and git's own state files and says when
+ * something changed (`onChanged`), so git runs only when there is something
+ * new to read — not every five seconds whether or not anything happened. A
+ * slow poll stays as a safety net, and the window coming back to the front
+ * re-reads once so nothing on screen is stale. Only differing snapshots are
+ * emitted, so the UI does not re-render on a timer.
  */
 export function statusStream(
   cwd: string,
@@ -146,28 +164,79 @@ export function statusStream(
       Effect.sync(() => {
         let previous = "";
         let stopped = false;
+        let running = false;
+        let again = false;
+        let watched = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const watchId = `status-${Date.now().toString(36)}-${nextWatchId++}`;
 
-        const tick = async () => {
+        const pollDelay = () => {
+          if (!watched) return isAppVisible() ? STATUS_POLL_MS : STATUS_IDLE_POLL_MS;
+          return isAppActive() ? STATUS_SAFETY_POLL_MS : STATUS_IDLE_POLL_MS;
+        };
+        const schedule = () => {
           if (stopped) return;
+          if (timer !== undefined) clearTimeout(timer);
+          timer = setTimeout(() => void read(), pollDelay());
+        };
+        // One read at a time; a change during a read queues exactly one more.
+        const read = async () => {
+          if (stopped) return;
+          if (running) {
+            again = true;
+            return;
+          }
+          running = true;
           try {
             const status = await git.status(cwd);
             const encoded = JSON.stringify(status);
-            if (encoded !== previous) {
+            if (!stopped && encoded !== previous) {
               previous = encoded;
               const local = await Effect.runPromise(decodeStatus(toStatusResult(status)));
               Queue.offerUnsafe(queue, { _tag: "snapshot", local, remote: null });
             }
           } catch {
             // A transient git failure is not worth tearing the panel down for.
+          } finally {
+            running = false;
           }
-          if (!stopped) timer = setTimeout(tick, STATUS_POLL_MS);
+          if (again) {
+            again = false;
+            void read();
+            return;
+          }
+          schedule();
         };
 
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        void tick();
+        const unsubscribeChanged = git.onChanged?.((event) => {
+          if (event.cwd === cwd) void read();
+        });
+        const unsubscribeActivity = subscribeAppActivity((active) => {
+          if (active) void read();
+          else schedule();
+        });
+        const renew = () =>
+          git
+            .watch?.(cwd, watchId)
+            .then((result) => {
+              const was = watched;
+              watched = result.native && unsubscribeChanged !== undefined;
+              if (was !== watched) schedule();
+            })
+            .catch(() => {
+              watched = false;
+            });
+        const renewTimer = git.watch ? setInterval(() => void renew(), WATCH_RENEW_MS) : undefined;
+        void renew();
+        void read();
+
         return () => {
           stopped = true;
           if (timer !== undefined) clearTimeout(timer);
+          if (renewTimer !== undefined) clearInterval(renewTimer);
+          unsubscribeChanged?.();
+          unsubscribeActivity();
+          void git.unwatch?.(watchId)?.catch(() => undefined);
         };
       }),
       (dispose) => Effect.sync(dispose),

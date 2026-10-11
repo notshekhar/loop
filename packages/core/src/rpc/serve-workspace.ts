@@ -80,6 +80,7 @@ export function createServeWorkspace(
         },
         dispose() {
             table.terminals.closeAll();
+            table.gitWatchers.closeAll();
         },
     };
 }

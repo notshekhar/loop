@@ -25,6 +25,7 @@ import {
 import { flushSync } from "react-dom";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
+import { useDiffWorkers } from "../diffWorkerDemand";
 import {
   deriveTimelineEntries,
   workEntryIndicatesToolFailure,
@@ -1692,6 +1693,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
     buildReviewCommentRenderablePatch(comment),
     `review-comment:${comment.id}`,
   );
+  const diffsReady = useDiffWorkers(renderablePatch?.kind === "files");
 
   return (
     <div className="space-y-2 rounded-lg border border-border/70 bg-background/70 p-3">
@@ -1718,6 +1720,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
         />
       )}
       {renderablePatch?.kind === "files" &&
+        diffsReady &&
         renderablePatch.files.map((fileDiff) => (
           <FileDiff
             key={resolveFileDiffPath(fileDiff)}

@@ -219,7 +219,10 @@ export class TerminalSurface {
       cursorBlink: true,
       cursorStyle: "block",
       cursorInactiveStyle: "outline",
-      scrollback: 10_000,
+      // Each scrollback line is held as cells in this renderer; 10k lines of a
+      // wide build log was 10–20 MB per terminal. 5k keeps far more than the
+      // host's 256 KB reattach history, so nothing restorable is lost.
+      scrollback: 5_000,
       macOptionIsMeta: false,
       macOptionClickForcesSelection: true,
       rightClickSelectsWord: false,

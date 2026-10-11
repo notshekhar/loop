@@ -77,7 +77,7 @@ const spawnPty: PtySpawner = (input) =>
     env: input.env,
   }) as unknown as PtyProcess;
 
-const { handlers, terminals } = createHostHandlers({
+const { handlers, terminals, gitWatchers } = createHostHandlers({
   spawnPty,
   notify: (channel, payload) => {
     if (channel === HOST_CHANNELS.terminal && directPort) {
@@ -146,4 +146,7 @@ port.on("message", ({ data, ports }) => {
 
 // A host that is going away should not leave orphaned shells behind holding
 // the user's project directories open.
-process.on("exit", () => terminals.closeAll());
+process.on("exit", () => {
+  terminals.closeAll();
+  gitWatchers.closeAll();
+});

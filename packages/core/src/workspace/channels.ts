@@ -7,6 +7,8 @@
 export const HOST_CHANNELS = {
     terminal: "loop:terminal",
     gitAction: "loop:gitAction",
+    /** A watched repository changed (see gitWatch.ts): `{ cwd }`. */
+    gitChanged: "loop:gitChanged",
 } as const;
 
 /**

@@ -195,7 +195,11 @@ import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelS
 import type { UnifiedSettings } from "@loop/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
-import type { PendingApproval, PendingUserInput } from "../../session-logic";
+import {
+  isTaskListFinished,
+  type PendingApproval,
+  type PendingUserInput,
+} from "../../session-logic";
 import {
   deriveLatestContextWindowSnapshot,
   formatProviderDisplayName,
@@ -461,7 +465,10 @@ export interface ChatComposerProps {
   // Plan
   showPlanFollowUpPrompt: boolean;
   activeProposedPlan: Thread["proposedPlans"][number] | null;
-  activePlan: { turnId?: TurnId } | null;
+  activePlan: {
+    turnId?: TurnId;
+    steps?: ReadonlyArray<{ status: string }>;
+  } | null;
   sidebarProposedPlan: { turnId?: TurnId } | null;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
@@ -1102,7 +1109,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
 
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
-  const showPlanSidebarToggle = Boolean(activePlan || sidebarProposedPlan || planSidebarOpen);
+  // A finished task list hides the button (and the panel's open state no
+  // longer holds it up); a delivered plan still shows it.
+  const tasksFinished = isTaskListFinished(activePlan);
+  const showPlanSidebarToggle = Boolean(
+    sidebarProposedPlan || (!tasksFinished && (activePlan || planSidebarOpen)),
+  );
   const composerFooterActionLayoutKey = useMemo(() => {
     if (activePendingProgress) {
       return `pending:${activePendingProgress.questionIndex}:${activePendingProgress.isLastQuestion}:${activePendingIsResponding}`;

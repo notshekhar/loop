@@ -7,6 +7,7 @@ import type {
   SelectedLineRange,
 } from "@pierre/diffs";
 import { CodeView, type CodeViewHandle, type CodeViewProps } from "@pierre/diffs/react";
+import { useDiffWorkers } from "../diffWorkerDemand";
 import type { ScopedThreadRef } from "@loop/contracts";
 import { useCallback, useMemo, useState, type ReactNode, type Ref } from "react";
 
@@ -113,6 +114,7 @@ export function AnnotatableCodeView({
   renderHeaderPrefix,
   renderHeaderMetadata,
 }: AnnotatableCodeViewProps) {
+  const diffsReady = useDiffWorkers();
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
   const reviewComments = useComposerDraftStore(
@@ -266,6 +268,7 @@ export function AnnotatableCodeView({
   );
 
   const hasOpenComment = draft !== null;
+  if (!diffsReady) return null;
   return (
     <CodeView<DiffCommentAnnotationGroup>
       {...(viewerRef ? { ref: viewerRef } : {})}
