@@ -345,6 +345,8 @@ export type Entry = EntryTreeFields &
                * and the context report. Implied by `handoff`, explicit so a
                * reader never has to infer it from an empty summary. */
               rollover?: true;
+              /** Written by idle compaction, before the prompt cache lapsed (agent/idle-compact.ts). */
+              trigger?: "idle";
               /** Files the summarized span read and changed, from its tool
                * calls — cumulative across compactions (see collectFileLists). */
               details?: { readFiles: string[]; modifiedFiles: string[] };

@@ -424,6 +424,15 @@ export async function runCompact(opts: {
     cwd?: string;
     /** Sizes the summarizer's requests; looked up in the catalog when omitted. */
     contextWindow?: number;
+    /**
+     * Write the summary another way: idle compaction's single request over
+     * the conversation exactly as the provider has it cached (agent/
+     * idle-compact.ts). Replaces the chunked text summarizer; where the cut
+     * falls, the file lists and the saved entry are the same either way.
+     */
+    summarize?: () => Promise<{ text: string; usage?: UsageBlock; finishReason?: string }>;
+    /** Recorded on the entry: what started this compaction. */
+    trigger?: "idle";
 }): Promise<CompactResult> {
     const messages = opts.session.messages();
     const previousCompact = latestCompact(opts.session);
@@ -509,7 +518,26 @@ export async function runCompact(opts: {
 
     let text = "";
     let budget = summaryInputBudgetChars(contextWindow);
-    for (let retry = 0; ; retry++) {
+    if (opts.summarize) {
+        try {
+            const result = await opts.summarize();
+            if (result.usage) {
+                usage = sumUsage(usage, result.usage);
+                opts.tracker?.add(opts.modelId, result.usage, {
+                    cwd: opts.cwd ?? opts.session.info.cwd,
+                    sessionPub: opts.session.info.id,
+                    source: "compact",
+                });
+            }
+            if (result.finishReason === "length") throw new Error("the summary hit the output limit before it finished");
+            if (!result.text.trim()) throw new Error("the model returned an empty summary");
+            text = result.text.trim();
+        } catch (err) {
+            if (isAbortError(err) || opts.abortSignal?.aborted) throw new CompactAbortedError();
+            throw err;
+        }
+    }
+    for (let retry = 0; !opts.summarize; retry++) {
         try {
             text = await summarize(budget);
             break;
@@ -536,6 +564,7 @@ export async function runCompact(opts: {
         tokensBefore,
         tokensAfter,
         details: files,
+        ...(opts.trigger ? { trigger: opts.trigger } : {}),
         ...(usage ? { usage: stampUsageCost(opts.modelId, usage), model: opts.modelId } : {}),
     };
     await opts.session.append(entry);

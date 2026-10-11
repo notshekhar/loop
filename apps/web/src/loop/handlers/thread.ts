@@ -572,7 +572,14 @@ function pushCompactActivity(
     id,
     tone: "info",
     kind: COMPACT_ACTIVITY_KIND,
-    summary: compact.running ? "Compacting context" : "Context compacted",
+    summary:
+      compact.reason === "idle"
+        ? compact.running
+          ? "Compacting while idle"
+          : "Compacted while idle, before the prompt cache expired"
+        : compact.running
+          ? "Compacting context"
+          : "Context compacted",
     payload: {
       ...(compact.summary === undefined ? {} : { detail: compact.summary }),
       [LOOP_COMPACT_PAYLOAD_KEY]: compact,

@@ -150,6 +150,9 @@ export function adaptSessionEntry(raw: unknown): Entry | null {
                 // replaceEntries(), which rewrites every row from these objects.
                 ...(typeof obj.handoff === "string" ? { handoff: obj.handoff } : {}),
                 ...(obj.rollover === true ? { rollover: true as const } : {}),
+                // Written by idle compaction (agent/idle-compact.ts) — the
+                // transcript says "compacted while idle" from it after a reload.
+                ...(obj.trigger === "idle" ? { trigger: "idle" as const } : {}),
                 ...tree,
             };
         case "branch-summary":

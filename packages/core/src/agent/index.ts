@@ -130,3 +130,10 @@ export {
     type TrustOption,
     type TrustDecision,
 } from "./trust";
+export {
+    cancelIdleCompact,
+    DEFAULT_IDLE_COMPACT_MIN_PERCENT,
+    hasPendingIdleCompact,
+    idleCompactDelayMs,
+    scheduleIdleCompact,
+} from "./idle-compact";

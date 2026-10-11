@@ -3,7 +3,7 @@
  * streaming, tools, hooks, persistence, and billing. The provider-shaping and
  * per-step accrual it shares with runSubagent live in model-call.ts.
  */
-import { streamText, isStepCount, type ModelMessage } from "ai";
+import { generateText, streamText, isStepCount, type ModelMessage } from "ai";
 import { ProviderExecutedTail } from "./provider-executed-tail";
 import { toolInputDeltaEvent, toolInputStartEvent, type TurnEmitter } from "./events";
 import { getModel, isNativeAgentProvider, parseModelId, type NativeAgentTurnContext } from "../providers";
@@ -65,6 +65,13 @@ import {
 import { buildRolloverHandoff, MAX_HANDOFF_CHARS as MAX_EXPLICIT_HANDOFF_CHARS, MIN_USABLE_TOKENS } from "./rollover";
 import { runRecap, turnDeservesRecap } from "./recap";
 import { cancelRecap, scheduleRecap } from "./recap-schedule";
+import {
+    cancelIdleCompact,
+    DEFAULT_IDLE_COMPACT_MIN_PERCENT,
+    IDLE_SUMMARY_INSTRUCTIONS,
+    idleCompactDelayMs,
+    scheduleIdleCompact,
+} from "./idle-compact";
 import { runHooks, type HookOutcome } from "./hooks";
 import { isTrusted } from "./trust";
 import type { ThinkingLevel } from "./thinking";
@@ -638,6 +645,10 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
     // past. Deliberately BEFORE the append below: it is the append that a late
     // recap would end up sorting after, so the window has to be shut first.
     cancelRecap(session.id);
+    // Same for an idle compaction waiting on this session: the user is back,
+    // so the conversation is not idle, and a summary landing after this
+    // message would sort below it.
+    cancelIdleCompact(session.id);
 
     // Recovery tools (history) read conversation the model can no longer see,
     // so they need the branch itself, not the model-bound context.
@@ -1708,6 +1719,71 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
             }).catch(() => ""); // best-effort — a failed recap never fails the turn
             if (text && !signal.aborted) emitter.emit("data-recap", { text });
         });
+    }
+
+    // Idle compaction (idle-compact.ts): a big conversation is summarized
+    // just before its prompt cache lapses, if nobody sends anything first.
+    // The request is this turn's own — same system prompt, same tools (never
+    // called), same provider options — with one message appended, so the
+    // provider reads the conversation from cache instead of at full price.
+    const idleDelay = idleCompactDelayMs({ provider, anthropicCaching: call.anthropicCaching });
+    if (
+        idleDelay !== null &&
+        getSetting("idleCompact") !== false &&
+        hookDepth === 0 &&
+        !abortSignal?.aborted &&
+        !ownsContext &&
+        modelInfo
+    ) {
+        const minPercent = getSetting("idleCompactMinPercent") ?? DEFAULT_IDLE_COMPACT_MIN_PERCENT;
+        const used =
+            contextTokensFromUsage(lastStepUsage) || estimateContextTokens(session, contextOverheadTokens);
+        if (used >= modelInfo.contextWindow * (minPercent / 100)) {
+            scheduleIdleCompact(session.id, idleDelay, async (signal) => {
+                emitter.emit("compact-start", { reason: "idle" });
+                let result;
+                try {
+                    result = await runCompact({
+                        session,
+                        modelId,
+                        tracker,
+                        cwd,
+                        contextWindow: modelInfo.contextWindow,
+                        abortSignal: signal,
+                        trigger: "idle",
+                        summarize: async () => {
+                            const conversation: ModelMessage[] = [
+                                ...toModelMessages(session),
+                                { role: "user", content: IDLE_SUMMARY_INSTRUCTIONS },
+                            ];
+                            const out = await generateText({
+                                model,
+                                ...(call.anthropicCaching
+                                    ? { messages: withAnthropicCaching(system, conversation), allowSystemInMessages: true }
+                                    : { instructions: system, messages: conversation }),
+                                tools,
+                                toolChoice: "none",
+                                abortSignal: signal,
+                                ...(call.maxOutputTokens ? { maxOutputTokens: call.maxOutputTokens } : {}),
+                                ...(call.reasoning ? { reasoning: call.reasoning } : {}),
+                                ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
+                            });
+                            return { text: out.text, usage: out.usage as UsageBlock, finishReason: out.finishReason };
+                        },
+                    });
+                } catch (err) {
+                    // Cancelled because the user came back: not news.
+                    emitter.emit("compact-end", {
+                        summary: "",
+                        cutAt: 0,
+                        tokensBefore: used,
+                        ...(signal.aborted ? { aborted: true } : { error: err instanceof Error ? err.message : String(err) }),
+                    });
+                    return;
+                }
+                emitter.emit("compact-end", result);
+            });
+        }
     }
 
     // Stop hooks: a block sends the reason back as a follow-up turn so the

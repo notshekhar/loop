@@ -280,6 +280,7 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
             subagentStream,
             todoPanel: deps.todoPanel,
             showWorking,
+            hideWorking,
             refreshStatusLine,
             onTurnError: noteTurnFailure,
         });

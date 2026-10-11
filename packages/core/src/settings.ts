@@ -138,6 +138,14 @@ export interface AppSettings {
     /** Fire /reminder alerts. Default on; set false to mute reminders entirely. */
     reminders?: boolean;
     autoCompactThreshold?: number;
+    /**
+     * Idle compaction (agent/idle-compact.ts): summarize a big conversation
+     * just before its prompt cache lapses, while nobody is using it, so coming
+     * back to it is cheap. Default ON; only for providers with prompt caching.
+     */
+    idleCompact?: boolean;
+    /** How full the context must be (percent of the window) before idle compaction runs. Default 70. */
+    idleCompactMinPercent?: number;
     workspaceContext?: boolean;
     /** Agent memory: per-project markdown facts under ~/.loop/agent/memory/,
      * saved by the agent with its normal write tool and recalled via an

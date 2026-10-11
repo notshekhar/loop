@@ -71,6 +71,7 @@ export function createSettingsHandlers(state: AppState, deps: AppDeps): Settings
         artifacts: false,
         backgroundShells: false,
         threadTeams: false,
+        idleCompact: true,
         clock: false,
         reminders: true,
         mcp: true,
@@ -216,6 +217,12 @@ export function createSettingsHandlers(state: AppState, deps: AppDeps): Settings
                         label: `background shells: ${boolSetting("backgroundShells") ? "on" : "off"}`,
                         description:
                             "let bash start servers/watchers that keep running (shells tool + panel); off bounds every command to its own call",
+                    },
+                    {
+                        value: "idleCompact",
+                        label: `idle compaction: ${boolSetting("idleCompact") ? "on" : "off"}`,
+                        description:
+                            "compact a chat over 70% full just before its prompt cache expires, while you are away — coming back is cheaper",
                     },
                     {
                         value: "threadTeams",

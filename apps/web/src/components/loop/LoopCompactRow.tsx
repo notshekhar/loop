@@ -23,15 +23,19 @@ import type { LoopCompactEntry } from "./loopEntry";
 
 /** The one-line claim the divider makes. */
 export function compactLabel(compact: LoopCompactEntry): string {
-  if (compact.running) return "Compacting context…";
+  // Idle compaction (packages/core/src/agent/idle-compact.ts) says why it ran:
+  // nobody was using the chat and its prompt cache was about to lapse.
+  const idle = compact.reason === "idle";
+  if (compact.running) return idle ? "Compacting while idle…" : "Compacting context…";
   if (compact.aborted) return "Compaction cancelled";
   if (compact.error) return `Compaction failed · ${compact.error}`;
+  const head = idle ? "Compacted while idle, before the prompt cache expired" : "Context compacted";
   const { tokensBefore, tokensAfter } = compact;
   // Both counts or neither: "148k → " with a missing half reads as a bug.
   if (tokensBefore !== undefined && tokensAfter !== undefined) {
-    return `Context compacted · ${formatTokens(tokensBefore)} → ${formatTokens(tokensAfter)} tokens`;
+    return `${head} · ${formatTokens(tokensBefore)} → ${formatTokens(tokensAfter)} tokens`;
   }
-  return "Context compacted";
+  return head;
 }
 
 export const LoopCompactRow = memo(function LoopCompactRow({
@@ -69,7 +73,7 @@ export const LoopCompactRow = memo(function LoopCompactRow({
             className={cn("size-3 shrink-0", compact.running && "animate-pulse")}
           />
           <span>{compactLabel(compact)}</span>
-          {compact.reason ? (
+          {compact.reason && compact.reason !== "idle" ? (
             <span className="text-muted-foreground/45">({compact.reason})</span>
           ) : null}
           {canExpand ? (

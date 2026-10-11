@@ -1,5 +1,5 @@
 import type { TUI } from "@notshekhar/loop-tui";
-import { asTurnEmitter, type TeamTurnMeta, type TodoItem, type UsageBlock } from "@notshekhar/loop-core";
+import { asTurnEmitter, formatTokens, type TeamTurnMeta, type TodoItem, type UsageBlock } from "@notshekhar/loop-core";
 import type { ChatHistory } from "./components/chat-history";
 import type { TodoPanel } from "./components/todo-panel";
 import type { AppState } from "./state";
@@ -35,6 +35,8 @@ export interface TurnEmitterDeps {
      * server runs) has nothing else to draw it from.
      */
     drawsTeamOpening?: boolean;
+    /** Clears the working line — for what runs after the turn (idle compaction). */
+    hideWorking?: () => void;
 }
 
 /**
@@ -184,8 +186,12 @@ export function wireTurnEmitter(emitter: TurnEmitter, deps: TurnEmitterDeps): vo
     emitter.on("hook-terminal-sequence", (s: string) => {
         process.stdout.write(s);
     });
-    emitter.on("compact-start", () => {
-        showWorking("Compacting");
+    // Idle compaction (core agent/idle-compact.ts) fires after the turn has
+    // ended, so it owns its own working line and its own closing message.
+    let idleCompacting = false;
+    emitter.on("compact-start", (event: { reason?: string }) => {
+        idleCompacting = event?.reason === "idle";
+        showWorking(idleCompacting ? "Compacting while idle" : "Compacting");
         tui.requestRender();
     });
     emitter.on(
@@ -198,7 +204,21 @@ export function wireTurnEmitter(emitter: TurnEmitter, deps: TurnEmitterDeps): vo
             aborted?: boolean;
             error?: string;
         }) => {
-            if (r.aborted) history.addSystem("compact aborted");
+            if (idleCompacting) {
+                idleCompacting = false;
+                // A turn the user started is what cancelled it, and its own
+                // working line is up now — leave that one alone.
+                if (!state.busy) deps.hideWorking?.();
+                // Cancelled because the user came back: nothing to say.
+                if (r.error) history.addSystem(`idle compaction failed: ${r.error}`);
+                else if (!r.aborted && r.summary) {
+                    const after = (r as { tokensAfter?: number }).tokensAfter;
+                    history.addSystem(
+                        `⟲ Compacted while idle, before the prompt cache expired · ${formatTokens(r.tokensBefore)}${after !== undefined ? ` → ${formatTokens(after)}` : ""} tokens`,
+                    );
+                    history.addCompactionSummary(r.summary, r.tokensBefore);
+                }
+            } else if (r.aborted) history.addSystem("compact aborted");
             else if (r.error) history.addSystem(`compact failed: ${r.error} — continuing uncompacted`);
             else if (r.summary) history.addCompactionSummary(r.summary, r.tokensBefore);
             // The last reported size measured the context this just replaced.

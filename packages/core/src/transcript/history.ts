@@ -35,6 +35,7 @@ interface EntryLike {
     readonly tokensBefore?: number;
     readonly tokensAfter?: number;
     readonly handoff?: string;
+    readonly trigger?: string;
     // subagent
     readonly agent?: string;
     readonly prompt?: string;
@@ -204,6 +205,7 @@ export function fromEntries(
                     type: "data-compaction",
                     data: {
                         running: false,
+                        ...(latestCompact.trigger === "idle" ? { reason: "idle" } : {}),
                         ...(latestCompact.summary ? { summary: latestCompact.summary } : {}),
                         ...(latestCompact.tokensBefore !== undefined ? { tokensBefore: latestCompact.tokensBefore } : {}),
                         ...(latestCompact.tokensAfter !== undefined ? { tokensAfter: latestCompact.tokensAfter } : {}),

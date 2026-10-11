@@ -250,6 +250,12 @@ const WEB_SETTINGS: ReadonlyArray<{ key: keyof AppSettings; label: string; descr
     },
     { key: "todos", label: "todos", description: "visible checklist during multi-step tasks", def: false },
     {
+        key: "idleCompact",
+        label: "idle compaction",
+        description: "compact a chat over 70% full just before its prompt cache expires, while you are away",
+        def: true,
+    },
+    {
         key: "threadTeams",
         label: "thread teams",
         description: "let the agent split a job across threads that work in parallel and report back",

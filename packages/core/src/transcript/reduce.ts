@@ -215,6 +215,68 @@ const REPLY_CONTENT = new Set([
 ]);
 
 export function applyEvent(transcript: Transcript, event: TranscriptEvent, at: number = Date.now()): Transcript {
+    // Idle compaction (agent/idle-compact.ts) runs between turns, while
+    // nobody is using the conversation: a marker of its own, never a reply,
+    // and it leaves the transcript not running. Cancelled because the user
+    // came back, it leaves nothing behind.
+    if (event.type === "compact-start" && (event.data as { reason?: unknown } | undefined)?.reason === "idle") {
+        return {
+            ...transcript,
+            messages: [
+                ...transcript.messages,
+                {
+                    id: `compact-idle-${at}`,
+                    role: "system",
+                    parts: [{ type: "data-compaction", data: { running: true, reason: "idle" } }],
+                    metadata: { createdAt: at },
+                },
+            ],
+        };
+    }
+    if (event.type === "compact-end") {
+        // Searched for rather than taken as the last message: a turn the user
+        // started cancels it, and that turn is already below the marker by the
+        // time the cancellation lands.
+        let index = -1;
+        for (let i = transcript.messages.length - 1; i >= 0; i--) {
+            const candidate = transcript.messages[i]!;
+            const first = candidate.role === "system" ? candidate.parts[0] : undefined;
+            if (first?.type === "data-compaction" && first.data.running && first.data.reason === "idle") {
+                index = i;
+                break;
+            }
+        }
+        if (index >= 0) {
+            const last = transcript.messages[index]!;
+            const end = (event.data ?? {}) as Record<string, unknown>;
+            const before = transcript.messages.slice(0, index);
+            const after = transcript.messages.slice(index + 1);
+            if (end.aborted === true) return { ...transcript, messages: [...before, ...after] };
+            return {
+                ...transcript,
+                messages: [
+                    ...before,
+                    {
+                        ...last,
+                        parts: [
+                            {
+                                type: "data-compaction",
+                                data: {
+                                    running: false,
+                                    reason: "idle",
+                                    ...(typeof end.summary === "string" && end.summary ? { summary: end.summary } : {}),
+                                    ...(typeof end.tokensBefore === "number" ? { tokensBefore: end.tokensBefore } : {}),
+                                    ...(typeof end.tokensAfter === "number" ? { tokensAfter: end.tokensAfter } : {}),
+                                    ...(typeof end.error === "string" ? { error: end.error } : {}),
+                                },
+                            },
+                        ],
+                    },
+                    ...after,
+                ],
+            };
+        }
+    }
     // A reply arriving with no turn running is a NEW turn whose prompt this
     // stream never carried (a host older than `user-message`). Running it into
     // the last reply would weld two answers into one paragraph.
