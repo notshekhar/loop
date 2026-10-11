@@ -1986,7 +1986,7 @@ const WorkEntryRow = memo(function WorkEntryRow(props: {
   const hook = loopHookOf(workEntry);
   if (hook) return <LoopHookRow hook={hook} />;
   const team = loopTeamOf(workEntry);
-  if (team) return <LoopTeamCard team={team} threadRef={threadRef} />;
+  if (team) return <LoopTeamCard cwd={workspaceRoot} team={team} threadRef={threadRef} />;
   const thinking = loopThinkingOf(workEntry);
   if (thinking) return <LoopThinkingRow thinking={thinking} />;
   const tool = loopToolOf(workEntry);

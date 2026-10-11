@@ -358,7 +358,8 @@ export const LoopToolRow = memo(function LoopToolRow(props: {
   workspaceRoot: string | undefined;
 }) {
   // Thread teams draw their own cards: live thread states, names for ids.
-  if (TEAM_TOOL_NAMES.has(props.tool.name)) return <LoopTeamToolRow threadRef={props.threadRef} tool={props.tool} />;
+  if (TEAM_TOOL_NAMES.has(props.tool.name))
+    return <LoopTeamToolRow cwd={props.workspaceRoot} threadRef={props.threadRef} tool={props.tool} />;
   return <LoopToolRowBody {...props} />;
 });
 

@@ -26,6 +26,8 @@ import {
 } from "lucide-react";
 import { memo, useMemo } from "react";
 
+import ChatMarkdown from "../ChatMarkdown";
+
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { teamAtoms } from "../../state/team";
@@ -176,11 +178,25 @@ function Head({
 
 const ICON = "size-3.5 shrink-0 text-muted-foreground/70";
 
-function Prose({ text }: { text: string }) {
+/**
+ * What a thread wrote — a brief, a message, a report — rendered as the
+ * markdown it is, with the chat's own renderer: headings, tables, code and
+ * `file:line` links read as they do in a reply, and a highlight-and-copy
+ * still copies the markdown source.
+ */
+function Prose({
+  text,
+  cwd,
+  threadRef,
+}: {
+  text: string;
+  cwd: string | undefined;
+  threadRef: ScopedThreadRef | null;
+}) {
   return (
-    <p className="whitespace-pre-wrap py-0.5 text-[12.5px] text-foreground/75 leading-[1.6]">
-      {text.trim()}
-    </p>
+    <div className="py-0.5 text-[13px] text-foreground/85">
+      <ChatMarkdown cwd={cwd} text={text.trim()} {...(threadRef ? { threadRef } : {})} />
+    </div>
   );
 }
 
@@ -188,9 +204,12 @@ function Prose({ text }: { text: string }) {
 export const LoopTeamCard = memo(function LoopTeamCard({
   team,
   threadRef,
+  cwd,
 }: {
   team: LoopTeamEntry;
   threadRef: ScopedThreadRef | null;
+  /** Where relative file links in the text resolve from. */
+  cwd?: string | undefined;
 }) {
   const environmentId = threadRef?.environmentId;
   const sender = (from: { threadId: string; title: string }) =>
@@ -219,7 +238,7 @@ export const LoopTeamCard = memo(function LoopTeamCard({
           detail={<>from {team.from ? sender(team.from) : "the lead"}</>}
         />
         <Rail>
-          <Prose text={brief} />
+          <Prose cwd={cwd} text={brief} threadRef={threadRef} />
         </Rail>
       </div>
     );
@@ -244,7 +263,7 @@ export const LoopTeamCard = memo(function LoopTeamCard({
               {...(update ? {} : { detail: <>from {sender(mail.from)}</> })}
             />
             <Rail>
-              <Prose text={mail.text} />
+              <Prose cwd={cwd} text={mail.text} threadRef={threadRef} />
             </Rail>
           </div>
         );
@@ -308,9 +327,11 @@ function SpawnedThread({
 export const LoopTeamToolRow = memo(function LoopTeamToolRow({
   tool,
   threadRef,
+  cwd,
 }: {
   tool: LoopToolEntry;
   threadRef: ScopedThreadRef | null;
+  cwd?: string | undefined;
 }) {
   const team = useThreadTeam(threadRef);
   const environmentId = threadRef?.environmentId;
@@ -396,7 +417,7 @@ export const LoopTeamToolRow = memo(function LoopTeamToolRow({
           label={tool.isPartial ? "Reporting to the lead" : "Reported to the lead"}
         />
         <Rail>
-          <Prose text={stringArg(tool.args, "summary")} />
+          <Prose cwd={cwd} text={stringArg(tool.args, "summary")} threadRef={threadRef} />
         </Rail>
       </div>
     );

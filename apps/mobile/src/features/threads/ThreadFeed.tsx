@@ -1020,7 +1020,35 @@ function renderFeedEntry(
 
   // Something the thread team wrote into this chat: a card, not a log row.
   const team = entry.activities.length === 1 ? entry.activities[0]!.team : undefined;
-  if (team) return <ThreadTeamCard environmentId={String(props.environmentId)} team={team} />;
+  if (team) {
+    // The team's words are markdown, drawn with the replies' own renderer
+    // (selectable, so a copy keeps the text).
+    const renderMarkdown = (text: string) =>
+      hasNativeSelectableMarkdownText() ? (
+        <SelectableMarkdownText
+          markdown={text}
+          skills={props.skills}
+          textStyle={markdownStyles.assistant.nativeTextStyle}
+          onLinkPress={props.onMarkdownLinkPress}
+        />
+      ) : (
+        <Markdown
+          options={{ gfm: true }}
+          renderers={markdownStyles.assistant.renderers}
+          styles={markdownStyles.assistant.styles}
+          theme={markdownStyles.assistant.theme}
+        >
+          {text}
+        </Markdown>
+      );
+    return (
+      <ThreadTeamCard
+        environmentId={String(props.environmentId)}
+        renderMarkdown={renderMarkdown}
+        team={team}
+      />
+    );
+  }
 
   return (
     <ThreadWorkLog

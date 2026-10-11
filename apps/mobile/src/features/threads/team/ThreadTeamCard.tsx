@@ -37,6 +37,8 @@ function SenderLink(props: {
 export function ThreadTeamCard(props: {
   readonly team: ThreadFeedTeamCard;
   readonly environmentId: string;
+  /** The feed's own markdown renderer, so the text reads like a reply. */
+  readonly renderMarkdown: (text: string) => React.ReactNode;
 }) {
   const navigation = useNavigation();
   const accent = useThemeColor("--color-icon-subtle");
@@ -86,9 +88,7 @@ export function ThreadTeamCard(props: {
               {team.title}
             </Text>
           ) : null}
-          <Text className="text-[15px] leading-[22px] text-foreground" selectable>
-            {briefText(team.text)}
-          </Text>
+          {props.renderMarkdown(briefText(team.text))}
         </View>
       </View>
     );
@@ -131,12 +131,7 @@ export function ThreadTeamCard(props: {
                 )}
               </Text>
             </View>
-            <Text
-              className="px-3.5 pt-1.5 pb-3 text-[15px] leading-[22px] text-foreground"
-              selectable
-            >
-              {mail.text.trim()}
-            </Text>
+            <View className="px-3.5 pt-1.5 pb-3">{props.renderMarkdown(mail.text.trim())}</View>
           </View>
         );
       })}
