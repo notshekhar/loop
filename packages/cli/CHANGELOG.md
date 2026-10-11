@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.21.13] - 2026-10-11
+
+### Changed
+
+- **The desktop app uses much less battery.** While an agent works, the desktop now uses about a third less CPU with the window in front (33.8% → 24.0% of a core in our test) and less than half with it in the background (14.6%). The working indicator's glow is still and its motion is drawn at about 10 frames a second, every looping animation pauses while the window is not in front, and a streaming reply re-renders at most 20 times a second.
+- **Git status without polling.** The source-control panel used to re-run git about every five seconds for each open project — around a hundred `git` processes a minute while idle. It now watches the project and git's own records and reads the status only when something changed: edits, staging, commits, checkouts and fetches from anywhere, including the terminal and the agent. A slow fallback check stays in case a change is missed. The same applies in the browser over `loop serve`.
+- **Less memory on the desktop.** The diff highlighters start when a diff first opens, instead of five starting with every chat, and they stop a couple of minutes after the last diff closes. Terminal scrollback keeps 5,000 lines instead of 10,000.
+- **The Tasks button leaves when the tasks are done.** In the desktop chat input it now shows only while some task is still pending or in progress.
+
 ## [0.21.12] - 2026-10-11
 
 ### Added
