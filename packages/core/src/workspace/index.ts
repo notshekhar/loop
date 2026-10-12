@@ -8,3 +8,11 @@ export { createHostHandlers, type HostHandler, type HostServices, type HostTable
 export { HOST_CALLBACKS, HOST_CHANNELS } from "./channels";
 export { TerminalManager, type PtyProcess, type PtySpawner, type TerminalOutput } from "./terminals";
 export { GitWatchers, isStatusRelevant } from "./gitWatch";
+export type {
+    PullRequestCheck,
+    PullRequestDetail,
+    PullRequestFile,
+    PullRequestInvolvement,
+    PullRequestListState,
+    PullRequestSummary,
+} from "./pullRequests";

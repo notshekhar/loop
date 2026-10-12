@@ -38,13 +38,16 @@ export interface PublishResult {
     readonly status: "pushed" | "remote_added";
 }
 
-interface GhResult {
+export interface GhResult {
     readonly ok: boolean;
     readonly stdout: string;
     readonly stderr: string;
 }
 
-async function gh(args: readonly string[], options: { cwd?: string; timeoutMs?: number } = {}): Promise<GhResult> {
+export async function gh(
+    args: readonly string[],
+    options: { cwd?: string; timeoutMs?: number } = {},
+): Promise<GhResult> {
     try {
         const { stdout, stderr } = await run("gh", [...args], {
             ...(options.cwd ? { cwd: options.cwd } : {}),
@@ -63,7 +66,7 @@ async function gh(args: readonly string[], options: { cwd?: string; timeoutMs?: 
 }
 
 /** git's own message beats gh's exit code for anything the user must act on. */
-function ghError(operation: string, result: GhResult): Error {
+export function ghError(operation: string, result: GhResult): Error {
     const detail = result.stderr.trim() || result.stdout.trim() || "no output";
     return new Error(`${operation} failed: ${detail}`);
 }

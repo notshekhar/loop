@@ -161,6 +161,14 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  LoopPullRequestDetail,
+  LoopPullRequestDiff,
+  LoopPullRequestError,
+  LoopPullRequestListInput,
+  LoopPullRequestRefInput,
+  LoopPullRequestSummary,
+} from "./pullRequests.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -256,6 +264,11 @@ export const WS_METHODS = {
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
+
+  // Pull requests, read through `gh` (contracts/pullRequests.ts)
+  loopPullRequestsList: "loopPullRequests.list",
+  loopPullRequestsDetail: "loopPullRequests.detail",
+  loopPullRequestsDiff: "loopPullRequests.diff",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -427,6 +440,24 @@ export const WsSourceControlLookupRepositoryRpc = Rpc.make(
     error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
   },
 );
+
+export const WsLoopPullRequestsListRpc = Rpc.make(WS_METHODS.loopPullRequestsList, {
+  payload: LoopPullRequestListInput,
+  success: Schema.Array(LoopPullRequestSummary),
+  error: Schema.Union([LoopPullRequestError, EnvironmentAuthorizationError]),
+});
+
+export const WsLoopPullRequestsDetailRpc = Rpc.make(WS_METHODS.loopPullRequestsDetail, {
+  payload: LoopPullRequestRefInput,
+  success: LoopPullRequestDetail,
+  error: Schema.Union([LoopPullRequestError, EnvironmentAuthorizationError]),
+});
+
+export const WsLoopPullRequestsDiffRpc = Rpc.make(WS_METHODS.loopPullRequestsDiff, {
+  payload: LoopPullRequestRefInput,
+  success: LoopPullRequestDiff,
+  error: Schema.Union([LoopPullRequestError, EnvironmentAuthorizationError]),
+});
 
 export const WsSourceControlCloneRepositoryRpc = Rpc.make(WS_METHODS.sourceControlCloneRepository, {
   payload: SourceControlCloneRepositoryInput,
@@ -952,6 +983,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsSourceControlLookupRepositoryRpc,
+  WsLoopPullRequestsListRpc,
+  WsLoopPullRequestsDetailRpc,
+  WsLoopPullRequestsDiffRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
   WsProjectsListEntriesRpc,

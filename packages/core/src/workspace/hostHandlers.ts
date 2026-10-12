@@ -30,6 +30,7 @@ import { HOST_CALLBACKS, HOST_CHANNELS } from "./channels";
 import { GitWatchers } from "./gitWatch";
 import { launch, revealCommand, whichCommands } from "./launcher";
 import { cloneRepository, lookupRepository, publishRepository } from "./sourceControl";
+import { listPullRequests, pullRequestDetail, pullRequestDiff } from "./pullRequests";
 import { TerminalManager, type PtySpawner } from "./terminals";
 import {
     browseFilesystem,
@@ -180,6 +181,18 @@ export function createHostHandlers(services: HostServices): HostTable {
 
         // ─── GitHub, through the gh CLI ───────────────────────────────────────
         "sc.lookup": (p) => envelope(() => lookupRepository(p["repository"] as string)),
+        // ─── pull requests, read through `gh` (pullRequests.ts) ───────────────
+        "pr.list": (p) =>
+            envelope(() =>
+                listPullRequests({
+                    cwd: p["cwd"] as string,
+                    ...(p["state"] ? { state: p["state"] as never } : {}),
+                    ...(p["involvement"] ? { involvement: p["involvement"] as never } : {}),
+                    ...(typeof p["limit"] === "number" ? { limit: p["limit"] } : {}),
+                }),
+            ),
+        "pr.detail": (p) => envelope(() => pullRequestDetail({ cwd: p["cwd"] as string, number: Number(p["number"]) })),
+        "pr.diff": (p) => envelope(() => pullRequestDiff({ cwd: p["cwd"] as string, number: Number(p["number"]) })),
         "sc.clone": (p) => envelope(() => cloneRepository(p as unknown as Parameters<typeof cloneRepository>[0])),
         "sc.publish": (p) => envelope(() => publishRepository(p as unknown as Parameters<typeof publishRepository>[0])),
 

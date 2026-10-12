@@ -12,7 +12,7 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { SymbolView } from "../../../components/AppSymbol";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
@@ -94,10 +94,6 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
       })),
     [busy, gitStatus.data, hasPrimaryRemote, menuItems],
   );
-
-  useEffect(() => {
-    void gitActions.refreshSelectedThreadGitStatus({ quiet: true });
-  }, [gitActions]);
 
   const openExistingPr = useCallback(async () => {
     const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;
@@ -268,6 +264,21 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
               resolveGitOverviewReviewNavigationAction(presentation) === "replace"
                 ? StackActions.replace("ThreadReview", params)
                 : CommonActions.navigate("ThreadReview", params),
+            );
+          }}
+        />
+        <View className="ml-12 h-px bg-border" />
+        <SheetListRow
+          icon="arrow.triangle.pull"
+          title="Pull requests"
+          subtitle="Browse this repository's pull requests, checks and diffs"
+          disabled={busy || !isRepo || !hasPrimaryRemote}
+          onPress={() => {
+            const params = { environmentId: String(environmentId), threadId: String(threadId) };
+            navigation.dispatch(
+              resolveGitOverviewReviewNavigationAction(presentation) === "replace"
+                ? StackActions.replace("ThreadPullRequests", params)
+                : CommonActions.navigate("ThreadPullRequests", params),
             );
           }}
         />

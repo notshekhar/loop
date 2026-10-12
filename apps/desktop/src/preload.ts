@@ -192,6 +192,12 @@ contextBridge.exposeInMainWorld("loop", {
   },
   sourceControl: {
     lookup: (repository: string) => ipcRenderer.invoke("loop:sc.lookup", { repository }),
+    /** Pull requests, read through `gh` (core workspace/pullRequests.ts). */
+    listPullRequests: (input: { cwd: string; state?: string; involvement?: string; limit?: number }) =>
+      ipcRenderer.invoke("loop:pr.list", input),
+    pullRequestDetail: (cwd: string, number: number) =>
+      ipcRenderer.invoke("loop:pr.detail", { cwd, number }),
+    pullRequestDiff: (cwd: string, number: number) => ipcRenderer.invoke("loop:pr.diff", { cwd, number }),
     clone: (input: unknown) => ipcRenderer.invoke("loop:sc.clone", input),
     publish: (input: unknown) => ipcRenderer.invoke("loop:sc.publish", input),
   },

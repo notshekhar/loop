@@ -18,6 +18,7 @@ export * from "./settings.ts";
 export * from "./git.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";
+export * from "./pullRequests.ts";
 export * from "./orchestration.ts";
 export * from "./loopProjectFile.ts";
 export * from "./editor.ts";

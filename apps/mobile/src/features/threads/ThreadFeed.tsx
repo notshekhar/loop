@@ -244,7 +244,7 @@ const MARKDOWN_MONO_FONT = Platform.select({
   default: "monospace",
 });
 
-interface MarkdownStyleSets {
+export interface MarkdownStyleSets {
   readonly user: MarkdownStyleSet;
   readonly assistant: MarkdownStyleSet;
 }
@@ -455,7 +455,8 @@ function useReviewCommentColors(): ReviewCommentColors {
   );
 }
 
-function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSets {
+/** Exported for screens outside the feed that draw markdown the same way (pull requests). */
+export function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSets {
   const colorScheme = useColorScheme();
   const { appearance } = useAppearancePreferences();
   const markdownFontSizes = useMemo(

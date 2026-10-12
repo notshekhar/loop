@@ -20,6 +20,13 @@
  */
 
 import { createWorkspaceBridges, type WorkspaceBridges } from "./workspaceBridges";
+import type {
+  LoopPullRequestDetail,
+  LoopPullRequestDiff,
+  LoopPullRequestInvolvement,
+  LoopPullRequestListState,
+  LoopPullRequestSummary,
+} from "./contracts/pullRequests";
 
 export interface LoopEvent {
   readonly sessionId: string;
@@ -411,6 +418,15 @@ type ShellResult<T> = { ok: true; value: T } | { ok: false; error: string };
 /** Repository-level GitHub work: find one, bring one down, put one up. */
 export interface LoopSourceControlBridge {
   lookup(repository: string): Promise<ShellResult<RepositoryInfo | null>>;
+  /** Pull requests through `gh`. Optional: a shell that predates them has none. */
+  listPullRequests?(input: {
+    cwd: string;
+    state?: LoopPullRequestListState;
+    involvement?: LoopPullRequestInvolvement;
+    limit?: number;
+  }): Promise<ShellResult<readonly LoopPullRequestSummary[]>>;
+  pullRequestDetail?(cwd: string, number: number): Promise<ShellResult<LoopPullRequestDetail>>;
+  pullRequestDiff?(cwd: string, number: number): Promise<ShellResult<LoopPullRequestDiff>>;
   clone(input: {
     repository?: string;
     remoteUrl?: string;

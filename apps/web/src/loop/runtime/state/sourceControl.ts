@@ -24,6 +24,22 @@ export function createSourceControlEnvironmentAtoms<R, E>(
       label: "environment-data:source-control:repository",
       tag: WS_METHODS.sourceControlLookupRepository,
     }),
+    // Pull requests through `gh` (contracts/pullRequests.ts).
+    pullRequests: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:source-control:pull-requests",
+      tag: WS_METHODS.loopPullRequestsList,
+      staleTimeMs: 60_000,
+    }),
+    pullRequestDetail: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:source-control:pull-request-detail",
+      tag: WS_METHODS.loopPullRequestsDetail,
+      staleTimeMs: 60_000,
+    }),
+    pullRequestDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:source-control:pull-request-diff",
+      tag: WS_METHODS.loopPullRequestsDiff,
+      staleTimeMs: 5 * 60_000,
+    }),
     cloneRepository: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:source-control:clone-repository",
       tag: WS_METHODS.sourceControlCloneRepository,

@@ -99,6 +99,9 @@ export function createWorkspaceBridges(call: WorkspaceCall, on: WorkspaceSubscri
     },
     sourceControl: {
       lookup: (repository) => ask("sc.lookup", { repository }),
+      listPullRequests: (input) => ask("pr.list", { ...input }),
+      pullRequestDetail: (cwd, number) => ask("pr.detail", { cwd, number }),
+      pullRequestDiff: (cwd, number) => ask("pr.diff", { cwd, number }),
       clone: (input) => ask("sc.clone", input),
       publish: (input) => ask("sc.publish", input),
     },

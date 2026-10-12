@@ -33,6 +33,9 @@ import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
 import { ThreadInsightsSheet } from "./features/threads/ThreadInsightsSheet";
 import { ThreadTeamSheet } from "./features/threads/team/ThreadTeamSheet";
+import { PullRequestDiffScreen } from "./features/pull-requests/PullRequestDiffScreen";
+import { PullRequestScreen } from "./features/pull-requests/PullRequestScreen";
+import { PullRequestsScreen } from "./features/pull-requests/PullRequestsScreen";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
@@ -437,6 +440,22 @@ export const RootStack = createNativeStackNavigator({
             : undefined,
         title: "Files",
       },
+    }),
+    // Pull requests of the thread's repository, read through `gh` (features/pull-requests).
+    ThreadPullRequests: createNativeStackScreen({
+      screen: PullRequestsScreen,
+      linking: `${THREAD_LINKING_PREFIX}/pulls`,
+      options: { ...SOLID_HEADER_OPTIONS, title: "Pull requests" },
+    }),
+    ThreadPullRequest: createNativeStackScreen({
+      screen: PullRequestScreen,
+      linking: `${THREAD_LINKING_PREFIX}/pulls/:number`,
+      options: SOLID_HEADER_OPTIONS,
+    }),
+    ThreadPullRequestDiff: createNativeStackScreen({
+      screen: PullRequestDiffScreen,
+      linking: `${THREAD_LINKING_PREFIX}/pulls/:number/diff`,
+      options: SOLID_HEADER_OPTIONS,
     }),
     ThreadFile: createNativeStackScreen({
       screen: ThreadFileScreen,

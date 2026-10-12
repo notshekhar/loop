@@ -824,6 +824,19 @@ function ThreadRouteContent(
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
       <NativeStackScreenOptions
+        // Header item factories are stabilized, so the native header re-reads
+        // them only when this changes. Keying on the items (and the git state
+        // their callbacks read but do not show) keeps the Git menu current —
+        // it otherwise showed the status from when the chat was opened.
+        // (From t3code #16330.)
+        optionsVersion={[
+          layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems,
+          selectedThread.environmentId,
+          selectedThread.id,
+          gitStatus.data?.isDefaultRef,
+          gitStatus.data?.refName,
+          gitStatus.data?.pr?.url,
+        ]}
         options={{
           // Android draws its own in-flow header (AndroidScreenHeader below);
           // the native stack header stays iOS-only.

@@ -38,6 +38,7 @@ import { formatError } from "./formatError.ts";
 import { browse, listEntries, readFile, searchEntries, writeFile } from "./files.ts";
 import { openInEditor } from "./editors.ts";
 import { cloneRepository, lookupRepository, publishRepository } from "./sourceControl.ts";
+import { listPullRequests, pullRequestDetail, pullRequestDiff } from "./pullRequests.ts";
 import {
   diffPreview,
   discoverSourceControl,
@@ -257,6 +258,9 @@ export const makeHandlers = (options: HandlerOptions) => {
   "server.reportHostPowerState": () => fail("server.reportHostPowerState"),
   "server.getBackgroundPolicy": () => fail("server.getBackgroundPolicy"),
   "sourceControl.lookupRepository": (input) => lookupRepository(input, host),
+  "loopPullRequests.list": (input) => listPullRequests(input, host),
+  "loopPullRequests.detail": (input) => pullRequestDetail(input, host),
+  "loopPullRequests.diff": (input) => pullRequestDiff(input, host),
   "sourceControl.cloneRepository": (input) => cloneRepository(input, host),
   "sourceControl.publishRepository": (input) => publishRepository(input, host),
     "projects.searchEntries": (input) => searchEntries(input, host),

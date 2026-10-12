@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo } from "react";
 
 import { EnvironmentProject, EnvironmentThreadShell } from "@loop/runtime/state/shell";
 import type { AtomCommandResult } from "@loop/runtime/state/runtime";
@@ -35,7 +35,8 @@ export function useSelectedThreadGitActions() {
   const createRef = useAtomCommand(vcsEnvironment.createRef, { reportFailure: false });
   const createWorktree = useAtomCommand(vcsEnvironment.createWorktree, { reportFailure: false });
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
-  const { selectedThread, selectedThreadProject } = useThreadSelection();
+  const { selectedThread, selectedThreadProject, selectedEnvironmentRuntime } =
+    useThreadSelection();
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
@@ -115,12 +116,36 @@ export function useSelectedThreadGitActions() {
     [refreshStatus, selectedThread, selectedThreadCwd, selectedThreadProject],
   );
 
+  // Shell updates replace the selected thread object many times a second while
+  // a turn streams, and each refresh is several `git` processes on the host — so
+  // the refresh is keyed on primitives: it seeds status when the selection or cwd
+  // changes, and again on reconnect, since changes made while the app was away
+  // were never pushed to it. (From t3code #15893 and #16329.)
+  const selectedEnvironmentId = selectedThread?.environmentId ?? null;
+  const selectedThreadId = selectedThread?.id ?? null;
+  const hasSelectedThreadProject = selectedThreadProject !== null;
+  const isEnvironmentConnected = selectedEnvironmentRuntime?.connectionState === "connected";
+  const refreshOnSelection = useEffectEvent(() => {
+    void refreshSelectedThreadGitStatus({ quiet: true });
+  });
   useEffect(() => {
-    if (!selectedThread || !selectedThreadProject) {
+    if (
+      selectedEnvironmentId === null ||
+      selectedThreadId === null ||
+      !hasSelectedThreadProject ||
+      selectedThreadCwd === null ||
+      !isEnvironmentConnected
+    ) {
       return;
     }
-    void refreshSelectedThreadGitStatus({ quiet: true });
-  }, [refreshSelectedThreadGitStatus, selectedThread, selectedThreadProject]);
+    refreshOnSelection();
+  }, [
+    selectedEnvironmentId,
+    selectedThreadId,
+    hasSelectedThreadProject,
+    selectedThreadCwd,
+    isEnvironmentConnected,
+  ]);
 
   const runSelectedThreadGitMutation = useCallback(
     async <T, E>(
