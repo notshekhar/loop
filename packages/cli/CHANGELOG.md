@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.21.16] - 2026-10-12
+
+### Fixed
+
+- **The desktop app no longer offers an update it cannot install.** It treated the latest release as the update even when that release had no desktop build (a CLI-only release), so it showed "Update available" and then failed the download. It now offers the newest release that has a desktop build, or nothing.
+- **Remote chats in the TUI** (`/hosts`):
+  - Esc or Ctrl+C keeps the chat busy ("Stopping") until the host has stopped, so a message typed right after goes into a new turn rather than the one being cancelled.
+  - Idle compaction shows as a note instead of opening a turn that never ended.
+  - Opening a chat while it is replying shows the whole reply, not one that starts mid-sentence.
+  - A connection dropped during the handshake reconnects; it used to stay closed until the TUI restarted.
+  - A prompt sent from another device is shown, not just "a turn started from another device" — in `/rc` too.
+- **A hook that rewrites a tool's input** now shows the command that actually ran, in the TUI.
+- **Desktop and web:**
+  - A thread that failed to load retries instead of staying on "Loading messages…".
+  - Two overlapping loads no longer make text vanish.
+  - A failed session list keeps the sidebar you had instead of showing it empty.
+  - A team lookup that times out keeps the team on screen instead of saying there is none.
+- **Desktop:** Settings and Usage can drag the window again, Settings → About shows the updater, the keybindings page no longer says to use the desktop app, and pairing labels it "Loop Desktop" rather than "Loop Web".
+- **Phone:**
+  - A pairing link no longer has its address and code wiped on open.
+  - Coming back to the app after a short break checks the host is really there, instead of showing a dead host as Connected.
+
 ## [0.21.15] - 2026-10-12
 
 ### Added

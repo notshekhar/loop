@@ -1,6 +1,6 @@
 {
   "name": "@loop/mobile",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "private": true,
   "main": "index.ts",
   "scripts": {
