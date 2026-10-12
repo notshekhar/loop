@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.21.15] - 2026-10-12
+
+### Added
+
+- **`loop install desktop`.** Installs the desktop app, or updates it when it is already installed — and says so when it is already up to date. It picks the newest release that actually has a desktop build for your machine (many releases are CLI-only), and installs it with the same script as the website's one-liner. `--force` reinstalls.
+
+### Fixed
+
+- **The installer no longer touches pi.** `install.sh` and `install.ps1` used to move `~/.pi` into `~/.loop` and delete it, uninstall the `pi` and `pi-coding-agent` npm packages, and remove any `pi` command — which could wipe a real pi setup on the same machine. All of that is gone, and loop no longer migrates any old config folder at startup.
+- **The installer only removes its own commands.** Install and uninstall now remove a `loop`, `lp` or `agent` command only when it links into loop's own install, and `agent` is created only when the name is free — Cursor's CLI is also called `agent`, and it is no longer replaced.
+
 ## [0.21.14] - 2026-10-12
 
 ### Fixed
