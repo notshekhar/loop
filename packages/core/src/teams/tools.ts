@@ -96,7 +96,7 @@ export function createSpawnThreadsTool(ctx: TeamToolContext) {
     const max = maxTeamThreads();
     return tool({
         description:
-            `Start threads that work in parallel on parts of the job — a team you lead. Each thread is a full session with its own context and tools, in this same folder. Returns at once with each thread's id; the threads run in the background, and their messages and reports reach you on their own. Up to ${max} threads per team; calling it again adds threads to the same team.\n\n` +
+            `Start threads that work in parallel on parts of the job — a team you lead. Each thread is a full session with its own context and tools, in this same folder. Returns at once with each thread's id; the threads run in the background, and their messages and reports reach you on their own. Up to ${max} threads can work at once; calling it again adds threads to the same team. Threads that finished stay in the team with their context — to give one more work, message it with send_message instead of starting a new thread.\n\n` +
             "Give each thread a short title (its name in every list, max 48 characters) and a brief it can act on alone: the goal, the files it owns, the contract to keep, how to verify.",
         inputSchema: z.object({
             threads: z
@@ -127,9 +127,14 @@ export function createSpawnThreadsTool(ctx: TeamToolContext) {
             if (existing && existing.role === "member") {
                 return "REJECTED: you are a thread in a team; only the lead starts threads. Ask the lead with send_message if the work needs another thread.";
             }
-            const already = existing ? listTeam(existing.teamId).filter((m) => m.role === "member").length : 0;
-            if (already + threads.length > max) {
-                return `REJECTED: a team holds at most ${max} threads; it has ${already} and you asked for ${threads.length} more. Start fewer, or reuse a thread by messaging it.`;
+            // The cap is on threads WORKING at once. Finished threads stay in
+            // the team for good — they keep their context and can be given more
+            // work by message — so they never count against it.
+            const active = existing
+                ? listTeam(existing.teamId).filter((m) => m.role === "member" && !FINISHED_STATES.has(m.state)).length
+                : 0;
+            if (active + threads.length > max) {
+                return `REJECTED: at most ${max} threads can work at once; ${active} are still working and you asked for ${threads.length} more. Start fewer, wait for some to finish, or give the work to a finished thread with ${SEND_MESSAGE_TOOL}.`;
             }
             for (const t of threads) {
                 if (!t.title.trim()) return "REJECTED: every thread needs a title.";
@@ -165,11 +170,15 @@ export function createSpawnThreadsTool(ctx: TeamToolContext) {
             }
             emitTeamChange({ teamId, kind: "members" });
 
-            // Teammates already at work hear who joined.
+            // Teammates still at work hear who joined. Finished ones are not
+            // woken for it — a new turn just to read the news would cost a model
+            // call each; they see the whole roster in their notes next time
+            // anyone messages them.
             const roster = listTeam(teamId);
-            const veterans = roster.filter(
+            const earlier = roster.filter(
                 (m) => m.role === "member" && !created.some((c) => c.session.id === m.sessionId),
             );
+            const veterans = earlier.filter((m) => !FINISHED_STATES.has(m.state));
             if (veterans.length > 0) {
                 const joined = created.map((c) => `"${c.title}" (id ${c.session.id})`).join(", ");
                 postTeamMessages({
@@ -193,9 +202,15 @@ export function createSpawnThreadsTool(ctx: TeamToolContext) {
             }
             for (const v of veterans) wakeTeamInbox(v.sessionId);
 
+            const alsoInTeam =
+                earlier.length > 0
+                    ? `\n\nAlso in your team (finished threads keep their context; message one with ${SEND_MESSAGE_TOOL} to give it more work):\n` +
+                      earlier.map((m) => `- "${m.title}" — ${m.state} — id ${m.sessionId}`).join("\n")
+                    : "";
             return (
                 `Started ${created.length} thread${created.length === 1 ? "" : "s"} (team ${teamId}):\n` +
                 created.map((c) => `- "${c.title}" — id ${c.session.id}`).join("\n") +
+                alsoInTeam +
                 `\n\nThey are working in the background. Their messages and reports reach you on their own. Call ${WAIT_FOR_TEAM_TOOL} only when your next step needs their results; otherwise keep working or end your turn.`
             );
         },

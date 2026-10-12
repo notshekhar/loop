@@ -64,3 +64,25 @@ export function briefText(text: string | undefined): string {
     )
     .trim();
 }
+
+/**
+ * Split a team for one spawn row: the threads this call started (named by id
+ * in its result, up to the "Also in your team" list), then everyone else, so
+ * every thread the lead ever started stays reachable from the chat. Matches the
+ * asked-for titles while the result has not arrived. Same rule as the desktop.
+ */
+export function splitSpawnedMembers<T extends { readonly id: string; readonly title: string }>(
+  members: readonly T[],
+  output: string | null,
+  askedTitles: readonly string[],
+): { started: T[]; others: T[] } {
+  const own = (output ?? "").split(/\n\s*\nAlso in your team/)[0] ?? "";
+  const ids = [...own.matchAll(/— id (\S+)/g)].map((match) => match[1]!);
+  const mine =
+    ids.length > 0
+      ? (member: T) => ids.includes(member.id)
+      : (member: T) => askedTitles.includes(member.title);
+  const started = members.filter(mine);
+  if (started.length === 0) return { started: [], others: [...members] };
+  return { started, others: members.filter((member) => !mine(member)) };
+}

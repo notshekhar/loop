@@ -124,7 +124,10 @@ describe("team snapshot", () => {
         const teamId = teams.createTeam("lead-stale");
         teams.addTeamMember(teamId, "stuck", "running");
         teams.addTeamMember(teamId, "fresh", "running");
-        getDb().run("UPDATE team_members SET updated_at = ? WHERE session_pub = ?", [Date.now() - 11 * 60_000, "stuck"]);
+        getDb().run("UPDATE team_members SET updated_at = ? WHERE session_pub = ?", [
+            Date.now() - 11 * 60_000,
+            "stuck",
+        ]);
         const snapshot = teams.teamSnapshot(teamId)!;
         expect(snapshot.members.map((m) => [m.id, m.state])).toEqual([
             ["stuck", "idle"],
@@ -145,6 +148,63 @@ describe("team tools", () => {
         const team = teams.teamOf(lead.id);
         expect(team?.role).toBe("lead");
         expect(teams.readBoard(team!.teamId).map((n) => n.key)).toEqual(["contract"]);
+    });
+});
+
+describe("a team that outlives its first spawn", () => {
+    const owner = {};
+    const delivered: string[] = [];
+    beforeEach(() => {
+        delivered.length = 0;
+        teams.claimTeamRuntime(owner, {
+            deliver: (sessionId) => {
+                delivered.push(sessionId);
+            },
+            isRunning: () => false,
+            cancel: () => {},
+        });
+    });
+    afterEach(() => teams.releaseTeamRuntime(owner));
+
+    test("finished threads stay, do not count against the cap, are not woken by newcomers, and are named to the lead", async () => {
+        const lead = await new SessionManager().create({ cwd: "/tmp", provider: "xai", model: MODEL });
+        const tools = teams.createTeamTools({ session: lead, modelId: MODEL, cwd: "/tmp" }) as Record<
+            string,
+            { execute: (input: unknown, opts: unknown) => Promise<string> }
+        >;
+        const spawn = (titles: string[]) =>
+            tools.spawn_threads!.execute({ threads: titles.map((title) => ({ title, brief: `do ${title}` })) }, {});
+
+        const first = await spawn(["A", "B", "C", "D", "E"]);
+        expect(first).toStartWith("Started 5 threads");
+        const teamId = teams.teamOf(lead.id)!.teamId;
+        const firstFive = teams.listTeam(teamId).filter((m) => m.role === "member");
+        // A sixth while all five still work: over the cap.
+        expect(await spawn(["F"])).toStartWith("REJECTED: at most 5 threads can work at once");
+
+        // Four report; one is still at it.
+        for (const m of firstFive.slice(0, 4)) teams.moveMember(m.sessionId, "done");
+        delivered.length = 0;
+        const second = await spawn(["F", "G"]);
+        expect(second).toStartWith("Started 2 threads");
+        // The lead is told who else is in the team, finished or not.
+        expect(second).toContain("Also in your team");
+        for (const t of ["A", "B", "C", "D", "E"]) expect(second).toContain(`"${t}"`);
+
+        // Same team, all seven in it.
+        const roster = teams.listTeam(teamId).filter((m) => m.role === "member");
+        expect(roster.map((m) => m.title)).toEqual(["A", "B", "C", "D", "E", "F", "G"]);
+        // The newcomers got their briefs, and the one still working hears who
+        // joined (idle here, so as a turn); the four finished threads were not
+        // woken just for the news.
+        const newcomers = roster.slice(5).map((m) => m.sessionId);
+        expect(delivered).toEqual([...newcomers, firstFive[4]!.sessionId]);
+        for (const m of firstFive.slice(0, 4)) expect(teams.inboxCount(m.sessionId)).toBe(0);
+
+        // A finished thread can still be messaged: it is still a teammate.
+        expect(await tools.send_message!.execute({ to: firstFive[0]!.sessionId, message: "one more thing" }, {})).toBe(
+            'Sent to "A".',
+        );
     });
 });
 

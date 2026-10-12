@@ -1,5 +1,5 @@
 import { type EnvironmentConnectionPhase } from "@loop/runtime/connection";
-import { ThreadTeamPill } from "./team/ThreadTeamPill";
+import { TEAM_BAR_HEIGHT, ThreadTeamBar } from "./team/ThreadTeamBar";
 import type { EnvironmentThreadStatus } from "@loop/runtime/state/threads";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
@@ -370,6 +370,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             anchorMessageId={anchorMessageId}
             contentInsetEndAdjustment={contentInsetEndAdjustment}
             contentTopInset={0}
+            extraTopInset={props.selectedThread.team ? TEAM_BAR_HEIGHT : 0}
             contentBottomInset={estimatedOverlayHeight}
             contentMaxWidth={contentMaxWidth}
             layoutVariant={layoutVariant}
@@ -378,7 +379,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             skills={selectedProviderSkills}
           />
           {props.selectedThread.team ? (
-            <ThreadTeamPill environmentId={String(props.environmentId)} threadId={String(props.selectedThread.id)} />
+            <ThreadTeamBar
+              environmentId={String(props.environmentId)}
+              threadId={String(props.selectedThread.id)}
+              underTransparentHeader={
+                props.usesAutomaticContentInsets === true && Platform.OS === "ios"
+              }
+            />
           ) : null}
         </View>
       ) : (

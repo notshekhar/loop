@@ -74,3 +74,34 @@ export function teamMemberWorking(member: {
 }): boolean {
   return member.running || member.state === "running" || member.state === "starting";
 }
+
+/**
+ * The thread ids a spawn_threads call started, read from its result
+ * ("- \"Title\" — id 01…" lines) — up to the "Also in your team" list,
+ * which names the threads that were already there.
+ */
+export function startedThreadIds(output: string | undefined | null): string[] {
+  if (!output) return [];
+  const own = output.split(/\n\s*\nAlso in your team/)[0] ?? "";
+  return [...own.matchAll(/— id (\S+)/g)].map((match) => match[1]!);
+}
+
+/**
+ * Split a team for one spawn card: the threads this call started, then
+ * everyone else (earlier spawns and later ones). Falls back to matching the
+ * asked-for titles while the result has not arrived.
+ */
+export function splitSpawnedMembers<T extends { readonly id: string; readonly title: string }>(
+  members: readonly T[],
+  output: string | undefined | null,
+  askedTitles: readonly string[],
+): { started: T[]; others: T[] } {
+  const ids = startedThreadIds(output);
+  const mine =
+    ids.length > 0
+      ? (member: T) => ids.includes(member.id)
+      : (member: T) => askedTitles.includes(member.title);
+  const started = members.filter(mine);
+  if (started.length === 0) return { started: [], others: [...members] };
+  return { started, others: members.filter((member) => !mine(member)) };
+}

@@ -59,6 +59,16 @@ export interface ThreadFeedActivity {
   readonly loopTool?: GroupableTool;
   /** Something the thread team wrote into this thread (payload.loopTeam), drawn as a card. */
   readonly team?: ThreadFeedTeamCard;
+  /** A spawn_threads call: drawn with its threads and the rest of the team under it. */
+  readonly teamSpawn?: ThreadFeedTeamSpawn;
+}
+
+/** What a spawn_threads row needs: the titles asked for and the result naming the ids. */
+export interface ThreadFeedTeamSpawn {
+  readonly titles: ReadonlyArray<string>;
+  readonly output: string | null;
+  readonly failed: boolean;
+  readonly partial: boolean;
 }
 
 /** A thread team's brief or mail (packages/core/src/teams), as the feed's card reads it. */
@@ -96,6 +106,7 @@ interface WorkLogEntry {
   toolData?: unknown;
   team?: ThreadFeedTeamCard;
   loopTool?: GroupableTool;
+  teamSpawn?: ThreadFeedTeamSpawn;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -288,6 +299,26 @@ function extractLoopTool(payload: Record<string, unknown> | null): GroupableTool
   return { name: record.name, isError: record.isError === true, isPartial: record.isPartial === true };
 }
 
+/** A spawn_threads call's titles and result (payload.loopTool). */
+function extractTeamSpawn(payload: Record<string, unknown> | null): ThreadFeedTeamSpawn | null {
+  const tool = payload?.loopTool;
+  if (!tool || typeof tool !== "object") return null;
+  const record = tool as Record<string, unknown>;
+  if (record.name !== "spawn_threads") return null;
+  const args = record.args && typeof record.args === "object" ? (record.args as Record<string, unknown>) : {};
+  const titles = Array.isArray(args.threads)
+    ? args.threads
+        .map((t) => (t && typeof t === "object" ? (t as Record<string, unknown>).title : null))
+        .filter((title): title is string => typeof title === "string" && title.trim() !== "")
+    : [];
+  return {
+    titles,
+    output: typeof record.output === "string" ? record.output : null,
+    failed: record.isError === true && record.isPartial !== true,
+    partial: record.isPartial === true,
+  };
+}
+
 /** A team card's data (payload.loopTeam, written by apps/web loop/handlers/thread.ts). */
 function extractLoopTeam(payload: Record<string, unknown> | null): ThreadFeedTeamCard | null {
   const team = payload?.loopTeam;
@@ -372,6 +403,8 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (loopTool) entry.loopTool = loopTool;
   const team = extractLoopTeam(payload);
   if (team) entry.team = team;
+  const teamSpawn = extractTeamSpawn(payload);
+  if (teamSpawn) entry.teamSpawn = teamSpawn;
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
   if (
@@ -1570,6 +1603,7 @@ export function buildThreadFeed(
               status: workEntryStatus(entry),
               ...(entry.loopTool ? { loopTool: entry.loopTool } : {}),
               ...(entry.team ? { team: entry.team } : {}),
+              ...(entry.teamSpawn ? { teamSpawn: entry.teamSpawn } : {}),
             },
           };
         }),

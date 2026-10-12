@@ -32,7 +32,12 @@ import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { teamAtoms } from "../../state/team";
 import type { LoopTeamEntry, LoopToolEntry } from "./loopEntry";
-import { formatTeamUsd, teamMemberWorking, teamStatePresentation } from "./teamPresentation";
+import {
+  formatTeamUsd,
+  splitSpawnedMembers,
+  teamMemberWorking,
+  teamStatePresentation,
+} from "./teamPresentation";
 
 /** The team `threadRef`'s thread is in, live — null while it is in none (or loading). */
 export function useThreadTeam(threadRef: ScopedThreadRef | null | undefined): TeamSnapshot | null {
@@ -344,7 +349,11 @@ export const LoopTeamToolRow = memo(function LoopTeamToolRow({
         )
       : [];
     const members = team?.members ?? [];
-    const count = asked.length || members.length;
+    // This call's threads first; the rest of the team (earlier spawns, later
+    // ones) underneath, so every thread the lead ever started stays one click
+    // away from anywhere in the chat.
+    const { started, others } = splitSpawnedMembers(members, tool.output, asked);
+    const count = asked.length || started.length;
     const working = members.filter(teamMemberWorking).length;
     return (
       <div className="py-px">
@@ -359,17 +368,29 @@ export const LoopTeamToolRow = memo(function LoopTeamToolRow({
               : {})}
         />
         <Rail>
-          {members.length > 0 && environmentId
-            ? members.map((member) => (
+          {started.length > 0 && environmentId
+            ? started.map((member) => (
                 <SpawnedThread environmentId={environmentId} key={member.id} member={member} />
               ))
-            : asked.map((title, index) => (
-                // eslint-disable-next-line react/no-array-index-key
-                <div className="flex items-center gap-2 py-0.5 text-[12px]" key={index}>
-                  <StateDot state="starting" />
-                  <span className="text-foreground/80">{title}</span>
-                </div>
+            : failed
+              ? null
+              : asked.map((title, index) => (
+                  // eslint-disable-next-line react/no-array-index-key
+                  <div className="flex items-center gap-2 py-0.5 text-[12px]" key={index}>
+                    <StateDot state="starting" />
+                    <span className="text-foreground/80">{title}</span>
+                  </div>
+                ))}
+          {others.length > 0 && environmentId ? (
+            <>
+              <div className="pt-1.5 pb-0.5 text-[11px] text-muted-foreground/60">
+                Also in the team
+              </div>
+              {others.map((member) => (
+                <SpawnedThread environmentId={environmentId} key={member.id} member={member} />
               ))}
+            </>
+          ) : null}
           {failed && tool.output ? (
             <p className="py-0.5 text-[12px] text-destructive">{tool.output}</p>
           ) : null}

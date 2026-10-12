@@ -466,7 +466,11 @@ export const RootStack = createNativeStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/team`,
       options: {
         presentation: "formSheet",
-        sheetAllowedDetents: [0.6, 0.95],
+        // One detent. With two, UIKit lays the scroll view out at the expanded
+        // height even while the sheet rests at the smaller one, so the list
+        // scrolled down but the drag back up went to the sheet instead — you
+        // could not scroll back to the top.
+        sheetAllowedDetents: [0.92],
         sheetGrabberVisible: true,
       },
     }),

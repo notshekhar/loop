@@ -2,7 +2,7 @@
  * The team sheet: the thread team a chat is in, in one place — every thread
  * with its state and cost, the shared board, the whole team's spend, and
  * Stop. The phone's version of the desktop's team panel, opened from the
- * team pill over the chat. Tapping a thread opens it.
+ * team bar under the chat's header. Tapping a thread opens it.
  */
 import { EnvironmentId, type TeamMember } from "@loop/contracts";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";

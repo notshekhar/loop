@@ -71,11 +71,23 @@ describe("watching a repository", () => {
 
     /** Wait for a burst to settle: FSEvents latency plus the debounce. */
     const settle = () => sleep(1_200);
+    /**
+     * Wait until the watcher has been quiet for a while, then forget what it
+     * saw: FSEvents can deliver the repository's own setup (init, the first
+     * commit) late, especially on a loaded machine.
+     */
+    const quiet = async () => {
+        let seen = -1;
+        for (let i = 0; i < 10 && seen !== changes.length; i++) {
+            seen = changes.length;
+            await sleep(800);
+        }
+        changes.length = 0;
+    };
 
     test("an edit, a stage and a commit each notify, once per burst", async () => {
         expect(await watchers.watch(repo, "w1")).toEqual({ native: true });
-        await sleep(300); // let the watcher's initial events drain
-        changes.length = 0;
+        await quiet();
 
         for (let i = 0; i < 20; i++) writeFileSync(join(repo, "a.txt"), `edit ${i}\n`);
         await settle();
@@ -90,22 +102,20 @@ describe("watching a repository", () => {
         git(repo, "commit", "-q", "-m", "two");
         await settle();
         expect(changes.length).toBeGreaterThanOrEqual(1);
-    });
+    }, 20_000);
 
     test("node_modules churn does not", async () => {
         mkdirSync(join(repo, "node_modules", "pkg"), { recursive: true });
         await watchers.watch(repo, "w1");
-        await sleep(300);
-        changes.length = 0;
+        await quiet();
         for (let i = 0; i < 50; i++) writeFileSync(join(repo, "node_modules", "pkg", `f${i}.js`), "x");
         await settle();
         expect(changes).toEqual([]);
-    });
+    }, 20_000);
 
     test("reading status does not wake its own watcher", async () => {
         await watchers.watch(repo, "w1");
-        await sleep(300);
-        changes.length = 0;
+        await quiet();
         // What the panel runs on every notification (git.ts reads with
         // GIT_OPTIONAL_LOCKS=0, so status does not rewrite the index).
         execFileSync("git", ["status", "--porcelain=v2"], {
@@ -114,7 +124,7 @@ describe("watching a repository", () => {
         });
         await settle();
         expect(changes).toEqual([]);
-    });
+    }, 20_000);
 
     test("watches are shared per folder and leased", async () => {
         let now = 1_000;

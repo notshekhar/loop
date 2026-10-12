@@ -103,6 +103,7 @@ import {
 } from "./thread-work-log";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { ThreadTeamCard } from "./team/ThreadTeamCard";
+import { ThreadTeamSpawnCard } from "./team/ThreadTeamSpawnCard";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
 
@@ -161,6 +162,11 @@ export interface ThreadFeedProps {
   readonly anchorMessageId: MessageId | null;
   readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly contentTopInset?: number;
+  /**
+   * Room for something pinned under the header (the team bar), added to the
+   * feed's top inset in either inset mode so the first message starts below it.
+   */
+  readonly extraTopInset?: number;
   readonly contentBottomInset?: number;
   readonly contentMaxWidth?: number;
   readonly layoutVariant?: LayoutVariant;
@@ -822,7 +828,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
 
 function renderFeedEntry(
   info: { item: ThreadFeedEntry; index: number },
-  props: Pick<ThreadFeedProps, "environmentId" | "skills"> & {
+  props: Pick<ThreadFeedProps, "environmentId" | "threadId" | "skills"> & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
@@ -1046,6 +1052,18 @@ function renderFeedEntry(
         environmentId={String(props.environmentId)}
         renderMarkdown={renderMarkdown}
         team={team}
+      />
+    );
+  }
+
+  // A spawn_threads call: its threads and the rest of the team, tappable.
+  const spawn = entry.activities.length === 1 ? entry.activities[0]!.teamSpawn : undefined;
+  if (spawn) {
+    return (
+      <ThreadTeamSpawnCard
+        environmentId={String(props.environmentId)}
+        spawn={spawn}
+        threadId={String(props.threadId)}
       />
     );
   }
@@ -1396,7 +1414,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const userBubbleMaxWidth = contentWidth * 0.85;
   const reviewCommentBubbleWidth = Math.min(Math.max(280, contentWidth * 0.85), contentWidth);
   const insets = useSafeAreaInsets();
-  const topContentInset = props.contentTopInset ?? insets.top + 44;
+  const extraTopInset = props.extraTopInset ?? 0;
+  const topContentInset = (props.contentTopInset ?? insets.top + 44) + extraTopInset;
   const bottomContentInset = props.contentBottomInset ?? 18;
   const usesNativeAutomaticInsets =
     props.usesAutomaticContentInsets === true && Platform.OS === "ios";
@@ -1409,7 +1428,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // header-providing screen) and fall back to the standard iOS bar height.
   const navigationHeaderHeight = useContext(HeaderHeightContext);
   const anchorTopInset = usesNativeAutomaticInsets
-    ? navigationHeaderHeight || insets.top + 44
+    ? (navigationHeaderHeight || insets.top + 44) + extraTopInset
     : topContentInset;
 
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
@@ -1789,6 +1808,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (info: { item: ThreadFeedEntry; index: number }) =>
       renderFeedEntry(info, {
         environmentId: props.environmentId,
+        threadId: props.threadId,
         copiedRowId,
         expandedWorkRows,
         terminalAssistantMessageIds,
@@ -1825,6 +1845,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onToggleWorkGroup,
       onToggleWorkRow,
       props.environmentId,
+      props.threadId,
       props.skills,
     ],
   );
@@ -1952,7 +1973,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onScroll={handleScroll}
             scrollEventThrottle={16}
             ListHeaderComponent={
-              usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />
+              usesNativeAutomaticInsets ? (
+                extraTopInset > 0 ? (
+                  <View style={{ height: extraTopInset }} />
+                ) : null
+              ) : (
+                <View style={{ height: topContentInset }} />
+              )
             }
             contentContainerStyle={{
               paddingTop: 12,

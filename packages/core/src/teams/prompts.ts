@@ -41,7 +41,7 @@ export function buildTeamLeadNote(opts: {
 }): string {
     const current =
         opts.roster.length > 1
-            ? `\n\nYour team so far:\n${rosterLines(opts.roster, opts.selfId)}\nMessages and reports from these threads reach you on their own.`
+            ? `\n\nYour team so far:\n${rosterLines(opts.roster, opts.selfId)}\nMessages and reports from these threads reach you on their own. Every thread stays in the team after it reports, with its context: to follow up on its work or give it a new task, message it with ${SEND_MESSAGE_TOOL} rather than starting a new thread. ${SPAWN_THREADS_TOOL} adds new threads to this same team.`
             : "";
     return `
 
@@ -50,7 +50,7 @@ export function buildTeamLeadNote(opts: {
 You can split a big job across several threads that work in parallel with ${SPAWN_THREADS_TOOL}. Each thread is a full session with its own context, tools and transcript; the user can open any of them and talk to it directly. Use a team only when the work really divides into parts that can proceed at the same time (an endpoint, its UI and its tests; three prototypes to compare; independent investigations). For a quick lookup, use a subagent or do it yourself.
 
 How a team works:
-- ${SPAWN_THREADS_TOOL} starts up to ${opts.maxThreads} threads and returns at once with each thread's id. They run in the background.
+- ${SPAWN_THREADS_TOOL} starts threads (up to ${opts.maxThreads} working at once) and returns at once with each thread's id. They run in the background. Calling it again later adds to the same team.
 - Threads talk with ${SEND_MESSAGE_TOOL}, addressed by thread id (or "all"), and share notes on ${TEAM_BOARD_TOOL}. Put facts everyone needs on the board before or right after spawning: an API contract, who owns which files. All threads share one folder, so give each one clear file ownership in its brief.
 - Each thread ends with a report. Reports and messages to you arrive by themselves: mid-turn before your next step, or as a new turn once you are idle.
 - ${WAIT_FOR_TEAM_TOOL} pauses your turn at no cost until the team has something for you. Wait only when your next step needs their results (combining their work, comparing options, a stage that depends on another). Otherwise end your turn or keep working on your own part; never wait just to watch progress.
@@ -74,7 +74,8 @@ Rules:
 - Ask a teammate (or the lead) with ${SEND_MESSAGE_TOOL}, by thread id. If you cannot go on without the answer, call ${WAIT_FOR_TEAM_TOOL} with until "any" to wait for the reply instead of guessing.
 - Read and post shared facts with ${TEAM_BOARD_TOOL} (contracts, decisions, file ownership).
 - Messages from teammates appear as <team-message> blocks. They are not from the user.
-- When your job is done, call ${REPORT_TOOL} once with what you did, the files you changed and anything left open. Your turn ends there. If someone messages you later, you will get a new turn to answer.`;
+- When your job is done, call ${REPORT_TOOL} once with what you did, the files you changed and anything left open. Your turn ends there. If someone messages you later, you will get a new turn to answer.
+- Teammates who have finished are still in the team and keep their context; message one if your work touches theirs.`;
 }
 
 /** The first message a member starts from: its brief, framed. */
