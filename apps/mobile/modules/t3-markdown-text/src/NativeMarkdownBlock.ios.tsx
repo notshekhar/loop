@@ -23,7 +23,10 @@ const highlightedCodePromiseCache = new Map<string, Promise<HighlightedCode>>();
 const HIGHLIGHTED_CODE_CACHE_LIMIT = 64;
 
 function nodeKey(node: MarkdownNode, index: number): string {
-  return `${node.type}:${node.beg ?? index}:${node.end ?? index}`;
+  // The sibling index too: the parser gives some nodes no source offsets
+  // (table cells come back as 0:0), so offsets alone repeated within a row —
+  // and React, handed duplicate keys mid-stream, can drop or duplicate rows.
+  return `${node.type}:${node.beg ?? index}:${node.end ?? index}:${index}`;
 }
 
 /** Code inside markdown scales with the base text size (12pt at the default 15pt body). */

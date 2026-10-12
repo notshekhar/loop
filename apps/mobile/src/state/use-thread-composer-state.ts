@@ -326,6 +326,14 @@ export function useThreadComposerState() {
 
   return {
     selectedThreadFeed,
+    /**
+     * The running turn, from the thread detail. The shell the screen is
+     * otherwise drawn from never has one (handlers/shell.ts sends
+     * `latestTurn: null`), so the feed could not tell a reply was still being
+     * written: each finished text block got its copy button and time as if it
+     * ended the turn, which vanished again when the next tool call arrived.
+     */
+    selectedThreadLatestTurn: selectedThreadDetail?.latestTurn ?? null,
     selectedThreadQueueCount,
     activeWorkStartedAt,
     draftMessage,

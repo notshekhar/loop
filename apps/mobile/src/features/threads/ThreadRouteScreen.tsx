@@ -273,12 +273,21 @@ function ThreadRouteContent(
       selectedThread
         ? {
             ...selectedThread,
+            // The detail knows the running turn; the shell does not (see
+            // selectedThreadLatestTurn).
+            latestTurn: composer.selectedThreadLatestTurn ?? selectedThread.latestTurn,
             modelSelection: composer.modelSelection ?? selectedThread.modelSelection,
             runtimeMode: composer.runtimeMode ?? selectedThread.runtimeMode,
             interactionMode: composer.interactionMode ?? selectedThread.interactionMode,
           }
         : null,
-    [composer.interactionMode, composer.modelSelection, composer.runtimeMode, selectedThread],
+    [
+      composer.interactionMode,
+      composer.modelSelection,
+      composer.runtimeMode,
+      composer.selectedThreadLatestTurn,
+      selectedThread,
+    ],
   );
 
   /* ─── Native header theming ──────────────────────────────────────── */

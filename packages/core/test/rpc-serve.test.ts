@@ -26,6 +26,7 @@ mock.module("../src/settings", () => ({
 const { getOrCreateServeToken, isLoopbackHost, remoteTerminalFor, startWebServer } = await import("../src/rpc/serve");
 const { writeAttachmentPayloads, RpcServer } = await import("../src/rpc/server");
 const { MIN_CLIENT_PROTOCOL, PROTOCOL_VERSION } = await import("../src/rpc/protocol");
+const { SessionManager } = await import("../src/sessions");
 import type { ServeHandle } from "../src/rpc/serve";
 
 /** In-memory transport for driving an RpcServer directly. */
@@ -288,6 +289,52 @@ describe("history tails", () => {
         const unknown = await call("session.history", { sessionId, afterEntryId: "not-on-the-branch" });
         expect(unknown.tail).toBeUndefined();
         expect(unknown.entries).toHaveLength(all.length);
+        server.dispose();
+    });
+});
+
+describe("a session another process writes to", () => {
+    useTempSessionDb();
+
+    test("is reloaded: the terminal's turns show up here, and watchers are told", async () => {
+        const server = new RpcServer({ askBridge: false });
+        const t = fakeTransport();
+        const f = server.attach(t);
+        const cwd = mkdtempSync(join(tmpdir(), "loop-rpc-"));
+        let id = 0;
+        const call = async (method: string, params: unknown) => {
+            const my = ++id;
+            f.feed(JSON.stringify({ jsonrpc: "2.0", id: my, method, params }) + "\n");
+            await until(() => !!t.response(my), method);
+            return (t.response(my) as { result: any }).result;
+        };
+        const { sessionId } = await call("session.create", { cwd, provider: "nope", model: "nope/model" });
+        const before = await call("session.messages", { sessionId });
+        expect(JSON.stringify(before.messages)).not.toContain("typed in the terminal");
+
+        // The TUI: its own object for the same session, writing to the same database.
+        const elsewhere = await new SessionManager().open(sessionId);
+        await elsewhere.append({ type: "message", role: "user", content: "typed in the terminal", ts: Date.now() });
+        await elsewhere.append({ type: "message", role: "assistant", content: "answered there", ts: Date.now() });
+
+        const after = await call("session.messages", { sessionId });
+        const text = JSON.stringify(after.messages);
+        expect(text).toContain("typed in the terminal");
+        expect(text).toContain("answered there");
+        await until(
+            () =>
+                t.sent.some(
+                    (m: any) => m.method === "session.status" && m.params?.sessionId === sessionId && m.params?.change === "updated",
+                ),
+            "updated notice",
+        );
+        // Caught up: asking again does not reload or announce again.
+        const notices = () =>
+            t.sent.filter((m: any) => m.method === "session.status" && m.params?.change === "updated").length;
+        const count = notices();
+        await call("session.messages", { sessionId });
+        await new Promise((r) => setTimeout(r, 20));
+        expect(notices()).toBe(count);
         server.dispose();
     });
 });

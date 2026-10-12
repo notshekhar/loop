@@ -57,6 +57,20 @@ export function ConnectionsNewRouteScreen({
 
   const connectDisabled = isSubmitting || hostInput.trim().length === 0;
 
+  // A deep link wins over whatever the shared pairing field held from an
+  // earlier attempt: hand it the link's URL, and the sync below fills host and
+  // code from it.
+  useEffect(() => {
+    if (!params.pairingUrl) return;
+    try {
+      onChangeConnectionPairingUrl(extractPairingUrlFromQrPayload(params.pairingUrl));
+    } catch {
+      // Not a pairing link: leave the form as it is.
+    }
+    // Only when the link itself changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.pairingUrl]);
+
   useEffect(() => {
     // Only a pairing URL that is actually set. On mount it is "", and syncing
     // that wiped the host and code a `loop://connections/new?pairingUrl=…`

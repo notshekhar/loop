@@ -418,7 +418,8 @@ export interface LiveSessionProvider {
 /** What `session.status` tells every client (see `announce`). */
 export interface SessionStatusNotice {
     readonly sessionId: string;
-    readonly change: "running" | "created" | "renamed" | "archived" | "deleted" | "team";
+    /** `updated`: another process wrote to the session; re-read it. */
+    readonly change: "running" | "created" | "renamed" | "archived" | "deleted" | "team" | "updated";
     readonly running?: boolean;
     /** change "team": which team, and what moved in it (teams/runtime.ts TeamChange). */
     readonly teamId?: string;
@@ -1916,6 +1917,26 @@ export class RpcServer {
         return ctx;
     }
 
+    /**
+     * Reload a cached session that another process wrote to since it was
+     * loaded — the terminal ran turns in a chat this window has open (one
+     * database, two processes). Without this the cached copy was served for as
+     * long as the app lived: reopening the chat showed none of them, and only
+     * restarting the app did. Never mid-turn: a turn running here writes to
+     * the object it started with.
+     */
+    private async refreshIfBehind(id: string, ctx: ActiveSession): Promise<void> {
+        if (ctx.running || !ctx.session.isBehindDisk()) return;
+        const fresh = await this.manager.open(id);
+        if (ctx.running) return;
+        ctx.session = fresh;
+        ctx.modelId = fresh.lastModel();
+        ctx.transcript = transcriptOf(fresh, false);
+        trackSaved(ctx);
+        // Watchers re-read it (the web transcript store resnapshots on this).
+        this.announce({ sessionId: id, change: "updated" });
+    }
+
     /** Live context for a session, loading it from the store on first touch.
      * Reuse is the point: a reload/second client must see the same running
      * flag, abort controller, and event ring as the turn already in flight. */
@@ -1923,7 +1944,10 @@ export class RpcServer {
         // A session the TUI has open is read from the TUI's own object.
         if (this.live?.get(id)) return this.liveCtx(id)!;
         const existing = this.sessions.get(id);
-        if (existing) return existing;
+        if (existing) {
+            await this.refreshIfBehind(id, existing);
+            return existing;
+        }
         const session = await this.manager.open(id);
         // Seeded, not empty. `cost.session` reads this tracker, so an unseeded
         // one reports $0 for a conversation that has cost real money — the

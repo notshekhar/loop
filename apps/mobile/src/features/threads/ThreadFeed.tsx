@@ -1602,6 +1602,28 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   }, [hasOlderRows]);
 
   const listMountKey = `${props.threadId}:${props.feed.length === 0 ? "empty" : "filled"}`;
+  // The list's own first scroll to the end gives up after a few frames when
+  // its row estimates are far off — a long reply is many times taller than
+  // estimatedItemSize — and then rests wherever it got to, often over rows it
+  // has not drawn: a blank screen with a scroll bar until the reader scrolls.
+  // Settle it again once rows have been measured, unless the reader has
+  // already taken over (or the thread opened on a particular message).
+  const readerDraggedRef = useRef(false);
+  useEffect(() => {
+    if (props.feed.length === 0 || props.anchorMessageId) return;
+    readerDraggedRef.current = false;
+    const timers = [250, 700, 1500].map((ms) =>
+      setTimeout(() => {
+        if (!readerDraggedRef.current) void props.listRef.current?.scrollToEnd({ animated: false });
+      }, ms),
+    );
+    return () => timers.forEach(clearTimeout);
+    // Once per mount of a filled list (listMountKey), not per new row.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listMountKey]);
+  const onScrollBeginDrag = useCallback(() => {
+    readerDraggedRef.current = true;
+  }, []);
   useLayoutEffect(() => {
     const bottom = props.contentInsetEndAdjustment.value;
     if (bottom > 0) {
@@ -1971,6 +1993,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             alignItemsAtEnd
             initialScrollAtEnd
             onScroll={handleScroll}
+            onScrollBeginDrag={onScrollBeginDrag}
             scrollEventThrottle={16}
             ListHeaderComponent={
               usesNativeAutomaticInsets ? (

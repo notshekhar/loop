@@ -136,7 +136,15 @@ function start(entry: Watched, host: LoopHost, sessionId: string): () => void {
   };
 
   const offEvent = host.onEvent((event) => {
-    if (event.sessionId !== sessionId || typeof event.seq !== "number" || event.seq <= 0) return;
+    if (event.sessionId !== sessionId) return;
+    // Another process (the terminal) wrote to this session: the host reloaded
+    // it, so take a fresh snapshot rather than waiting for a reopen.
+    const part = event.part as { type?: string; data?: { change?: unknown } } | undefined;
+    if (part?.type === "session-status" && part.data?.change === "updated") {
+      void snapshot();
+      return;
+    }
+    if (typeof event.seq !== "number" || event.seq <= 0) return;
     if (buffer) buffer.push(event);
     else apply(event);
   });

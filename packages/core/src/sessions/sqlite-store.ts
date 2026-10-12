@@ -198,6 +198,15 @@ export class SessionStore {
         tx();
     }
 
+    /** How many entries the session has on disk — written by any process. */
+    countEntries(sessionRowId: number): number {
+        return (
+            this.db
+                .query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM entries WHERE session_id = ?")
+                .get(sessionRowId)?.n ?? 0
+        );
+    }
+
     loadEntries(sessionRowId: number): Entry[] {
         const rows = this.db
             .query<{ payload: string }, [number]>("SELECT payload FROM entries WHERE session_id = ? ORDER BY id")

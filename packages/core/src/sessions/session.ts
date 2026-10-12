@@ -83,6 +83,12 @@ export class Session {
     /** Internal sessions.id — resolved lazily so an unsaved session creates
      * no row until its first append (parity with the old empty-file rule). */
     private rowId: number | null = null;
+    /**
+     * Rows this object has seen in the store: loaded, written or rewritten.
+     * Counted from the store's side — a row the adapter drops on load still
+     * counts — so it equals the store's count until ANOTHER process appends.
+     */
+    private seenOnDisk = 0;
 
     constructor(info: SessionInfoData, path: string, buffered: Entry[]) {
         this.id = info.id;
@@ -97,14 +103,20 @@ export class Session {
         const store = getSessionStore();
         const record = store.getSession(info.id);
         const entries: Entry[] = [];
+        let seen = 0;
         if (record) {
             for (const raw of store.loadEntries(record.rowId)) {
+                seen += 1;
                 const adapted = adaptSessionEntry(raw);
                 if (adapted) entries.push(adapted);
             }
         }
         const session = new Session(info, path, entries);
-        if (record) session.rowId = record.rowId;
+        if (record) {
+            session.rowId = record.rowId;
+            // A legacy upgrade in the constructor rewrote the rows to `buffered`.
+            if (session.seenOnDisk === 0) session.seenOnDisk = seen;
+        }
         return session;
     }
 
@@ -124,6 +136,7 @@ export class Session {
         if (!record) return;
         this.rowId = record.rowId;
         store.replaceEntries(record.rowId, this.buffered);
+        this.seenOnDisk = this.buffered.length;
     }
 
     private ensureRow(): number {
@@ -181,6 +194,16 @@ export class Session {
      */
     onAppend: (() => void) | null = null;
 
+    /**
+     * Whether another process has appended to this session since this object
+     * loaded it — the terminal adding turns to a chat the desktop has open.
+     * One indexed COUNT; false for a session never written.
+     */
+    isBehindDisk(): boolean {
+        if (this.rowId === null) return false;
+        return getSessionStore().countEntries(this.rowId) > this.seenOnDisk;
+    }
+
     async appendAll(entries: Entry[]): Promise<void> {
         if (entries.length === 0) return;
         this.onAppend?.();
@@ -198,6 +221,7 @@ export class Session {
             if (entry.type === "session-name") this.sessionName = entry.name?.trim() || undefined;
         }
         getSessionStore().appendEntries(this.ensureRow(), entries);
+        this.seenOnDisk += entries.length;
     }
 
     // =========================================================================
