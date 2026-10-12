@@ -154,9 +154,10 @@ describe("team tools", () => {
 describe("a team that outlives its first spawn", () => {
     const owner = {};
     const delivered: string[] = [];
+    let restore = () => {};
     beforeEach(() => {
         delivered.length = 0;
-        teams.claimTeamRuntime(owner, {
+        restore = teams.setTeamRuntimeForTests(owner, {
             deliver: (sessionId) => {
                 delivered.push(sessionId);
             },
@@ -164,7 +165,7 @@ describe("a team that outlives its first spawn", () => {
             cancel: () => {},
         });
     });
-    afterEach(() => teams.releaseTeamRuntime(owner));
+    afterEach(() => restore());
 
     test("finished threads stay, do not count against the cap, are not woken by newcomers, and are named to the lead", async () => {
         const lead = await new SessionManager().create({ cwd: "/tmp", provider: "xai", model: MODEL });
@@ -256,12 +257,13 @@ describe("a team run, through real turns", () => {
     const running = new Map<string, Promise<void>>();
     const manager = new SessionManager();
     const owner = {};
+    let restoreRuntime = () => {};
 
     beforeEach(() => {
         dir = mkdtempSync(join(tmpdir(), "loop-teams-"));
         settings.threadTeams = true;
         // What a host does: run each delivered turn, then pick up late mail.
-        teams.claimTeamRuntime(owner, {
+        restoreRuntime = teams.setTeamRuntimeForTests(owner, {
             deliver: (sessionId, input, team) => {
                 const run = (async () => {
                     const session = await manager.open(sessionId);
@@ -285,7 +287,7 @@ describe("a team run, through real turns", () => {
         });
     });
     afterEach(() => {
-        teams.releaseTeamRuntime(owner);
+        restoreRuntime();
         currentModel = null;
         delete settings.threadTeams;
         running.clear();

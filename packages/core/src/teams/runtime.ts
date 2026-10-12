@@ -81,6 +81,22 @@ export function releaseTeamRuntime(owner: unknown): void {
     runtimeOwner = null;
 }
 
+/**
+ * Tests only: take the runtime whoever holds it, and hand back a function that
+ * puts the previous holder back. A server another test file left running
+ * would otherwise keep the claim, and spawned threads would go to it.
+ */
+export function setTeamRuntimeForTests(owner: unknown, rt: TeamRuntime): () => void {
+    const previous = { runtime, runtimeOwner };
+    runtime = rt;
+    runtimeOwner = owner;
+    return () => {
+        if (runtimeOwner !== owner) return;
+        runtime = previous.runtime;
+        runtimeOwner = previous.runtimeOwner;
+    };
+}
+
 export function getTeamRuntime(): TeamRuntime | null {
     return runtime;
 }
