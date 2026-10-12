@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.21.17] - 2026-10-12
+
+### Fixed
+
+- **Phone: streaming replies no longer jump.** While a reply was being written, every finished bit of text got its copy button and time as if the reply had ended, then lost them when the next tool call arrived — shifting everything below. They now appear once, when the reply is done.
+- **Phone: tables no longer drop or repeat rows.** Every cell in a table row shared one identity, which can make rows vanish or duplicate as a reply updates.
+- **Phone: reopening a long chat no longer shows a blank screen.** The first jump to the end could give up on long replies and leave the list showing an empty area until you scrolled; it now settles at the end once rows are measured.
+- **Phone: a pairing link fills in its address and code** even when an earlier attempt left something in the form.
+- **Desktop: a chat you continued in the terminal shows the new messages when you reopen it.** The desktop kept serving its first copy of the chat until the app was restarted.
+
 ## [0.21.16] - 2026-10-12
 
 ### Fixed
