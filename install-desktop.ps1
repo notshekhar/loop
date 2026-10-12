@@ -154,6 +154,8 @@ try {
 
     $exe = Join-Path $Home_ "Loop.exe"
     if (-not (Test-Path $exe)) { Err "archive did not contain Loop.exe"; exit 1 }
+    # What `loop install desktop` reads to tell whether this copy is current.
+    Set-Content -Path (Join-Path $Home_ ".loop-version") -Value $tag.TrimStart("v") -NoNewline
 
     # Shortcuts are the only way this gets launched — nothing is put on PATH,
     # since a GUI app on PATH is not what anyone reaches for.

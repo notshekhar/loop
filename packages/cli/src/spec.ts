@@ -147,7 +147,11 @@ export const COMMANDS: CommandSpec[] = [
     },
     { name: "serve", description: "Web UI + WebSocket RPC", flags: ["host", "port", "terminal", "no-terminal"] },
     { name: "rpc", description: "JSON-RPC server", subcommands: ["stop"], flags: ["socket"] },
-    { name: "install", description: "Install an extension" },
+    {
+        name: "install",
+        description: "Install an extension, or the desktop app (install desktop)",
+        flags: ["force"],
+    },
     { name: "link", description: "Link a local extension" },
     { name: "remove", description: "Remove an extension", aliases: ["uninstall"] },
     { name: "extensions", description: "List installed extensions" },

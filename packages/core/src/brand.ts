@@ -30,14 +30,6 @@ export const CONFIG_DIR_NAME = `.${PRODUCT_NAME}`;
 export const ENV_PREFIX = PRODUCT_NAME.toUpperCase();
 
 /**
- * Former config-dir names, oldest last. On startup the newest existing legacy
- * dir is moved to CONFIG_DIR_NAME so users keep their config across renames.
- * When renaming, prepend the outgoing CONFIG_DIR_NAME here. Currently empty:
- * the pi → loop migration was retired once every install had moved.
- */
-export const LEGACY_CONFIG_DIR_NAMES: readonly string[] = [];
-
-/**
  * package.json keys an extension may use for its manifest section (entry,
  * engines, permissions…). Current name first; when renaming, append the old
  * name so already-published extensions keep loading.

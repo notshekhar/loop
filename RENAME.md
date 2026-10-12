@@ -29,16 +29,16 @@ export const PRODUCT_NAME = "zap";
 
 In `packages/core/src/brand.ts` additionally:
 
-- Prepend the outgoing dir name to the legacy list so users' config migrates:
-  `LEGACY_CONFIG_DIR_NAMES = [".loop", ".pi"]` (newest first).
 - Append the old manifest key so published extensions keep loading:
   `EXTENSION_MANIFEST_KEYS = [PRODUCT_NAME, "loop"]`.
 - Update `REPO_SLUG` if the GitHub repo is renamed too.
 
-What migrates automatically at first launch: `~/.loop` → `~/.zap` (whole dir,
-copy-then-delete, in `migrateLegacyConfig`). The session db is already the
-brand-free `agent.db`, so it rides along untouched (`defaultDbPath` still
-adopts a brand-named db from pre-generic installs, e.g. `loop.db`).
+Nothing moves a user's config dir automatically: an automatic move-and-delete
+of a home dir can destroy another tool's setup that happens to share the old
+name (`~/.pi` is also the real pi agent's), so the old migration was removed.
+If a rename ever needs one, make it opt-in and verify the dir is ours first.
+The session db is the brand-free `agent.db` (`defaultDbPath` still adopts a
+brand-named db from pre-generic installs, e.g. `loop.db`).
 
 ### 2. Regenerate docs
 
@@ -66,8 +66,8 @@ bun run gen:docs
 These are shell/YAML, not TS, so they hardcode the name:
 
 - `install.sh`, `install.ps1`, `install.cmd` — binary name, symlinks
-  (`loop`/`lp`/`agent`), `LOOP_*` installer env vars, `~/.loop-bin` home, the
-  `~/.pi → ~/.loop` migration block (point it at the new dir), repo slug.
+  (`loop`/`lp`/`agent`), `LOOP_*` installer env vars, `~/.loop-bin` home, repo
+  slug.
 - `.github/workflows/release.yml` — artifact names (`loop-<target>.tar.gz`),
   binary path, Homebrew formula rendering (`Formula/loop.rb`, tap repo).
 - `.github/scripts/render-formula.py` — formula class/name.

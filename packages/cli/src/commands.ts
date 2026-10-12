@@ -139,6 +139,7 @@ Usage:
   ${PRODUCT_NAME} man                 Open the manual (--install writes it to the manpath)
   ${PRODUCT_NAME} completion <shell>  Print a tab-completion script (bash, zsh, fish)
   ${PRODUCT_NAME} upgrade             Pull latest and rebuild
+  ${PRODUCT_NAME} install desktop     Install the desktop app, or update it (--force reinstalls)
   ${PRODUCT_NAME} version | -v        Print version
   ${PRODUCT_NAME} help | -h           Show this help
 

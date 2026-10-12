@@ -27,7 +27,6 @@ class MemStore {
 
 mock.module("../src/auth/storage", () => ({
     CachedStore: MemStore,
-    migrateLegacyConfig: () => {},
     authStore: new MemStore("auth", { providers: {}, active: null }),
     settingsStore: new MemStore("settings", {}),
     datasourcesStore: new MemStore("datasources", { connections: {} }),

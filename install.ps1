@@ -34,43 +34,6 @@ $LoopHome    = if ($env:LOOP_HOME)      { $env:LOOP_HOME }      else { Join-Path
 $Force       = $env:LOOP_FORCE -eq "1"
 $PinVersion  = $env:LOOP_VERSION
 
-# Older installs (below this version) kept their config in ~\.pi; migrate once.
-$MigrateFromBelow = "0.5.0"
-
-# ── Migrate legacy config dir → ~\.loop (one-time, version-gated) ───────────
-# MOVE ~\.pi into ~\.loop (copy, then delete the old dir only once the copy
-# succeeds) so config is never lost or duplicated. Runs only for installs below
-# $MigrateFromBelow (version read from ~\.pi-bin\package.json; unknown counts as
-# below the cutoff).
-function Migrate-LegacyConfig {
-    $legacy  = Join-Path $env:USERPROFILE ".pi"
-    $current = Join-Path $env:USERPROFILE ".loop"
-    if (-not (Test-Path $legacy)) { return }
-    if (Test-Path $current) { return }
-
-    $legacyVer = $null
-    $legacyPkg = Join-Path $env:USERPROFILE ".pi-bin\package.json"
-    if (Test-Path $legacyPkg) {
-        try { $legacyVer = (Get-Content $legacyPkg -Raw | ConvertFrom-Json).version } catch {}
-    }
-    # Skip if a known legacy version is at/above the cutoff (not a pre-rename install).
-    if ($legacyVer) {
-        try {
-            if ([version]($legacyVer.TrimStart("v")) -ge [version]$MigrateFromBelow) { return }
-        } catch {}
-    }
-
-    $from = if ($legacyVer) { $legacyVer } else { "unknown" }
-    Bold "▶ Migrating config $legacy → $current (from $from, below $MigrateFromBelow)"
-    try {
-        Copy-Item -Recurse -Force $legacy $current
-        Remove-Item -Recurse -Force $legacy -ErrorAction SilentlyContinue
-        Dim "  moved auth, sessions, settings → $current (removed $legacy)"
-    } catch {
-        Err "  migration failed — your config stays in $legacy"
-    }
-}
-
 # ── Uninstall ─────────────────────────────────────────────────────────────
 if ($env:LOOP_UNINSTALL -eq "1") {
     Bold "▶ Uninstalling loop"
@@ -92,8 +55,6 @@ if ($env:LOOP_UNINSTALL -eq "1") {
     Dim  "  remove it with: Remove-Item -Recurse -Force `"$env:USERPROFILE\.loop`""
     exit 0
 }
-
-Migrate-LegacyConfig
 
 # ── Detect arch ───────────────────────────────────────────────────────────
 if (-not [Environment]::Is64BitOperatingSystem) {

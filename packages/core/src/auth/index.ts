@@ -18,7 +18,7 @@ export { XaiOAuthError, XaiErrorCode } from "./errors";
 export { normalizeCustomAuth, describeCustomAuth, resolveCustomCredential, clearHelperCache } from "./custom-auth";
 export { discoverOAuthEndpoints, type OAuthEndpoints } from "./oauth/custom";
 export { listChatgptRegistrations, CHATGPT_MANAGE_USAGE_URL, type ChatgptRegistration } from "./oauth/openai-chatgpt";
-export { authStore, settingsStore, datasourcesStore, refreshConfigStores, migrateLegacyConfig } from "./storage";
+export { authStore, settingsStore, datasourcesStore, refreshConfigStores } from "./storage";
 // Moved to the projects table; re-exported here so callers keep their imports.
 export { getProjectModel, setProjectModel, getProjectProviderModel } from "../sessions/projects";
 // Per-project bash "always allow" grants (the approval prompt's persistence).

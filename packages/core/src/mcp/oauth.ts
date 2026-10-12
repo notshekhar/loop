@@ -40,8 +40,8 @@ export function oauthClientOptions(cfg: HttpServerConfig): OAuthClientOptions {
 }
 
 // Lazy so importing this module never touches the disk (Configstore writes its
-// defaults file in the constructor, which would pre-create the config dir
-// before migrateLegacyConfig runs). Raw Configstore (not CachedStore): server
+// defaults file in the constructor, which would create the config dir as a
+// side effect of an import). Raw Configstore (not CachedStore): server
 // names are user-chosen and may contain dots, which Configstore treats as
 // nested paths — get/set must stay symmetric with existing files.
 let _mcpAuthStore: Configstore | null = null;

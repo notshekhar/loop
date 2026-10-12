@@ -1,35 +1,8 @@
 import Configstore from "configstore";
-import { cpSync, existsSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { getConfigDir, LEGACY_CONFIG_DIR_NAMES, PRODUCT_NAME } from "../brand";
+import { getConfigDir, PRODUCT_NAME } from "../brand";
 
 const CONFIG_DIR = getConfigDir();
-
-/**
- * One-time migration of a legacy config dir, for installs that don't go
- * through install.sh/install.ps1 (npm, source, bun link). MOVE the newest
- * existing legacy dir (e.g. ~/.pi) into the current config dir (copy, then
- * delete the old dir only once the copy succeeds) so config is never lost or
- * duplicated across product renames. No-op once the current dir exists.
- *
- * Called explicitly from the CLI entrypoint (not at module load) so it never
- * fires during tests, which import this module against the real home dir.
- */
-export function migrateLegacyConfig(): void {
-    try {
-        if (existsSync(CONFIG_DIR)) return;
-        // Newest legacy name first (LEGACY_CONFIG_DIR_NAMES is ordered oldest last).
-        const legacy = LEGACY_CONFIG_DIR_NAMES.map((name) => join(homedir(), name)).find((dir) => existsSync(dir));
-        if (!legacy) return;
-        cpSync(legacy, CONFIG_DIR, { recursive: true });
-        // Only remove the legacy dir once the copy has landed.
-        if (existsSync(CONFIG_DIR)) rmSync(legacy, { recursive: true, force: true });
-    } catch {
-        // Best-effort: a failed copy/delete leaves the legacy dir intact, and the
-        // app simply starts with whatever config is present rather than crashing.
-    }
-}
 
 type StoreData = Record<string, unknown>;
 
@@ -49,9 +22,8 @@ type StoreData = Record<string, unknown>;
 export class CachedStore {
     // Constructed lazily: Configstore writes its defaults file in the
     // constructor, and these stores are module-level singletons — an eager
-    // construct would create the config dir at import time, before the CLI
-    // entrypoint has run migrateLegacyConfig() (which skips itself when the
-    // dir already exists). No disk I/O until a store is actually used.
+    // construct would create the config dir at import time, just because
+    // something imported this module. No disk I/O until a store is used.
     private _store: Configstore | null = null;
     private cache: StoreData | null = null;
 

@@ -344,6 +344,8 @@ else
   mkdir -p "$DESKTOP_HOME"
   tar -xzf "$TMP/$ASSET" -C "$DESKTOP_HOME"
   chmod +x "$DESKTOP_HOME/Loop" 2>/dev/null || true
+  # What `loop install desktop` reads to tell whether this copy is current.
+  printf '%s\n' "${TAG#v}" > "$DESKTOP_HOME/.loop-version"
 
   # The chrome-sandbox helper must be setuid root unless the app runs with
   # --no-sandbox; without it Electron aborts on start with a SUID error.

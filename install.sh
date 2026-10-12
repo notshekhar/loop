@@ -77,9 +77,6 @@ done
 # block such an install may have written to a shell rc.
 LP_ALIAS_MARKER="# loop: lp alias (overrides system /usr/bin/lp)"
 
-# Older installs (below this version) kept their config in ~/.pi; migrate once.
-MIGRATE_FROM_BELOW="0.5.0"
-
 bold() { printf "\033[1m%s\033[0m\n" "$*"; }
 dim()  { printf "\033[2m%s\033[0m\n" "$*"; }
 err()  { printf "\033[31m%s\033[0m\n" "$*" >&2; }
@@ -210,32 +207,18 @@ download_with_progress() {
 }
 
 
-# ── Migrate legacy config dir → ~/.loop (one-time, version-gated) ───────────
-# MOVE ~/.pi into ~/.loop (copy, then delete the old dir only once the copy
-# succeeds) so config is never lost or duplicated. Runs only for installs below
-# MIGRATE_FROM_BELOW (version read from ~/.pi-bin/package.json; unknown counts
-# as below the cutoff).
-migrate_legacy_config() {
-  local legacy="$HOME/.pi" current="$HOME/.loop"
-  [ -d "$legacy" ] || return 0          # nothing to migrate
-  [ -e "$current" ] && return 0         # already migrated / fresh config present
-
-  local legacy_ver=""
-  if [ -f "$HOME/.pi-bin/package.json" ]; then
-    legacy_ver="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$HOME/.pi-bin/package.json" | head -n1 || true)"
-  fi
-  # Skip if a known legacy version is at/above the cutoff (not a pre-rename install).
-  if [ -n "$legacy_ver" ] && ! ver_gt "$MIGRATE_FROM_BELOW" "$legacy_ver"; then
-    return 0
-  fi
-
-  bold "▶ Migrating config $legacy → $current (from ${legacy_ver:-unknown}, below $MIGRATE_FROM_BELOW)"
-  if cp -R "$legacy" "$current" 2>/dev/null; then
-    rm -rf "$legacy" 2>/dev/null || true
-    dim "  moved auth, sessions, settings → $current (removed $legacy)"
-  else
-    err "  migration failed — your config stays in $legacy"
-  fi
+# True when $1 is a symlink into THIS install ($LOOP_HOME) — the only links
+# the installer removes. A command named `agent` or `pi` that belongs to
+# another tool (Cursor's CLI is `agent`; pi is its own coding agent), or a
+# second loop installed elsewhere, is never touched.
+is_loop_link() {
+  [ -L "$1" ] || return 1
+  local target
+  target="$(readlink "$1" 2>/dev/null || true)"
+  case "$target" in
+    "$LOOP_HOME"/*) return 0 ;;
+  esac
+  return 1
 }
 
 # ── Detect target ─────────────────────────────────────────────────────────
@@ -321,13 +304,15 @@ resolve_bin_dir() {
 # ── Uninstall ─────────────────────────────────────────────────────────────
 uninstall() {
   bold "▶ Uninstalling loop"
-  # Remove current (loop, lp, agent) and legacy (pi) symlinks from every known dir.
-  for link in "$HOME/.local/bin/loop" "$HOME/.local/bin/lp" "$HOME/.local/bin/agent" "$HOME/.local/bin/pi" \
-              "/usr/local/bin/loop" "/usr/local/bin/lp" "/usr/local/bin/agent" "/usr/local/bin/pi" \
-              "/opt/homebrew/bin/loop" "/opt/homebrew/bin/lp" "/opt/homebrew/bin/agent" "/opt/homebrew/bin/pi" \
-              "${LOOP_BIN_DIR:+$LOOP_BIN_DIR/loop}" "${LOOP_BIN_DIR:+$LOOP_BIN_DIR/lp}" "${LOOP_BIN_DIR:+$LOOP_BIN_DIR/agent}" "${LOOP_BIN_DIR:+$LOOP_BIN_DIR/pi}"; do
+  # Remove loop's own links (loop, and the lp/agent aliases it may have made)
+  # from every known dir — only links that point into a loop install, so
+  # another tool's `agent` or `lp` stays put.
+  for link in "$HOME/.local/bin/loop" "$HOME/.local/bin/lp" "$HOME/.local/bin/agent" \
+              "/usr/local/bin/loop" "/usr/local/bin/lp" "/usr/local/bin/agent" \
+              "/opt/homebrew/bin/loop" "/opt/homebrew/bin/lp" "/opt/homebrew/bin/agent" \
+              "${LOOP_BIN_DIR:+$LOOP_BIN_DIR/loop}" "${LOOP_BIN_DIR:+$LOOP_BIN_DIR/lp}" "${LOOP_BIN_DIR:+$LOOP_BIN_DIR/agent}"; do
     [ -n "$link" ] || continue
-    if [ -L "$link" ] || [ -f "$link" ]; then
+    if is_loop_link "$link"; then
       rm -f "$link" 2>/dev/null && dim "  removed $link" || true
     fi
   done
@@ -514,42 +499,37 @@ rollback_install() {
 link_globally() {
   bold "▶ Linking loop + agent globally"
 
-  # Wipe shims from prior installer styles (bun link, npm i -g, older curl run).
-  # Includes the legacy "pi" package/bin names and the upstream pi-coding-agent.
+  # Wipe shims from prior installer styles (npm i -g, bun link, an older curl
+  # run). Only loop's own: its npm package, and links that point into a loop
+  # install. Other tools' commands — pi, Cursor's `agent`, anything named
+  # `loop` that is not ours — are left alone.
   if command -v npm >/dev/null 2>&1; then
-    for p in @notshekhar/loop @notshekhar/pi loop pi agent pi-coding-agent @earendil-works/pi-coding-agent; do
-      npm uninstall -g "$p" --silent --no-audit --no-fund 2>/dev/null || true
-    done
-    local npm_prefix
-    npm_prefix="$(npm prefix -g 2>/dev/null || true)"
-    if [ -n "$npm_prefix" ]; then
-      for b in "$npm_prefix/bin/loop" "$npm_prefix/bin/lp" "$npm_prefix/bin/pi" "$npm_prefix/bin/agent"; do
-        [ -e "$b" ] || [ -L "$b" ] && rm -f "$b" 2>/dev/null && dim "  removed stale: $b" || true
-      done
-    fi
+    npm uninstall -g @notshekhar/loop --silent --no-audit --no-fund 2>/dev/null || true
   fi
+  local stale_dirs=("$HOME/.local/bin" "/usr/local/bin" "/opt/homebrew/bin")
   if command -v bun >/dev/null 2>&1; then
     local bun_bin
     bun_bin="$(bun pm -g bin 2>/dev/null || true)"
-    if [ -n "$bun_bin" ]; then
-      for b in "$bun_bin/loop" "$bun_bin/lp" "$bun_bin/pi" "$bun_bin/agent"; do
-        [ -e "$b" ] || [ -L "$b" ] && rm -f "$b" 2>/dev/null && dim "  removed stale: $b" || true
-      done
-    fi
+    [ -n "$bun_bin" ] && stale_dirs+=("$bun_bin")
   fi
-  for stale in "$HOME/.local/bin/loop" "$HOME/.local/bin/lp" "$HOME/.local/bin/pi" "$HOME/.local/bin/agent" \
-               "/usr/local/bin/loop" "/usr/local/bin/lp" "/usr/local/bin/pi" "/usr/local/bin/agent" \
-               "/opt/homebrew/bin/loop" "/opt/homebrew/bin/lp" "/opt/homebrew/bin/pi" "/opt/homebrew/bin/agent"; do
-    if [ -L "$stale" ] || [ -f "$stale" ]; then
-      # only remove if it points at us or is not our target, to allow re-symlink
-      rm -f "$stale" 2>/dev/null || true
-    fi
+  for dir in "${stale_dirs[@]}"; do
+    for name in loop lp agent; do
+      if is_loop_link "$dir/$name"; then
+        rm -f "$dir/$name" 2>/dev/null && dim "  removed stale: $dir/$name" || true
+      fi
+    done
   done
 
   local bin_dir
   bin_dir="$(resolve_bin_dir)"
   ln -sf "$LOOP_HOME/loop" "$bin_dir/loop"
-  ln -sf "$LOOP_HOME/loop" "$bin_dir/agent"
+  # `agent` is a convenience alias, and a common name — Cursor's CLI is
+  # `agent`, and loop runs it as a native agent. Claim it only when free.
+  if [ ! -e "$bin_dir/agent" ] && [ ! -L "$bin_dir/agent" ]; then
+    ln -s "$LOOP_HOME/loop" "$bin_dir/agent"
+  elif ! is_loop_link "$bin_dir/agent"; then
+    dim "  kept $bin_dir/agent (another tool's) — run loop as \`loop\`"
+  fi
   hash -r 2>/dev/null || true
 
   # Clean up the legacy `lp` alias older installs added (the `lp` command is
@@ -709,9 +689,7 @@ finish_message() {
 if [ "$UNINSTALL" = "1" ]; then
   uninstall
 elif [ "$FROM_SOURCE" = "1" ]; then
-  migrate_legacy_config
   install_from_source
 else
-  migrate_legacy_config
   install_from_release
 fi
