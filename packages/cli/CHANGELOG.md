@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.21.14] - 2026-10-12
+
+### Fixed
+
+- **A team keeps every thread it ever started.** The limit of 5 threads now counts only threads still working, so a lead can add threads later instead of being refused because earlier ones exist — finished threads stay in the team for good, keep their context, and can be given more work by message. The lead is told the whole team on every spawn, and finished threads are no longer woken (and billed a model turn) just to hear that someone joined.
+- **Earlier threads stay visible in the chat.** On the desktop, each "Started N threads" card lists the threads it started and then the rest of the team under "Also in the team". The phone now draws the same card instead of a plain tool row.
+- **The team bar on the phone sits under the header.** It is a full-width bar pinned below the header instead of a pill floating over the chat, and the chat starts below it.
+- **The team sheet on the phone scrolls both ways.** It opens at one height; with two, the list could scroll down but not back up.
+
 ## [0.21.13] - 2026-10-11
 
 ### Changed
