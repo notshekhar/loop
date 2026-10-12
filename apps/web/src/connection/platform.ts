@@ -116,7 +116,9 @@ const wakeupsLayer = Wakeups.layer({
 });
 
 function clientMetadata() {
-  const desktop = window.desktopBridge !== undefined;
+  // loop's shell exposes `window.loop`, not upstream's `desktopBridge`; asking
+  // only for the latter paired the desktop app as "Loop Web".
+  const desktop = window.desktopBridge !== undefined || window.loop !== undefined;
   const platform = navigator.platform.trim();
   return {
     label: desktop ? "Loop Desktop" : "Loop Web",

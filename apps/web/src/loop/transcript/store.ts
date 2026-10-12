@@ -141,13 +141,25 @@ function start(entry: Watched, host: LoopHost, sessionId: string): () => void {
     else apply(event);
   });
 
+  // Only the newest snapshot may land. Two can overlap (the first open and a
+  // socket reconnect), and they share one buffer: whichever finished last used
+  // to replace the view and could flush a buffer the other had already taken —
+  // text showed, then vanished.
+  let generation = 0;
+  let failures = 0;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
   const snapshot = async () => {
+    const mine = ++generation;
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimer = null;
     buffer ??= [];
     try {
       // Subscribed before the snapshot is read, so nothing falls between them.
       await host.call("session.attach", { sessionId }).catch(() => undefined);
       const { transcript, seq, meta } = await snapshotOf(host, sessionId);
-      if (stopped) return;
+      if (stopped || mine !== generation) return;
+      failures = 0;
       entry.seq = seq;
       entry.view = { transcript, ready: true, meta };
       const pending = buffer;
@@ -155,8 +167,19 @@ function start(entry: Watched, host: LoopHost, sessionId: string): () => void {
       for (const event of pending ?? []) apply(event);
       notify(entry);
     } catch {
-      // The connection is going or gone; the next open takes a new snapshot.
-      buffer = null;
+      if (stopped || mine !== generation) return;
+      // A thread already on screen keeps what arrived meanwhile (a hole in a
+      // reply is worse than an event the seq check later drops); a first load
+      // keeps buffering for the retry. Either way, try again: a remote socket
+      // does not reconnect on its own, so waiting for "open" waited forever on
+      // "Loading messages…".
+      if (entry.view.ready) {
+        const pending = buffer;
+        buffer = null;
+        for (const event of pending ?? []) apply(event);
+      }
+      failures += 1;
+      retryTimer = setTimeout(() => void snapshot(), Math.min(30_000, 1_000 * 2 ** Math.min(failures, 5)));
     }
   };
 
@@ -170,6 +193,7 @@ function start(entry: Watched, host: LoopHost, sessionId: string): () => void {
   return () => {
     stopped = true;
     if (pendingNotify !== null) clearTimeout(pendingNotify);
+    if (retryTimer !== null) clearTimeout(retryTimer);
     offEvent();
     offConnection();
   };

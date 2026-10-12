@@ -21,7 +21,8 @@ async function snapshotOf(rows: readonly Partial<LoopSessionRow>[], info?: LoopS
         ? Promise.resolve(rows)
         : method === "server.info" && info
           ? Promise.resolve(info)
-          : Promise.reject(new Error(`unexpected ${method}`)),
+          : // What a real loop says about a method it does not have.
+            Promise.reject(new Error(`Method not found: ${method}`)),
     onEvent: () => () => {},
     anchorCwd: () => Promise.resolve(undefined),
   };
@@ -145,5 +146,28 @@ describe("the shell snapshot", () => {
       row({ id: "mid", mtime: 5_000 }),
     ]);
     expect(snapshot.threads.map((thread) => thread.id)).toEqual(["new", "mid", "old"]);
+  });
+});
+
+describe("a host that cannot list its sessions", () => {
+  it("fails the snapshot instead of drawing an empty sidebar", async () => {
+    const hadWindow = globals.window !== undefined;
+    globals.window ??= globals as unknown as Window & typeof globalThis;
+    const previous = window.loop;
+    window.loop = {
+      call: (method) =>
+        method === "session.list"
+          ? Promise.reject(new Error("timed out"))
+          : Promise.reject(new Error(`Method not found: ${method}`)),
+      onEvent: () => () => {},
+      anchorCwd: () => Promise.resolve(undefined),
+    };
+    try {
+      await expect(Effect.runPromise(buildShellSnapshot())).rejects.toThrow();
+    } finally {
+      if (previous === undefined) delete window.loop;
+      else window.loop = previous;
+      if (!hadWindow) delete globals.window;
+    }
   });
 });

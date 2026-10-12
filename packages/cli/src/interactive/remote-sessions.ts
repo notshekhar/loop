@@ -172,7 +172,8 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
         if (current) return current;
         const link = slot.remote!;
         const d = roster.depsFor(slot);
-        if (!sentHere.has(slot)) slot.history.addSystem(dim(`a turn started on ${link.host.label} from another device`));
+        const foreign = !sentHere.has(slot);
+        if (foreign) slot.history.addSystem(dim(`a turn started on ${link.host.label} from another device`));
         sentHere.delete(slot);
         slot.busy = true;
         const provider = providerOf(link.model);
@@ -192,10 +193,32 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
             onTurnError: (e) => errors.push(e),
             // Nothing here typed what opened this turn; a team card comes from the stream.
             drawsTeamOpening: true,
+            // Another device's prompt is shown; one typed here is already on screen.
+            drawsForeignPrompt: foreign,
         });
         // Esc / Ctrl+C here cancels the turn THERE.
         const signal = slot.abort.signal;
-        const onAbort = () => void link.client.call("session.cancel", { sessionId: link.sessionId }).catch(() => {});
+        const watched = new Set<AbortSignal>([signal]);
+        const onAbort = () => {
+            void link.client.call("session.cancel", { sessionId: link.sessionId }).catch(() => {});
+            // The input handler marks the chat idle right after aborting, but
+            // the host is still winding the turn down, and says so with
+            // `session-running false` (endTurn). Until then stay busy: a
+            // message typed now queues instead of being sent into the dying
+            // turn — whose end would then be written under the new one — and
+            // the next Esc still reaches the host. A microtask, so it runs
+            // after the handler's own synchronous reset.
+            queueMicrotask(() => {
+                if (turns.get(slot) !== turn) return;
+                slot.busy = true;
+                d.showWorking("Stopping");
+                const next = slot.abort.signal;
+                if (!watched.has(next)) {
+                    watched.add(next);
+                    next.addEventListener("abort", onAbort, { once: true });
+                }
+            });
+        };
         signal.addEventListener("abort", onAbort, { once: true });
         const turn: TurnState = {
             startedAt: Date.now(),
@@ -203,7 +226,7 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
             emitter,
             signal,
             dispose: () => {
-                signal.removeEventListener("abort", onAbort);
+                for (const s of watched) s.removeEventListener("abort", onAbort);
                 subagentStream.dispose();
             },
         };
@@ -271,6 +294,22 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
             return;
         }
         if (!TURN_EVENTS.has(type)) return;
+        // Idle compaction runs between turns, with no `session-running` around
+        // it: opening a turn for it left one that never closed (the prompt
+        // queued behind it, and the next real turn reused its emitter). It is a
+        // note in the transcript, not a turn.
+        if ((type === "compact-start" || type === "compact-end") && !turns.get(slot)) {
+            const end = data as { aborted?: boolean; tokensBefore?: number; tokensAfter?: number } | undefined;
+            if (type === "compact-end" && !end?.aborted) {
+                const size =
+                    end?.tokensBefore && end.tokensAfter
+                        ? ` (${Math.round(end.tokensBefore / 1000)}k → ${Math.round(end.tokensAfter / 1000)}k tokens)`
+                        : "";
+                slot.history.addSystem(dim(`compacted while idle${size}`));
+                tui.requestRender();
+            }
+            return;
+        }
         // An event with no turn open (joined mid-turn, or a recap after the
         // end) still renders; it just opens one to render into.
         const turn = turns.get(slot) ?? (type === "data-recap" ? null : beginTurn(slot));
@@ -665,6 +704,8 @@ export function createRemoteSessions(host: RemoteSessionsHost): RemoteSessions {
             onTurnError: (e) => errors.push(e),
             // Nothing here typed what opened this turn; a team card comes from the stream.
             drawsTeamOpening: true,
+            // Started from another device: show what it asked.
+            drawsForeignPrompt: true,
         });
         const signal = slot.abort.signal;
         const onAbort = () => server.live.cancel(sessionId);

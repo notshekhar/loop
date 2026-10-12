@@ -80,6 +80,12 @@ async function fetchWorkingSet(
 ): Promise<{ rows: LoopSessionRow[]; folders: readonly LoopSessionFolder[] | null }> {
   const scopes = sessionScopes(host.id);
   const pins = pinnedSessionIds(host.id);
+  // A page that fails is not an empty page. Read as one, a host error, a
+  // timeout or an auth failure drew an empty sidebar — "no chats" — instead
+  // of keeping the list already on screen. Every page failing throws, which
+  // the stream answers by keeping the last snapshot (or, on the first load,
+  // by saying the sessions could not be listed).
+  let failedPages = 0;
   const [pages, pinnedRows, folders] = await Promise.all([
     Promise.all(
       scopes.map((scope) =>
@@ -88,7 +94,10 @@ async function fetchWorkingSet(
             limit: scope.limit,
             ...(scope.cwd === null ? {} : { cwd: scope.cwd }),
           })
-          .catch(() => [] as readonly LoopSessionRow[]),
+          .catch(() => {
+            failedPages += 1;
+            return [] as readonly LoopSessionRow[];
+          }),
       ),
     ),
     pins.length === 0
@@ -98,8 +107,16 @@ async function fetchWorkingSet(
     host
       .call<unknown>("session.projects", {})
       .then((value) => (Array.isArray(value) ? (value as readonly LoopSessionFolder[]) : null))
-      .catch(() => null),
+      .catch((error: unknown) => {
+        // Only a host that predates it means "derive the folders from the
+        // rows"; any other failure would drop every folder older than a page.
+        if (/method not found/i.test(String((error as Error)?.message ?? error))) return null;
+        throw error;
+      }),
   ]);
+  if (scopes.length > 0 && failedPages === scopes.length) {
+    throw new Error("loop could not list its sessions");
+  }
   scopes.forEach((scope, i) => reportSessionPage(host.id, scope.cwd, scope.limit, pages[i]!.length));
   const byId = new Map<string, LoopSessionRow>();
   for (const row of [...pages.flat(), ...pinnedRows]) byId.set(row.id, row);

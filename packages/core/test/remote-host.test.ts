@@ -143,6 +143,55 @@ describe("pairing and driving another machine", () => {
         }
     });
 
+    test("a handshake cut off mid-way is a dropped connection, not a refusal: it keeps reconnecting", async () => {
+        const record: RemoteHostRecord = await pairRemoteHost(parsePairingLink(handle.url)!);
+        let dials = 0;
+        const sockets: WebSocket[] = [];
+        const client = new RemoteHostClient(record, {
+            reconnectBaseMs: 20,
+            createSocket: (url) => {
+                dials += 1;
+                const dial = dials;
+                const ws = new WebSocket(url);
+                sockets.push(ws);
+                // The second dial loses its socket the moment it says hello.
+                return {
+                    set onopen(f: () => void) {
+                        ws.onopen = f;
+                    },
+                    set onmessage(f: (ev: { data: unknown }) => void) {
+                        ws.onmessage = f as never;
+                    },
+                    set onerror(f: () => void) {
+                        ws.onerror = f;
+                    },
+                    set onclose(f: () => void) {
+                        ws.onclose = f;
+                    },
+                    send(data: string) {
+                        if (dial === 2 && data.includes('"hello"')) {
+                            ws.close();
+                            return;
+                        }
+                        ws.send(data);
+                    },
+                    close: () => ws.close(),
+                } as never;
+            },
+        });
+        const statuses: string[] = [];
+        client.onStatus((s) => statuses.push(s));
+        try {
+            await client.call("session.list", {});
+            sockets[0]!.close();
+            await until(() => statuses.filter((s) => s === "open").length === 2, "reopened after the failed hello");
+            expect(dials).toBeGreaterThanOrEqual(3);
+            expect(statuses).not.toContain("closed");
+        } finally {
+            client.close();
+        }
+    });
+
     test("reconnects on its own after the socket drops", async () => {
         const record: RemoteHostRecord = await pairRemoteHost(parsePairingLink(handle.url)!);
         const sockets: Array<{ close(): void }> = [];

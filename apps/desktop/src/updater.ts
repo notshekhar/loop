@@ -120,20 +120,53 @@ export async function checkForUpdate(input: {
   const tag = response.url.split("/").pop() ?? "";
   if (!/^v\d/.test(tag)) throw new Error(`could not resolve the latest release tag (got "${tag}")`);
 
-  const version = tag.replace(/^v/, "");
   // Only ever forward. A machine running a build newer than the published one
   // (a local build, a rolled-back release) must not be dragged backwards.
-  if (compareVersions(version, input.currentVersion) <= 0) return null;
+  if (compareVersions(tag, input.currentVersion) <= 0) return null;
 
   const assetName = assetNameFor(input.platform, input.arch);
-  const base = `https://github.com/${repo}/releases/download/${tag}`;
-  return {
-    tag,
-    version,
-    assetName,
-    assetUrl: `${base}/${assetName}`,
-    sha256Url: `${base}/${assetName}.sha256`,
+  const release = (releaseTag: string): AvailableRelease => {
+    const base = `https://github.com/${repo}/releases/download/${releaseTag}`;
+    return {
+      tag: releaseTag,
+      version: releaseTag.replace(/^v/, ""),
+      assetName,
+      assetUrl: `${base}/${assetName}`,
+      sha256Url: `${base}/${assetName}.sha256`,
+    };
   };
+
+  // The desktop is rebuilt only when its own version moves, so the latest
+  // release is often a CLI-only one with no desktop build in it. Offering it
+  // put "Update available" in front of every user and then failed the
+  // download on a missing checksum. Check the asset is really there first.
+  const latest = release(tag);
+  const head = await doFetch(latest.assetUrl, { method: "HEAD", redirect: "follow" }).catch(() => null);
+  if (head?.ok) return latest;
+
+  // Not in the latest: the newest release that has it, if that is still newer
+  // than this build. The releases list is the rate-limited API, but this runs
+  // a few times a day, and a failure just means "nothing to offer".
+  try {
+    const response = await doFetch(`https://api.github.com/repos/${repo}/releases?per_page=30`, {
+      headers: { accept: "application/vnd.github+json" },
+    });
+    if (!response.ok) return null;
+    const releases = (await response.json()) as Array<{
+      tag_name?: string;
+      draft?: boolean;
+      prerelease?: boolean;
+      assets?: Array<{ name?: string }>;
+    }>;
+    const withAsset = releases.find(
+      (r) => !r.draft && !r.prerelease && r.tag_name && r.assets?.some((a) => a.name === assetName),
+    );
+    if (!withAsset?.tag_name) return null;
+    if (compareVersions(withAsset.tag_name, input.currentVersion) <= 0) return null;
+    return release(withAsset.tag_name);
+  } catch {
+    return null;
+  }
 }
 
 /**

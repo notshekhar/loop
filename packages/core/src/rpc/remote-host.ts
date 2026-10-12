@@ -295,7 +295,12 @@ export class RemoteHostClient {
             await this.request("hello", { protocol: PROTOCOL_VERSION, client: "loop-tui" });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            if (!/method not found/i.test(message)) {
+            // Only the host refusing this protocol is final (protocol.ts words
+            // it "…speaks protocol…" / "…needs protocol…"). A hello that timed
+            // out or lost its socket is an ordinary dropped connection: closing
+            // for good there left the remote session frozen until a restart.
+            const incompatible = /\bprotocol\b/i.test(message) && /update/i.test(message);
+            if (incompatible) {
                 this.closed = true;
                 this.socket = null;
                 try {
@@ -303,6 +308,13 @@ export class RemoteHostClient {
                 } catch {}
                 this.setStatus("closed");
                 throw new Error(`${this.host.label}: ${forThisLoop(message)}`);
+            }
+            if (!/method not found/i.test(message)) {
+                this.socket = null;
+                try {
+                    socket.close();
+                } catch {}
+                throw new Error(`${this.host.label}: ${message}`);
             }
         }
         this.setStatus("open");

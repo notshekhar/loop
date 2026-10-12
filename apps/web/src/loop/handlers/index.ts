@@ -103,6 +103,9 @@ export interface HandlerOptions extends BuildServerConfigOptions {
   readonly host: LoopHost;
 }
 
+/** How long a liveness probe waits for the host before calling it gone. */
+const PROBE_TIMEOUT_MS = 5_000;
+
 export const makeHandlers = (options: HandlerOptions) => {
   const { host } = options;
   // Turn events from this host feed the live turns before any thread asks.
@@ -110,7 +113,32 @@ export const makeHandlers = (options: HandlerOptions) => {
   // The UI asks for more sessions by environment; the shell pages by host.
   registerEnvironmentHost(options.environmentId, host.id);
   return WsRpcGroup.toLayer({
-    "server.probe": () => Effect.succeed({}),
+    // A real round trip to the host. It used to answer `{}` from right here,
+    // so the phone's short-resume check never touched the socket: a host that
+    // had died stayed "Connected" and every send hung. Failing it hands the
+    // connection to the reconnect path.
+    "server.probe": () =>
+      Effect.tryPromise({
+        try: () =>
+          new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("timed out")), PROBE_TIMEOUT_MS);
+            host.call("server.info").then(
+              () => {
+                clearTimeout(timer);
+                resolve();
+              },
+              (error: unknown) => {
+                clearTimeout(timer);
+                reject(error);
+              },
+            );
+          }),
+        catch: () =>
+          new EnvironmentAuthorizationError({
+            message: "the loop host did not answer",
+            requiredScope: AuthOrchestrationReadScope,
+          }),
+      }).pipe(Effect.as({})),
 
     "server.getConfig": () =>
       buildServerConfig(options).pipe(

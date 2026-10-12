@@ -58,6 +58,10 @@ export function ConnectionsNewRouteScreen({
   const connectDisabled = isSubmitting || hostInput.trim().length === 0;
 
   useEffect(() => {
+    // Only a pairing URL that is actually set. On mount it is "", and syncing
+    // that wiped the host and code a `loop://connections/new?pairingUrl=…`
+    // deep link had just filled in — leaving Add disabled.
+    if (!connectionPairingUrl) return;
     const { host, code } = parsePairingUrl(connectionPairingUrl);
     setHostInput(host);
     setCodeInput(code);

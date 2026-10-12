@@ -16,7 +16,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { LoopUsageSettings } from "../components/loop/LoopUsageSettings";
 import { SidebarInset } from "../components/ui/sidebar";
-import { isElectron } from "../env";
+import { ownsWindowChrome } from "../env";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
@@ -27,7 +27,7 @@ function UsageRouteView() {
         {/* Same two headers the rest of the app uses: a plain topbar in the
             browser, and a taller draggable strip in the desktop shell where
             this row IS the titlebar. */}
-        {isElectron ? (
+        {ownsWindowChrome ? (
           <div
             className={cn(
               "drag-region flex h-[52px] shrink-0 items-center px-5 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",

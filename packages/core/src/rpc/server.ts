@@ -357,6 +357,12 @@ interface ActiveSession {
     /** Last EVENT_RING_SIZE events, for session.attach {afterSeq} replay. */
     ring: RingEntry[];
     /**
+     * `seq` when entries were last written to the session. While a turn runs,
+     * the step being streamed is in the ring but not yet in the saved branch,
+     * so `session.history` is good only up to here.
+     */
+    savedSeq?: number;
+    /**
      * The conversation as clients draw it (packages/core/src/transcript),
      * kept current by every event this session broadcasts. Clients take it
      * from `session.messages` with the seq it is good to, then apply only
@@ -365,6 +371,13 @@ interface ActiveSession {
     transcript: Transcript;
     /** Team turns handed over while one was running — run next (teams/). */
     pendingTeam?: Array<{ input: string; team: TeamTurnMeta }>;
+}
+
+/** Keep `savedSeq` current: what session.history is good to mid-turn. */
+function trackSaved(ctx: ActiveSession): void {
+    ctx.session.onAppend = () => {
+        ctx.savedSeq = ctx.seq;
+    };
 }
 
 type Transport = {
@@ -679,6 +692,7 @@ export class RpcServer {
             if (existing.session !== live.session && !existing.running) {
                 existing.session = live.session;
                 existing.transcript = transcriptOf(live.session, false);
+                trackSaved(existing);
             }
             return existing;
         }
@@ -694,6 +708,7 @@ export class RpcServer {
             ring: [],
             transcript: transcriptOf(live.session, false),
         };
+        trackSaved(ctx);
         this.sessions.set(sessionId, ctx);
         return ctx;
     }
@@ -915,7 +930,13 @@ export class RpcServer {
                     leafId: ctx.session.getLeafId(),
                     entries: at >= 0 ? branch.slice(at + 1) : branch,
                     ...(at >= 0 ? { tail: { afterEntryId: after } } : {}),
-                    seq: ctx.seq,
+                    // Mid-turn, the saved branch stops at the last written
+                    // step; the one streaming now is only in the ring. Saying
+                    // the branch is good to the newest event made a client that
+                    // opened the session mid-turn skip that step's start — the
+                    // reply began mid-sentence. `session.attach` from here
+                    // replays it.
+                    seq: ctx.running && ctx.savedSeq !== undefined ? ctx.savedSeq : ctx.seq,
                     running: ctx.running,
                 };
             },
@@ -1984,6 +2005,7 @@ export class RpcServer {
     }
 
     private wireCtx(sessionId: string, ctx: ActiveSession): void {
+        trackSaved(ctx);
         // Forward the ENTIRE turn stream — reasoning, tool lifecycle, subagents,
         // step usage, recap — not a hand-picked subset. TURN_EVENT_NAMES is the
         // single source of truth: a new event on the agent loop reaches clients

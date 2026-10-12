@@ -33,7 +33,7 @@ import {
   squashAtomCommandFailure,
 } from "@loop/runtime/state/runtime";
 
-import { isElectron } from "../../env";
+import { isDesktopShell, isElectron } from "../../env";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
 import { formatShortcutLabel } from "../../keybindings";
 import { cn } from "../../lib/utils";
@@ -1280,7 +1280,8 @@ export function KeybindingsSettingsPanel() {
           </div>
         }
       >
-        {!isElectron ? (
+        {/* A browser warning: never shown inside either desktop host. */}
+        {!isElectron && !isDesktopShell ? (
           <div className="flex items-start gap-2 border-b border-warning/20 bg-warning/5 px-3 py-2.5 text-[12px] leading-relaxed text-muted-foreground sm:px-4">
             <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
             <p>

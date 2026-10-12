@@ -35,6 +35,12 @@ export interface TurnEmitterDeps {
      * server runs) has nothing else to draw it from.
      */
     drawsTeamOpening?: boolean;
+    /**
+     * Also draw the plain prompt that opened the turn: set when someone on
+     * another device sent it, so the screen shows what was asked and not only
+     * that a turn began. Left off when this TUI typed it (already drawn).
+     */
+    drawsForeignPrompt?: boolean;
     /** Clears the working line — for what runs after the turn (idle compaction). */
     hideWorking?: () => void;
 }
@@ -60,12 +66,13 @@ export function wireTurnEmitter(emitter: TurnEmitter, deps: TurnEmitterDeps): vo
         tui.requestRender();
     });
     if (deps.drawsTeamOpening) {
-        emitter.on("user-message", (event: { text: string; team?: TeamTurnMeta }) => {
-            if (!event.team) return;
+        emitter.on("user-message", (event: { text: string; team?: TeamTurnMeta; ts?: number }) => {
+            if (!event.team && !deps.drawsForeignPrompt) return;
             // The watcher opened an (empty) reply before this arrived; the
-            // card goes above the reply, so that one is closed first.
+            // card (or the prompt) goes above the reply, so that one is closed first.
             history.finishAssistant();
-            history.addTeamCard(event.team, event.text);
+            if (event.team) history.addTeamCard(event.team, event.text);
+            else history.addUser(event.text, event.ts);
             history.ensureAssistant(turnProvider, state.modelId);
             tui.requestRender();
         });
@@ -121,6 +128,14 @@ export function wireTurnEmitter(emitter: TurnEmitter, deps: TurnEmitterDeps): vo
         writeInputBuffers.delete(id);
         history.addToolCall(part.toolName ?? "tool", id, (part.input ?? {}) as Record<string, unknown>);
         showWorking(`Running ${part.toolName}…`);
+        tui.requestRender();
+    });
+    // A hook rewrote the call's input (core agent/tool-hooks.ts): that is what
+    // runs, so the box shows it — the model's original command was left on
+    // screen while the rewritten one executed.
+    emitter.on("tool-input-updated", (part: { toolName?: string; input?: unknown; toolCallId?: string }) => {
+        if (!part.toolCallId || !part.input || typeof part.input !== "object") return;
+        history.addToolCall(part.toolName ?? "tool", part.toolCallId, part.input as Record<string, unknown>);
         tui.requestRender();
     });
     emitter.on("tool-result", (part: { output?: unknown; toolCallId?: string }) => {

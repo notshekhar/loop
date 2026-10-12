@@ -49,7 +49,7 @@ import {
   resolveEnvironmentIdentificationPillLabel,
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
-import { isElectron } from "../../env";
+import { isDesktopShell, isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useTheme } from "../../hooks/useTheme";
 import {
@@ -1687,7 +1687,9 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection title="About">
-        {isElectron || HOSTED_APP_CHANNEL ? (
+        {/* isDesktopShell too: the version row talks to loop's own update
+            bridge, so it belongs in loop's shell, not only upstream's. */}
+        {isElectron || isDesktopShell || HOSTED_APP_CHANNEL ? (
           <AboutVersionSection />
         ) : (
           <SettingsRow

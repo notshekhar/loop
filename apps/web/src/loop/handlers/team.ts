@@ -89,6 +89,7 @@ export function teamStream(
         let reading = false;
         let again = false;
         let last = "";
+        let retry: ReturnType<typeof setTimeout> | null = null;
         // The sidebar follows the team from here too: every thread is kept in
         // the listed window (pinned) and the list is rebuilt whenever a thread
         // starts, stops or joins — so a lead's threads appear the moment they
@@ -123,11 +124,23 @@ export function teamStream(
               last = encoded;
               Queue.offerUnsafe(queue, snapshot);
             }
-          } catch {
-            // An older loop (no team.get) or a draft with no session yet: no team.
-            if (last !== "null" && !stopped) {
-              last = "null";
-              Queue.offerUnsafe(queue, null);
+          } catch (error) {
+            // An older loop (no team.get) or a draft with no session yet: no
+            // team. Anything else — a timeout, a dropped socket — says nothing
+            // about the team, so keep what is on screen and ask again shortly;
+            // reading it as "no team" showed "No thread team here" until the
+            // next unrelated change.
+            const message = String((error as Error)?.message ?? error);
+            if (/method not found|unknown session/i.test(message)) {
+              if (last !== "null" && !stopped) {
+                last = "null";
+                Queue.offerUnsafe(queue, null);
+              }
+            } else if (!stopped && retry === null) {
+              retry = setTimeout(() => {
+                retry = null;
+                schedule();
+              }, 5_000);
             }
           } finally {
             reading = false;
@@ -178,6 +191,7 @@ export function teamStream(
         return () => {
           stopped = true;
           if (timer !== null) clearTimeout(timer);
+          if (retry !== null) clearTimeout(retry);
           off();
           for (const unpin of unpins.values()) unpin();
         };

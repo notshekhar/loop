@@ -174,8 +174,16 @@ export class Session {
      * transaction — a step that persists multiple messages commits once,
      * not per entry.
      */
+    /**
+     * Told when entries are written, before the write. The RPC server uses it
+     * to know which streamed events are now in the saved branch (see
+     * `session.history`).
+     */
+    onAppend: (() => void) | null = null;
+
     async appendAll(entries: Entry[]): Promise<void> {
         if (entries.length === 0) return;
+        this.onAppend?.();
         for (const entry of entries) {
             if (!entry.id || this.byId.has(entry.id)) {
                 entry.id = generateEntryId((id) => this.byId.has(id));

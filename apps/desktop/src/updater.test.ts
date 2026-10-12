@@ -100,6 +100,51 @@ describe("checking for a release", () => {
     expect(release).toBeNull();
   });
 
+  /**
+   * The redirect resolves `latest`; a HEAD on an asset answers per URL; the
+   * releases list answers with `releases`.
+   */
+  function githubFetch(latest: string, published: Record<string, boolean>, releases: unknown[]): typeof fetch {
+    return (async (url: string) => {
+      if (url.endsWith("/releases/latest")) {
+        return { url: `https://github.com/notshekhar/loop/releases/tag/${latest}`, ok: true } as Response;
+      }
+      if (url.includes("/releases/download/")) {
+        const tag = url.split("/releases/download/")[1]!.split("/")[0]!;
+        return { url, ok: published[tag] === true } as Response;
+      }
+      return { ok: true, json: async () => releases } as unknown as Response;
+    }) as unknown as typeof fetch;
+  }
+  const asset = { name: "loop-desktop-darwin-arm64.zip" };
+
+  test("a CLI-only latest release is not offered; the newest with a desktop build is", async () => {
+    const release = await checkForUpdate({
+      currentVersion: "0.21.12",
+      platform: "darwin",
+      arch: "arm64",
+      fetchImpl: githubFetch("v0.21.15", { "v0.21.14": true }, [
+        { tag_name: "v0.21.15", assets: [{ name: "loop-darwin-arm64.tar.gz" }] },
+        { tag_name: "v0.21.14", assets: [asset] },
+      ]),
+    });
+    expect(release?.tag).toBe("v0.21.14");
+    expect(release?.assetUrl).toContain("/v0.21.14/loop-desktop-darwin-arm64.zip");
+  });
+
+  test("nothing to offer when the newest desktop build is the one running", async () => {
+    const release = await checkForUpdate({
+      currentVersion: "0.21.14",
+      platform: "darwin",
+      arch: "arm64",
+      fetchImpl: githubFetch("v0.21.15", { "v0.21.14": true }, [
+        { tag_name: "v0.21.15", assets: [] },
+        { tag_name: "v0.21.14", assets: [asset] },
+      ]),
+    });
+    expect(release).toBeNull();
+  });
+
   test("a redirect that lands somewhere unexpected is an error, not a version", async () => {
     const bad = (async () =>
       ({ url: "https://github.com/login", ok: true }) as Response) as unknown as typeof fetch;
