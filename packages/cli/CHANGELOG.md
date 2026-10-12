@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.21.18] - 2026-10-12
+
+### Added
+
+- **Phone: pull requests.** The git sheet has a new **Pull requests** entry. It lists the project's PRs (open, merged, closed or all; everyone's, yours, or waiting on your review) with state, checks, review and size. A PR opens to its branches, description, checks, reviewers and changed files. Tap a file for its diff, or **View all changes** for the whole patch. Read-only for now: GitHub is one tap away. It uses `gh` on the machine running loop, so that machine needs `gh auth login`.
+
+### Fixed
+
+- **Phone: git status refreshes only when the thread, folder or connection changes**, not on every re-render. The git sheet no longer runs a refresh loop of its own, and the thread header's git buttons update when the branch or PR changes.
+
 ## [0.21.17] - 2026-10-12
 
 ### Fixed
