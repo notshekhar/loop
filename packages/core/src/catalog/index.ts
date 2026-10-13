@@ -211,6 +211,23 @@ function storedCustomMeta(): Record<string, { name?: string; contextWindow?: num
 
 let mergedCache: Record<string, ModelInfo> | null = null;
 
+/**
+ * A custom gateway's model the catalog doesn't list: the user typed its id, or
+ * the gateway renamed it after a session picked it. Built the way listed ones
+ * are (vendor catalog, then the gateway floor) — without it the model has no
+ * window at all, and compaction never runs. Set by getCatalog.
+ */
+let customModelFallback: ((id: string) => ModelInfo | undefined) | null = null;
+
+/**
+ * The model's info from a catalog getCatalog returned, including custom
+ * gateway models it doesn't list. Use this, not `catalog[id]`, wherever a
+ * missing entry would switch something off (compaction, output caps).
+ */
+export function modelInfoIn(catalog: Record<string, ModelInfo>, id: string): ModelInfo | undefined {
+    return catalog[id] ?? (id.startsWith("custom:") ? (customModelFallback?.(id) ?? undefined) : undefined);
+}
+
 export function bustCatalogCache(): void {
     mergedCache = null;
 }
@@ -632,6 +649,18 @@ export async function getCatalog(opts: { refresh?: boolean } = {}): Promise<Reco
     });
 
     const customMeta = storedCustomMeta();
+    customModelFallback = (id) => {
+        const slash = id.indexOf("/");
+        const provId = id.slice(0, slash);
+        const local = id.slice(slash + 1);
+        if (slash < 0 || !local || !listCustomProviders().some((c) => `custom:${c.name}` === provId)) return undefined;
+        return buildModelInfo(
+            id,
+            provId as ProviderId,
+            [fromDiscovery(customMeta[id]), vendorCatalog.resolve(local)],
+            { ...GATEWAY_FLOOR, name: local },
+        );
+    };
     for (const cfg of listCustomProviders()) {
         const provId = `custom:${cfg.name}`;
         const userModels = cfg.models ?? [];
@@ -760,8 +789,7 @@ export async function getCatalog(opts: { refresh?: boolean } = {}): Promise<Reco
 }
 
 export async function getModel(id: string): Promise<ModelInfo | undefined> {
-    const cat = await getCatalog();
-    return cat[id];
+    return modelInfoIn(await getCatalog(), id);
 }
 
 let FALLBACK_BY_ID: Record<string, ModelInfo> | null = null;

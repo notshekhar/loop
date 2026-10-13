@@ -1,5 +1,5 @@
 import { generateText } from "ai";
-import { getCatalog } from "../catalog";
+import { getCatalog, modelInfoIn } from "../catalog";
 import { getModel } from "../providers";
 import { attachLedgerEntry, type Session } from "../sessions";
 import { formatTodoList, hasActiveTodos, isTodosPayload, type TodoItem } from "../tools/todo";
@@ -437,7 +437,7 @@ export async function runCompact(opts: {
     const messages = opts.session.messages();
     const previousCompact = latestCompact(opts.session);
     const previousCut = previousCompact?.cutAt ?? 0;
-    const modelInfo = (await getCatalog())[opts.modelId];
+    const modelInfo = modelInfoIn(await getCatalog(), opts.modelId);
     const contextWindow = opts.contextWindow ?? modelInfo?.contextWindow;
     const keep =
         opts.keepRecentTokens ??

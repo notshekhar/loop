@@ -6,7 +6,7 @@
  * chars/4 heuristic from model-messages.ts — providers only ever report one
  * total, so a breakdown is necessarily an estimate.
  */
-import { getCatalog } from "../catalog";
+import { getCatalog, modelInfoIn } from "../catalog";
 import { getSetting } from "../settings";
 import { getMcpManager, isMcpEnabled, shouldUseToolSearch } from "../mcp";
 import { getExtensionHost } from "../extensions";
@@ -99,7 +99,7 @@ export async function buildContextReport(opts: {
 }): Promise<ContextReport> {
     const { session, modelId, cwd } = opts;
     const catalog = await getCatalog();
-    const contextWindow = catalog[modelId]?.contextWindow ?? 0;
+    const contextWindow = modelInfoIn(catalog, modelId)?.contextWindow ?? 0;
     const autoCompactThreshold = getSetting("autoCompactThreshold") ?? 0.8;
 
     const workspace = getSetting("workspaceContext") !== false ? loadWorkspaceContext(cwd) : { text: "", files: [] };

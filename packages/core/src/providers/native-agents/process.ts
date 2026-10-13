@@ -1,5 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { accessSync, constants } from "node:fs";
+import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { brandEnv } from "../../brand";
 
@@ -41,7 +42,16 @@ function isExecutable(path: string): boolean {
     }
 }
 
-/** Run a short-lived command and collect its output. Never throws. */
+/**
+ * Run a short-lived command and collect its output. Never throws.
+ *
+ * HOME is pinned to the home the probe cache lives in (getConfigDir reads
+ * os.homedir(), which ignores a reassigned $HOME under Bun). Otherwise a
+ * process that points $HOME elsewhere for a while — a test, a sandbox — asks
+ * `claude auth status` about an empty home, hears "signed out", and saves that
+ * as the real home's answer: Claude Code then vanishes from every model picker
+ * until the next probe.
+ */
 export function runCommand(
     bin: string,
     args: readonly string[],
@@ -51,7 +61,7 @@ export function runCommand(
         execFile(
             bin,
             [...args],
-            { timeout: opts.timeoutMs ?? 15_000, cwd: opts.cwd, maxBuffer: 16 * 1024 * 1024, env: process.env },
+            { timeout: opts.timeoutMs ?? 15_000, cwd: opts.cwd, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, HOME: homedir() } },
             (err, stdout, stderr) => {
                 const code = err ? ((err as { code?: unknown }).code as number | null) ?? 1 : 0;
                 resolve({ code: typeof code === "number" ? code : 1, stdout: String(stdout), stderr: String(stderr) });

@@ -43,6 +43,13 @@ export interface TurnEmitterDeps {
     drawsForeignPrompt?: boolean;
     /** Clears the working line — for what runs after the turn (idle compaction). */
     hideWorking?: () => void;
+    /**
+     * The session the turn ran in. Idle compaction lands minutes after the
+     * turn, and by then /new or /resume may have put another session on this
+     * screen: its summary is saved to its own session and shown there on
+     * replay, never drawn into the one now showing.
+     */
+    sessionId?: string;
 }
 
 /**
@@ -204,8 +211,12 @@ export function wireTurnEmitter(emitter: TurnEmitter, deps: TurnEmitterDeps): vo
     // Idle compaction (core agent/idle-compact.ts) fires after the turn has
     // ended, so it owns its own working line and its own closing message.
     let idleCompacting = false;
+    let idleShown = false;
+    const elsewhere = (): boolean => deps.sessionId !== undefined && state.session?.id !== deps.sessionId;
     emitter.on("compact-start", (event: { reason?: string }) => {
         idleCompacting = event?.reason === "idle";
+        if (idleCompacting && elsewhere()) return;
+        idleShown = idleCompacting;
         showWorking(idleCompacting ? "Compacting while idle" : "Compacting");
         tui.requestRender();
     });
@@ -223,7 +234,12 @@ export function wireTurnEmitter(emitter: TurnEmitter, deps: TurnEmitterDeps): vo
                 idleCompacting = false;
                 // A turn the user started is what cancelled it, and its own
                 // working line is up now — leave that one alone.
-                if (!state.busy) deps.hideWorking?.();
+                if (idleShown && !state.busy) deps.hideWorking?.();
+                idleShown = false;
+                if (elsewhere()) {
+                    tui.requestRender();
+                    return;
+                }
                 // Cancelled because the user came back: nothing to say.
                 if (r.error) history.addSystem(`idle compaction failed: ${r.error}`);
                 else if (!r.aborted && r.summary) {
@@ -235,7 +251,8 @@ export function wireTurnEmitter(emitter: TurnEmitter, deps: TurnEmitterDeps): vo
                 }
             } else if (r.aborted) history.addSystem("compact aborted");
             else if (r.error) history.addSystem(`compact failed: ${r.error} — continuing uncompacted`);
-            else if (r.summary) history.addCompactionSummary(r.summary, r.tokensBefore);
+            // A rollover has no summary, only its recovery record.
+            else if (r.summary || r.handoff) history.addCompactionSummary(r.summary, r.tokensBefore, Date.now(), r.handoff);
             // The last reported size measured the context this just replaced.
             if (r.cutAt > 0 || r.handoff) state.latestContextTokens = 0;
             refreshStatusLine();

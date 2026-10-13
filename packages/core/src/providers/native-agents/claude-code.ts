@@ -15,6 +15,7 @@ import type {
     SpawnedProcess,
 } from "@anthropic-ai/claude-agent-sdk";
 import { spawn, type ChildProcess } from "node:child_process";
+import { homedir } from "node:os";
 import { getBashApprovalBridge } from "../../tools/approval-bridge";
 import { cachedProbe, peekProbe } from "./probe-cache";
 import { findExecutable, runCommand } from "./process";
@@ -123,7 +124,13 @@ async function listModelsViaSdk(binary: string): Promise<ClaudeCodeModel[]> {
             prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
                 await new Promise<void>((resolve) => ac.signal.addEventListener("abort", () => resolve()));
             })(),
-            options: { pathToClaudeCodeExecutable: binary, abortController: ac, persistSession: false },
+            options: {
+                pathToClaudeCodeExecutable: binary,
+                abortController: ac,
+                persistSession: false,
+                // The same home as the auth check (see runCommand).
+                env: { ...process.env, HOME: homedir() },
+            },
         });
         const init = (await q.initializationResult()) as { models?: ClaudeCodeModel[] };
         return (init.models ?? []).filter((m) => m.value !== "default");

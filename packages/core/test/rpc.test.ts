@@ -47,8 +47,16 @@ let RpcServer: any, startSocketServer: any, RpcClient: any;
 let realProviders: typeof import("../src/providers");
 let providersMockActive = true;
 
+const NATIVE_BIN_VARS = ["LOOP_CLAUDE_CODE_BIN", "LOOP_CURSOR_AGENT_BIN"] as const;
+const prevNativeBins = NATIVE_BIN_VARS.map((name) => process.env[name]);
+
 beforeAll(async () => {
     process.env.HOME = HOME;
+    // config.reload refreshes the catalog, which probes Claude Code and Cursor.
+    // Their answers are cached in the REAL home's config (os.homedir() ignores
+    // $HOME under Bun), so the test must never run the user's CLIs: point both
+    // at a binary that doesn't exist and the probes find nothing to ask.
+    for (const name of NATIVE_BIN_VARS) process.env[name] = join(HOME, "no-such-binary");
     // The session store must land under the temp HOME too — the db path is
     // resolved lazily, so an explicit override beats load-order roulette.
     const { setDbPathForTests } = await import("../src/sessions");
@@ -91,6 +99,10 @@ afterAll(async () => {
     const { setDbPathForTests } = await import("../src/sessions");
     setDbPathForTests(null);
     process.env.HOME = prevHome;
+    NATIVE_BIN_VARS.forEach((name, i) => {
+        if (prevNativeBins[i] === undefined) delete process.env[name];
+        else process.env[name] = prevNativeBins[i];
+    });
     rmSync(HOME, { recursive: true, force: true });
     rmSync(CWD, { recursive: true, force: true });
 });

@@ -10,7 +10,7 @@
  */
 import { isStepCount, ToolLoopAgent } from "ai";
 import { getModel, parseModelId } from "../providers";
-import { getCatalog } from "../catalog";
+import { getCatalog, modelInfoIn } from "../catalog";
 import { anthropicCachedSystem } from "./model-messages";
 import { buildAgentCallConfig } from "./model-call";
 import { getSetting } from "../settings";
@@ -63,7 +63,7 @@ export async function runGoalRole(opts: GoalRoleOptions): Promise<GoalRoleResult
         provider,
         modelShortId: model,
         thinkingLevel: getSetting("thinkingLevel") ?? "off",
-        modelInfo: catalog[opts.modelId],
+        modelInfo: modelInfoIn(catalog, opts.modelId),
     });
     const agent = new ToolLoopAgent({
         model: await getModel(opts.modelId),

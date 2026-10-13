@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import type { SelectItem } from "@notshekhar/loop-tui";
 import {
+    cancelIdleCompact,
     CompactAbortedError,
     clearReadRegistry,
     runCompact,
@@ -213,6 +214,9 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
                 tui.requestRender();
                 return;
             }
+            // One waiting for the cache to lapse would summarize the same
+            // conversation again, and land after this one.
+            cancelIdleCompact(state.session.id);
             state.busy = true;
             showWorking("Compacting");
             tui.requestRender();

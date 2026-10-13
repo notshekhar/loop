@@ -11,7 +11,7 @@ import type { ModelMessage } from "ai";
 import { z } from "zod";
 import type { TurnEmitter } from "./events";
 import { getModel, parseModelId } from "../providers";
-import { getCatalog } from "../catalog";
+import { getCatalog, modelInfoIn } from "../catalog";
 import { anthropicCachedSystem } from "./model-messages";
 import { buildAgentCallConfig, createStepBilling, createYieldGate } from "./model-call";
 import { getSetting } from "../settings";
@@ -525,7 +525,7 @@ async function runSubagent(
             provider: subProvider,
             modelShortId: subModel,
             thinkingLevel: getSetting("thinkingLevel") ?? "off",
-            modelInfo: catalog[modelId],
+            modelInfo: modelInfoIn(catalog, modelId),
         });
         // AI SDK's native agent loop — same streamText core runTurn uses, with
         // the loop/stop handling owned by the SDK.

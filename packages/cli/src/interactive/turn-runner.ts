@@ -283,6 +283,7 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
             hideWorking,
             refreshStatusLine,
             onTurnError: noteTurnFailure,
+            sessionId: activeSession.id,
         });
         // Goal mode reads the turn's final text (bail phrases, verifier
         // input) — accumulate it here rather than re-parsing history.

@@ -7,7 +7,7 @@ import { generateText, streamText, isStepCount, type ModelMessage } from "ai";
 import { ProviderExecutedTail } from "./provider-executed-tail";
 import { toolInputDeltaEvent, toolInputStartEvent, type TurnEmitter } from "./events";
 import { getModel, isNativeAgentProvider, parseModelId, type NativeAgentTurnContext } from "../providers";
-import { getCatalog } from "../catalog";
+import { getCatalog, modelInfoIn } from "../catalog";
 import { getSetting } from "../settings";
 import {
     ARTIFACT_TOOL_NAME,
@@ -587,7 +587,7 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
     const extracted = extractImagesFromInput(userInput, cwd);
     const { allowed: images, rejected: rejectedAttachments } = filterAttachmentsByModalities(
         extracted.images,
-        (await getCatalog())[modelId]?.modalities,
+        modelInfoIn(await getCatalog(), modelId)?.modalities,
         modelId.split("/")[0],
     );
     let textWithoutPaths = extracted.textWithoutPaths;
@@ -675,7 +675,7 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
     const { provider, model: modelShortId } = parseModelId(modelId);
 
     const catalog = await getCatalog();
-    const modelInfo = catalog[modelId];
+    const modelInfo = modelInfoIn(catalog, modelId);
 
     const workspaceContext =
         getSetting("workspaceContext") !== false ? loadWorkspaceContext(cwd) : { text: "", files: [] };
