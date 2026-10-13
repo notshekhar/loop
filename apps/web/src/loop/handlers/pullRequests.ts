@@ -1,11 +1,13 @@
 /**
- * Pull requests: the list, one in detail, and its diff — read by the shell
+ * Pull requests: the list, one in detail, its conversation and diff, the
+ * actions a reviewer takes, and signing `gh` in — run by the shell
  * through `gh` (core workspace/pullRequests.ts), shaped into the contract
  * here. A shell without the bridge (an older desktop, a browser with no
  * workspace) answers with the contract's own error rather than a crash.
  */
 import {
   LoopPullRequestError,
+  type LoopPullRequestActionInput,
   type LoopPullRequestListInput,
   type LoopPullRequestRefInput,
 } from "@loop/contracts";
@@ -60,3 +62,58 @@ export const pullRequestDiff = Effect.fnUntraced(function* (
   if (!result.ok) return yield* Effect.fail(failed("diff", result.error));
   return result.value;
 });
+
+export const pullRequestConversation = Effect.fnUntraced(function* (
+  input: LoopPullRequestRefInput,
+  host: LoopHost = defaultLoopHost,
+) {
+  const bridge = host.sourceControl();
+  if (!bridge?.pullRequestConversation) return yield* Effect.fail(unavailable("conversation"));
+  const result = yield* Effect.promise(() => bridge.pullRequestConversation!(input.cwd, input.number));
+  if (!result.ok) return yield* Effect.fail(failed("conversation", result.error));
+  return result.value;
+});
+
+export const pullRequestAction = Effect.fnUntraced(function* (
+  input: LoopPullRequestActionInput,
+  host: LoopHost = defaultLoopHost,
+) {
+  const bridge = host.sourceControl();
+  if (!bridge?.pullRequestAction) return yield* Effect.fail(unavailable(input.action.kind));
+  const result = yield* Effect.promise(() =>
+    bridge.pullRequestAction!(input.cwd, input.number, input.action),
+  );
+  if (!result.ok) return yield* Effect.fail(failed(input.action.kind, result.error));
+  return { ok: true };
+});
+
+/** One shape for the four sign-in calls: a bridge method that may be missing. */
+const githubCall = <A>(
+  operation: string,
+  host: LoopHost,
+  invoke: (
+    bridge: NonNullable<ReturnType<LoopHost["sourceControl"]>>,
+  ) => Promise<{ ok: true; value: A } | { ok: false; error: string }> | null,
+) =>
+  Effect.gen(function* () {
+    const bridge = host.sourceControl();
+    const pending = bridge ? invoke(bridge) : null;
+    if (!pending) return yield* Effect.fail(unavailable(operation));
+    const result = yield* Effect.promise(() => pending);
+    if (!result.ok) return yield* Effect.fail(failed(operation, result.error));
+    return result.value;
+  });
+
+export const githubLoginStart = (host: LoopHost = defaultLoopHost) =>
+  githubCall("sign-in", host, (bridge) => bridge.githubLoginStart?.() ?? null);
+
+export const githubLoginStatus = (input: { readonly id: string }, host: LoopHost = defaultLoopHost) =>
+  githubCall("sign-in", host, (bridge) => bridge.githubLoginStatus?.(input.id) ?? null);
+
+export const githubLoginCancel = (input: { readonly id: string }, host: LoopHost = defaultLoopHost) =>
+  githubCall("sign-in", host, (bridge) => bridge.githubLoginCancel?.(input.id) ?? null);
+
+export const githubLoginWithToken = (
+  input: { readonly token: string },
+  host: LoopHost = defaultLoopHost,
+) => githubCall("sign-in", host, (bridge) => bridge.githubLoginWithToken?.(input.token) ?? null);

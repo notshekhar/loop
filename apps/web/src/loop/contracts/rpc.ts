@@ -162,12 +162,16 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import {
+  LoopGithubLogin,
+  LoopGithubLoginStatus,
+  LoopPullRequestActionInput,
   LoopPullRequestDetail,
   LoopPullRequestDiff,
   LoopPullRequestError,
   LoopPullRequestListInput,
   LoopPullRequestRefInput,
   LoopPullRequestSummary,
+  LoopPullRequestTimelineItem,
 } from "./pullRequests.ts";
 
 export const WS_METHODS = {
@@ -269,6 +273,12 @@ export const WS_METHODS = {
   loopPullRequestsList: "loopPullRequests.list",
   loopPullRequestsDetail: "loopPullRequests.detail",
   loopPullRequestsDiff: "loopPullRequests.diff",
+  loopPullRequestsConversation: "loopPullRequests.conversation",
+  loopPullRequestsAction: "loopPullRequests.action",
+  loopGithubLoginStart: "loopGithub.loginStart",
+  loopGithubLoginStatus: "loopGithub.loginStatus",
+  loopGithubLoginCancel: "loopGithub.loginCancel",
+  loopGithubLoginWithToken: "loopGithub.loginWithToken",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -456,6 +466,42 @@ export const WsLoopPullRequestsDetailRpc = Rpc.make(WS_METHODS.loopPullRequestsD
 export const WsLoopPullRequestsDiffRpc = Rpc.make(WS_METHODS.loopPullRequestsDiff, {
   payload: LoopPullRequestRefInput,
   success: LoopPullRequestDiff,
+  error: Schema.Union([LoopPullRequestError, EnvironmentAuthorizationError]),
+});
+
+export const WsLoopPullRequestsConversationRpc = Rpc.make(WS_METHODS.loopPullRequestsConversation, {
+  payload: LoopPullRequestRefInput,
+  success: Schema.Array(LoopPullRequestTimelineItem),
+  error: Schema.Union([LoopPullRequestError, EnvironmentAuthorizationError]),
+});
+
+export const WsLoopPullRequestsActionRpc = Rpc.make(WS_METHODS.loopPullRequestsAction, {
+  payload: LoopPullRequestActionInput,
+  success: Schema.Struct({ ok: Schema.Boolean }),
+  error: Schema.Union([LoopPullRequestError, EnvironmentAuthorizationError]),
+});
+
+export const WsLoopGithubLoginStartRpc = Rpc.make(WS_METHODS.loopGithubLoginStart, {
+  payload: Schema.Struct({}),
+  success: LoopGithubLogin,
+  error: Schema.Union([LoopPullRequestError, EnvironmentAuthorizationError]),
+});
+
+export const WsLoopGithubLoginStatusRpc = Rpc.make(WS_METHODS.loopGithubLoginStatus, {
+  payload: Schema.Struct({ id: Schema.String }),
+  success: LoopGithubLoginStatus,
+  error: Schema.Union([LoopPullRequestError, EnvironmentAuthorizationError]),
+});
+
+export const WsLoopGithubLoginCancelRpc = Rpc.make(WS_METHODS.loopGithubLoginCancel, {
+  payload: Schema.Struct({ id: Schema.String }),
+  success: Schema.Struct({ ok: Schema.Boolean }),
+  error: Schema.Union([LoopPullRequestError, EnvironmentAuthorizationError]),
+});
+
+export const WsLoopGithubLoginWithTokenRpc = Rpc.make(WS_METHODS.loopGithubLoginWithToken, {
+  payload: Schema.Struct({ token: Schema.String }),
+  success: Schema.Struct({ ok: Schema.Boolean }),
   error: Schema.Union([LoopPullRequestError, EnvironmentAuthorizationError]),
 });
 
@@ -986,6 +1032,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsLoopPullRequestsListRpc,
   WsLoopPullRequestsDetailRpc,
   WsLoopPullRequestsDiffRpc,
+  WsLoopPullRequestsConversationRpc,
+  WsLoopPullRequestsActionRpc,
+  WsLoopGithubLoginStartRpc,
+  WsLoopGithubLoginStatusRpc,
+  WsLoopGithubLoginCancelRpc,
+  WsLoopGithubLoginWithTokenRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
   WsProjectsListEntriesRpc,

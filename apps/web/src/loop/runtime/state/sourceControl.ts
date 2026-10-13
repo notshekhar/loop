@@ -40,6 +40,37 @@ export function createSourceControlEnvironmentAtoms<R, E>(
       tag: WS_METHODS.loopPullRequestsDiff,
       staleTimeMs: 5 * 60_000,
     }),
+    pullRequestConversation: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:source-control:pull-request-conversation",
+      tag: WS_METHODS.loopPullRequestsConversation,
+      staleTimeMs: 60_000,
+    }),
+    // Writes to one PR run one at a time: a merge must not race a review.
+    pullRequestAction: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:pull-request-action",
+      tag: WS_METHODS.loopPullRequestsAction,
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => `${environmentId}:${input.cwd}:${input.number}`,
+      },
+    }),
+    githubLoginStart: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:github-login-start",
+      tag: WS_METHODS.loopGithubLoginStart,
+    }),
+    githubLoginStatus: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:github-login-status",
+      tag: WS_METHODS.loopGithubLoginStatus,
+    }),
+    githubLoginCancel: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:github-login-cancel",
+      tag: WS_METHODS.loopGithubLoginCancel,
+    }),
+    githubLoginWithToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:github-login-token",
+      tag: WS_METHODS.loopGithubLoginWithToken,
+    }),
     cloneRepository: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:source-control:clone-repository",
       tag: WS_METHODS.sourceControlCloneRepository,

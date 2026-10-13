@@ -198,6 +198,15 @@ contextBridge.exposeInMainWorld("loop", {
     pullRequestDetail: (cwd: string, number: number) =>
       ipcRenderer.invoke("loop:pr.detail", { cwd, number }),
     pullRequestDiff: (cwd: string, number: number) => ipcRenderer.invoke("loop:pr.diff", { cwd, number }),
+    pullRequestConversation: (cwd: string, number: number) =>
+      ipcRenderer.invoke("loop:pr.conversation", { cwd, number }),
+    pullRequestAction: (cwd: string, number: number, action: unknown) =>
+      ipcRenderer.invoke("loop:pr.action", { cwd, number, action }),
+    /** Signing `gh` in without a terminal (core workspace/githubAuth.ts). */
+    githubLoginStart: () => ipcRenderer.invoke("loop:gh.loginStart", {}),
+    githubLoginStatus: (id: string) => ipcRenderer.invoke("loop:gh.loginStatus", { id }),
+    githubLoginCancel: (id: string) => ipcRenderer.invoke("loop:gh.loginCancel", { id }),
+    githubLoginWithToken: (token: string) => ipcRenderer.invoke("loop:gh.loginToken", { token }),
     clone: (input: unknown) => ipcRenderer.invoke("loop:sc.clone", input),
     publish: (input: unknown) => ipcRenderer.invoke("loop:sc.publish", input),
   },

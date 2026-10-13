@@ -38,7 +38,17 @@ import { formatError } from "./formatError.ts";
 import { browse, listEntries, readFile, searchEntries, writeFile } from "./files.ts";
 import { openInEditor } from "./editors.ts";
 import { cloneRepository, lookupRepository, publishRepository } from "./sourceControl.ts";
-import { listPullRequests, pullRequestDetail, pullRequestDiff } from "./pullRequests.ts";
+import {
+  githubLoginCancel,
+  githubLoginStart,
+  githubLoginStatus,
+  githubLoginWithToken,
+  listPullRequests,
+  pullRequestAction,
+  pullRequestConversation,
+  pullRequestDetail,
+  pullRequestDiff,
+} from "./pullRequests.ts";
 import {
   diffPreview,
   discoverSourceControl,
@@ -261,6 +271,12 @@ export const makeHandlers = (options: HandlerOptions) => {
   "loopPullRequests.list": (input) => listPullRequests(input, host),
   "loopPullRequests.detail": (input) => pullRequestDetail(input, host),
   "loopPullRequests.diff": (input) => pullRequestDiff(input, host),
+  "loopPullRequests.conversation": (input) => pullRequestConversation(input, host),
+  "loopPullRequests.action": (input) => pullRequestAction(input, host),
+  "loopGithub.loginStart": () => githubLoginStart(host),
+  "loopGithub.loginStatus": (input) => githubLoginStatus(input, host),
+  "loopGithub.loginCancel": (input) => githubLoginCancel(input, host),
+  "loopGithub.loginWithToken": (input) => githubLoginWithToken(input, host),
   "sourceControl.cloneRepository": (input) => cloneRepository(input, host),
   "sourceControl.publishRepository": (input) => publishRepository(input, host),
     "projects.searchEntries": (input) => searchEntries(input, host),

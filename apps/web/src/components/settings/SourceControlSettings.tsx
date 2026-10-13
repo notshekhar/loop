@@ -52,6 +52,7 @@ import {
   JujutsuIcon,
   type Icon,
 } from "../Icons";
+import { GithubSignInDialog } from "../pullRequests/GithubSignInDialog";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import { SettingResetButton, SettingsPageContainer, SettingsSection } from "./settingsLayout";
@@ -249,9 +250,9 @@ function itemSummary({
     if (auth.status === "unauthenticated") {
       return (
         <span>
-          {item.label} is not authenticated on this server. Sign in or configure credentials using
-          the <code className="rounded bg-muted px-1 py-px text-[11px]">{item.executable}</code>{" "}
-          tool on the server host to enable change request features.
+          {item.label} is not signed in on this machine. Sign in here, or run{" "}
+          <code className="rounded bg-muted px-1 py-px text-[11px]">{item.executable} auth login</code>{" "}
+          on it, to enable pull requests.
         </span>
       );
     }
@@ -267,9 +268,12 @@ function itemSummary({
 
 function DiscoveryItemRow({
   item,
+  action,
   children,
 }: {
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
+  /** A button beside the switch — signing GitHub in, for one. */
+  readonly action?: ReactNode;
   readonly children?: ReactNode;
 }) {
   const version = optionLabel(item.version);
@@ -314,6 +318,7 @@ function DiscoveryItemRow({
             </p>
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+            {action}
             {hasDetails ? (
               <Button
                 size="sm"
@@ -509,6 +514,7 @@ function EmptySourceControlDiscovery({
 
 export function SourceControlSettingsPanel() {
   const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const [signInOpen, setSignInOpen] = useState(false);
   const discovery = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -574,7 +580,20 @@ export function SourceControlSettingsPanel() {
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
+                <DiscoveryItemRow
+                  key={`provider:${item.kind}`}
+                  item={item}
+                  action={
+                    item.kind === "github" &&
+                    item.status === "available" &&
+                    item.auth.status !== "authenticated" &&
+                    environmentId !== null ? (
+                      <Button size="sm" variant="outline" onClick={() => setSignInOpen(true)}>
+                        Sign in
+                      </Button>
+                    ) : undefined
+                  }
+                />
               ))}
             </SettingsSection>
           ) : null}
@@ -588,6 +607,14 @@ export function SourceControlSettingsPanel() {
       )}
 
       {environmentId !== null ? <SourceControlWritingSettingsSection /> : null}
+      {environmentId !== null ? (
+        <GithubSignInDialog
+          open={signInOpen}
+          environmentId={environmentId}
+          onOpenChange={setSignInOpen}
+          onSignedIn={handleScan}
+        />
+      ) : null}
     </SettingsPageContainer>
   );
 }

@@ -9,9 +9,13 @@ export { HOST_CALLBACKS, HOST_CHANNELS } from "./channels";
 export { TerminalManager, type PtyProcess, type PtySpawner, type TerminalOutput } from "./terminals";
 export { GitWatchers, isStatusRelevant } from "./gitWatch";
 export type {
+    PullRequestAction,
     PullRequestCheck,
+    PullRequestCommit,
     PullRequestDetail,
     PullRequestFile,
+    PullRequestReviewComment,
+    PullRequestTimelineItem,
     PullRequestInvolvement,
     PullRequestListState,
     PullRequestSummary,

@@ -15,6 +15,7 @@ import { Route as PairRouteImport } from './routes/pair'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as ChatArtifactsRouteImport } from './routes/_chat.artifacts'
+import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as SettingsAgentsRouteImport } from './routes/settings.agents'
@@ -61,6 +62,11 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
 const ChatArtifactsRoute = ChatArtifactsRouteImport.update({
   id: '/artifacts',
   path: '/artifacts',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
+  id: '/pull-requests',
+  path: '/pull-requests',
   getParentRoute: () => ChatRoute,
 } as any)
 const ChatUsageRoute = ChatUsageRouteImport.update({
@@ -161,6 +167,7 @@ export interface FileRoutesByFullPath {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/artifacts': typeof ChatArtifactsRoute
+  '/pull-requests': typeof ChatPullRequestsRoute
   '/usage': typeof ChatUsageRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/settings/agents': typeof SettingsAgentsRoute
@@ -185,6 +192,7 @@ export interface FileRoutesByTo {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/artifacts': typeof ChatArtifactsRoute
+  '/pull-requests': typeof ChatPullRequestsRoute
   '/usage': typeof ChatUsageRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/settings/agents': typeof SettingsAgentsRoute
@@ -212,6 +220,7 @@ export interface FileRoutesById {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/_chat/artifacts': typeof ChatArtifactsRoute
+  '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/_chat/usage': typeof ChatUsageRoute
   '/connect_/callback': typeof ConnectCallbackRoute
   '/settings/agents': typeof SettingsAgentsRoute
@@ -240,6 +249,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/artifacts'
+    | '/pull-requests'
     | '/usage'
     | '/connect/callback'
     | '/settings/agents'
@@ -264,6 +274,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/artifacts'
+    | '/pull-requests'
     | '/usage'
     | '/connect/callback'
     | '/settings/agents'
@@ -290,6 +301,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/_chat/artifacts'
+    | '/_chat/pull-requests'
     | '/_chat/usage'
     | '/connect_/callback'
     | '/settings/agents'
@@ -361,6 +373,13 @@ declare module '@tanstack/react-router' {
       path: '/artifacts'
       fullPath: '/artifacts'
       preLoaderRoute: typeof ChatArtifactsRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/pull-requests': {
+      id: '/_chat/pull-requests'
+      path: '/pull-requests'
+      fullPath: '/pull-requests'
+      preLoaderRoute: typeof ChatPullRequestsRouteImport
       parentRoute: typeof ChatRoute
     }
     '/_chat/usage': {
@@ -494,6 +513,7 @@ declare module '@tanstack/react-router' {
 
 interface ChatRouteChildren {
   ChatArtifactsRoute: typeof ChatArtifactsRoute
+  ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatUsageRoute: typeof ChatUsageRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
@@ -503,6 +523,7 @@ interface ChatRouteChildren {
 
 const ChatRouteChildren: ChatRouteChildren = {
   ChatArtifactsRoute: ChatArtifactsRoute,
+  ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatUsageRoute: ChatUsageRoute,
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,

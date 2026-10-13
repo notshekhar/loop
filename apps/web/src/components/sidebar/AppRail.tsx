@@ -1,5 +1,6 @@
 import {
   ChartNoAxesColumnIcon,
+  GitPullRequestIcon,
   HouseIcon,
   LayersIcon,
   RefreshCwIcon,
@@ -24,7 +25,7 @@ import { useDesktopUpdateCheck } from "../useDesktopUpdateCheck";
  * work from. Those rows used to sit in each panel's footer; on phones the rail
  * is not drawn and the footer keeps them (see SidebarChromeFooter).
  */
-type RailDestination = "/" | "/usage" | "/artifacts" | "/settings";
+type RailDestination = "/" | "/usage" | "/artifacts" | "/pull-requests" | "/settings";
 
 function RailButton({
   icon: Icon,
@@ -91,6 +92,7 @@ export const AppRail = memo(function AppRail() {
   const onSettings = pathname === "/settings" || pathname.startsWith("/settings/");
   const onUsage = pathname === "/usage";
   const onArtifacts = pathname === "/artifacts";
+  const onPullRequests = pathname === "/pull-requests";
 
   return (
     <nav
@@ -100,7 +102,7 @@ export const AppRail = memo(function AppRail() {
       <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-1.5">
         {/* Home is every thread surface — the panel decides which one. */}
         <RailButton
-          active={!onSettings && !onUsage && !onArtifacts}
+          active={!onSettings && !onUsage && !onArtifacts && !onPullRequests}
           icon={HouseIcon}
           label="Home"
           onClick={() => go("/")}
@@ -117,6 +119,12 @@ export const AppRail = memo(function AppRail() {
           icon={LayersIcon}
           label="Artifacts"
           onClick={() => go("/artifacts")}
+        />
+        <RailButton
+          active={onPullRequests}
+          icon={GitPullRequestIcon}
+          label="Pull requests"
+          onClick={() => go("/pull-requests")}
         />
       </div>
       <div className="flex shrink-0 flex-col items-center gap-1.5">

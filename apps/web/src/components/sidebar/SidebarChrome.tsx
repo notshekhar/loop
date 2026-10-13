@@ -1,4 +1,4 @@
-import { ChartNoAxesColumnIcon, LayersIcon, SettingsIcon } from "lucide-react";
+import { ChartNoAxesColumnIcon, GitPullRequestIcon, LayersIcon, SettingsIcon } from "lucide-react";
 import { memo, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
@@ -132,7 +132,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   // One handler shape for both rows: closing the mobile drawer is part of
   // navigating away from it, not part of what each destination means.
   const navigateFromFooter = useCallback(
-    (to: "/usage" | "/artifacts" | "/settings") => {
+    (to: "/usage" | "/artifacts" | "/pull-requests" | "/settings") => {
       if (isMobile) {
         setOpenMobile(false);
       }
@@ -143,6 +143,10 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const handleUsageClick = useCallback(() => navigateFromFooter("/usage"), [navigateFromFooter]);
   const handleArtifactsClick = useCallback(
     () => navigateFromFooter("/artifacts"),
+    [navigateFromFooter],
+  );
+  const handlePullRequestsClick = useCallback(
+    () => navigateFromFooter("/pull-requests"),
     [navigateFromFooter],
   );
   const handleSettingsClick = useCallback(
@@ -175,6 +179,15 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
           <SidebarMenuButton isActive={pathname === "/artifacts"} onClick={handleArtifactsClick}>
             <LayersIcon />
             <span>Artifacts</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            isActive={pathname === "/pull-requests"}
+            onClick={handlePullRequestsClick}
+          >
+            <GitPullRequestIcon />
+            <span>Pull requests</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
         <SidebarMenuItem>

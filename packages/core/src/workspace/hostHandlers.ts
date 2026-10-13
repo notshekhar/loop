@@ -30,7 +30,15 @@ import { HOST_CALLBACKS, HOST_CHANNELS } from "./channels";
 import { GitWatchers } from "./gitWatch";
 import { launch, revealCommand, whichCommands } from "./launcher";
 import { cloneRepository, lookupRepository, publishRepository } from "./sourceControl";
-import { listPullRequests, pullRequestDetail, pullRequestDiff } from "./pullRequests";
+import { cancelGithubLogin, githubLoginStatus, loginGithubWithToken, startGithubLogin } from "./githubAuth";
+import {
+    listPullRequests,
+    pullRequestConversation,
+    pullRequestDetail,
+    pullRequestDiff,
+    runPullRequestAction,
+    type PullRequestAction,
+} from "./pullRequests";
 import { TerminalManager, type PtySpawner } from "./terminals";
 import {
     browseFilesystem,
@@ -193,6 +201,21 @@ export function createHostHandlers(services: HostServices): HostTable {
             ),
         "pr.detail": (p) => envelope(() => pullRequestDetail({ cwd: p["cwd"] as string, number: Number(p["number"]) })),
         "pr.diff": (p) => envelope(() => pullRequestDiff({ cwd: p["cwd"] as string, number: Number(p["number"]) })),
+        "pr.conversation": (p) =>
+            envelope(() => pullRequestConversation({ cwd: p["cwd"] as string, number: Number(p["number"]) })),
+        "pr.action": (p) =>
+            envelope(() =>
+                runPullRequestAction({
+                    cwd: p["cwd"] as string,
+                    number: Number(p["number"]),
+                    action: p["action"] as PullRequestAction,
+                }),
+            ),
+        // ─── signing `gh` in from a client (githubAuth.ts) ────────────────────
+        "gh.loginStart": () => envelope(() => startGithubLogin()),
+        "gh.loginStatus": (p) => envelope(() => githubLoginStatus(p["id"] as string)),
+        "gh.loginCancel": (p) => envelope(async () => cancelGithubLogin(p["id"] as string)),
+        "gh.loginToken": (p) => envelope(() => loginGithubWithToken(p["token"] as string)),
         "sc.clone": (p) => envelope(() => cloneRepository(p as unknown as Parameters<typeof cloneRepository>[0])),
         "sc.publish": (p) => envelope(() => publishRepository(p as unknown as Parameters<typeof publishRepository>[0])),
 

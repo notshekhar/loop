@@ -21,11 +21,15 @@
 
 import { createWorkspaceBridges, type WorkspaceBridges } from "./workspaceBridges";
 import type {
+  LoopGithubLogin,
+  LoopGithubLoginStatus,
+  LoopPullRequestAction,
   LoopPullRequestDetail,
   LoopPullRequestDiff,
   LoopPullRequestInvolvement,
   LoopPullRequestListState,
   LoopPullRequestSummary,
+  LoopPullRequestTimelineItem,
 } from "./contracts/pullRequests";
 
 export interface LoopEvent {
@@ -427,6 +431,20 @@ export interface LoopSourceControlBridge {
   }): Promise<ShellResult<readonly LoopPullRequestSummary[]>>;
   pullRequestDetail?(cwd: string, number: number): Promise<ShellResult<LoopPullRequestDetail>>;
   pullRequestDiff?(cwd: string, number: number): Promise<ShellResult<LoopPullRequestDiff>>;
+  pullRequestConversation?(
+    cwd: string,
+    number: number,
+  ): Promise<ShellResult<readonly LoopPullRequestTimelineItem[]>>;
+  pullRequestAction?(
+    cwd: string,
+    number: number,
+    action: LoopPullRequestAction,
+  ): Promise<ShellResult<{ ok: boolean }>>;
+  /** Signing `gh` in without a terminal: a browser device code, or a token. */
+  githubLoginStart?(): Promise<ShellResult<LoopGithubLogin>>;
+  githubLoginStatus?(id: string): Promise<ShellResult<LoopGithubLoginStatus>>;
+  githubLoginCancel?(id: string): Promise<ShellResult<{ ok: boolean }>>;
+  githubLoginWithToken?(token: string): Promise<ShellResult<{ ok: boolean }>>;
   clone(input: {
     repository?: string;
     remoteUrl?: string;
