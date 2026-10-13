@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.21.19] - 2026-10-13
+
+### Added
+
+- **Desktop: pull requests.** A new **Pull requests** page on the left rail lists a project's PRs (open, merged, closed or all; everyone's, yours, or waiting on your review) with search by title, #number, author, branch or label. A PR opens to:
+  - **Overview:** description, checks and reviewers.
+  - **Conversation:** comments, reviews and line-comment threads, with replies and a comment box.
+  - **Files:** the diff with review threads on their lines. Select lines to comment, and tick **Viewed** per file (kept in step with github.com).
+  - **Commits.**
+- **Desktop: review and merge from the app.** Submit a review (comment, approve or request changes), merge (squash, merge commit or rebase, optionally deleting the PR's branch on GitHub), mark ready or convert to draft, close and reopen. **Review with loop** starts a new chat that reviews the PR without changing files or posting to GitHub.
+- **Sign in to GitHub from the app.** When `gh` isn't signed in, the Pull requests page and Settings → Source control offer **Sign in**: either a one-time code for github.com/login/device, or a pasted personal access token. `gh` keeps the login in the machine's keychain; loop stores no token itself.
+
 ## [0.21.18] - 2026-10-12
 
 ### Added
