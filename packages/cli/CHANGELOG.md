@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.21.20] - 2026-10-13
+
+### Fixed
+
+- **Custom provider models compact again when the gateway doesn't list them.** A model id you typed, or one the gateway renamed after a session picked it, had no context window, so it never compacted, not even when the provider refused a request as too long. It now takes the window of the matching known model, or 200k.
+- **Claude Code no longer disappears from the model pickers** after something ran loop with `HOME` pointed elsewhere (a test, a sandbox). The sign-in check ran against that other folder, heard "signed out", and saved it as the real answer. It now always checks your real home.
+- **TUI: a context rollover shows its "fresh context" box as it happens**, not only after reopening the session.
+- **TUI: an idle compaction no longer draws into another chat.** After `/new` or `/resume`, the old session's "Compacted while idle" summary stays with that session.
+- **TUI: `/compact` cancels a waiting idle compaction** instead of paying for the same summary twice.
+
 ## [0.21.19] - 2026-10-13
 
 ### Added
