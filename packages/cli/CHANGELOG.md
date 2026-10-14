@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.21.21] - 2026-10-14
+
+### Added
+
+- **Codex and Antigravity as native agents**, alongside Claude Code and Cursor. loop drives your installed `codex` and `agy` CLIs on their own sign-in and stores nothing. Their models appear in every model picker (terminal, desktop, web and phone) as **Codex · …** and **Antigravity · …**.
+  - The thinking level picks Codex's reasoning effort, or the matching Antigravity variant (High, Medium, Low).
+  - Their commands, file reads, edits and searches show as loop's own tool rows.
+  - Each chat resumes the same Codex or Antigravity session from turn to turn.
+  - Plan mode runs them read-only.
+  - Settings → Providers can detect each one and says exactly what to run if it isn't installed or signed in.
+
+### Fixed
+
+- **Antigravity and Cursor model names** no longer end in an empty "()" once the effort is dropped from them.
+
 ## [0.21.20] - 2026-10-13
 
 ### Fixed
