@@ -115,3 +115,134 @@ export function mapCursorTool(kind: string, rawArgs: unknown): MappedTool {
             return { name: kind, input: rawArgs ?? {} };
     }
 }
+
+/** A Codex `item` that is a tool, with the result once the item completed. */
+export interface MappedCodexItem extends MappedTool {
+    result?: unknown;
+    isError?: boolean;
+}
+
+/**
+ * Codex reports its work as typed items (`command_execution`, `file_change`,
+ * …) rather than named tool calls; each becomes the loop tool doing that job.
+ */
+export function mapCodexItem(item: Rec): MappedCodexItem {
+    switch (item.type) {
+        case "command_execution": {
+            const exit = num(item.exit_code);
+            return {
+                name: "bash",
+                input: defined({ command: unwrapShell(str(item.command) ?? "") }),
+                result: `${str(item.aggregated_output) ?? ""}${exit ? `\n[exit ${exit}]` : ""}`,
+                isError: (exit !== undefined && exit !== 0) || item.status === "failed",
+            };
+        }
+        case "file_change": {
+            const changes = (Array.isArray(item.changes) ? item.changes : []) as Rec[];
+            const paths = changes.map((c) => str(c.path)).filter((p): p is string => Boolean(p));
+            const failed = item.status === "failed";
+            // One file reads as an edit of it; several as one patch naming each.
+            if (paths.length === 1) {
+                const kind = str(changes[0].kind);
+                return {
+                    name: kind === "add" ? "write" : "edit",
+                    input: { path: paths[0] },
+                    result: failed ? "patch failed" : `${kind ?? "update"} ${paths[0]}`,
+                    isError: failed,
+                };
+            }
+            return {
+                name: "apply_patch",
+                input: { files: changes.map((c) => ({ path: str(c.path), kind: str(c.kind) })) },
+                result: failed ? "patch failed" : changes.map((c) => `${str(c.kind) ?? "update"} ${str(c.path)}`).join("\n"),
+                isError: failed,
+            };
+        }
+        case "mcp_tool_call": {
+            const error = (item.error as Rec | undefined)?.message;
+            return {
+                name: `${str(item.server) ?? "mcp"}__${str(item.tool) ?? "tool"}`,
+                input: item.arguments ?? {},
+                result: error ?? item.result ?? "",
+                isError: error !== undefined || item.status === "failed",
+            };
+        }
+        case "web_search":
+            return { name: "websearch", input: defined({ query: str(item.query) }), result: "" };
+        case "todo_list": {
+            const items = (Array.isArray(item.items) ? item.items : []) as Rec[];
+            return {
+                name: "todo",
+                input: {
+                    todos: items.map((t) => ({ content: str(t.text) ?? "", status: t.completed === true ? "completed" : "pending" })),
+                },
+                result: "",
+            };
+        }
+        default:
+            return { name: str(item.type) ?? "tool", input: item, result: "" };
+    }
+}
+
+/** `/bin/zsh -lc "ls -la"` → `ls -la`: Codex reports the shell wrapper it ran. */
+export function unwrapShell(command: string): string {
+    const m = /^\S*\/(?:ba|z)?sh\s+-l?c\s+(["'])([^]*)\1$/.exec(command.trim());
+    if (!m) return command;
+    return m[1] === '"' ? m[2].replace(/\\(["\\$`])/g, "$1") : m[2];
+}
+
+/**
+ * Antigravity's (`agy`) tool names and PascalCase parameters. It reports
+ * paths but not the text it wrote, so edits carry the path alone.
+ */
+export function mapAntigravityTool(name: string, rawParams: unknown): MappedTool {
+    const p = (rawParams && typeof rawParams === "object" ? rawParams : {}) as Rec;
+    switch (name) {
+        case "run_command":
+            return { name: "bash", input: defined({ command: str(p.CommandLine) ?? str(p.Command) }) };
+        case "view_file": {
+            const start = num(p.StartLine);
+            const end = num(p.EndLine);
+            return {
+                name: "read",
+                input: defined({
+                    path: str(p.AbsolutePath) ?? str(p.File),
+                    offset: start,
+                    limit: start !== undefined && end !== undefined ? end - start + 1 : undefined,
+                }),
+            };
+        }
+        case "write_to_file":
+            return { name: "write", input: defined({ path: str(p.TargetFile), content: str(p.CodeContent) }) };
+        case "replace_file_content":
+        case "multi_replace_file_content":
+        case "sed_file": {
+            const chunks = (Array.isArray(p.ReplacementChunks) ? p.ReplacementChunks : []) as Rec[];
+            const edits = chunks.length
+                ? chunks.map((c) => ({ oldText: str(c.TargetContent) ?? "", newText: str(c.ReplacementContent) ?? "" }))
+                : str(p.TargetContent) !== undefined
+                  ? [{ oldText: str(p.TargetContent) ?? "", newText: str(p.ReplacementContent) ?? "" }]
+                  : undefined;
+            return { name: "edit", input: defined({ path: str(p.TargetFile), edits }) };
+        }
+        case "list_dir":
+            return { name: "ls", input: defined({ path: str(p.DirectoryPath) }) };
+        case "grep_search":
+            return { name: "grep", input: defined({ pattern: str(p.Query), path: str(p.SearchPath), glob: str(p.Includes) }) };
+        case "find_by_name":
+            return { name: "find", input: defined({ pattern: str(p.Pattern), path: str(p.SearchDirectory) }) };
+        case "search_web":
+            return { name: "websearch", input: defined({ query: str(p.query) ?? str(p.Query) }) };
+        case "read_url_content":
+            return { name: "webfetch", input: defined({ url: str(p.Url) ?? str(p.url) }) };
+        case "call_mcp_tool":
+            return {
+                name: `${str(p.ServerName) ?? "mcp"}__${str(p.ToolName) ?? "tool"}`,
+                input: p.Arguments ?? {},
+            };
+        case "invoke_subagent":
+            return { name: "task", input: defined({ description: str(p.Description), prompt: str(p.Prompt) ?? str(p.Task) }) };
+        default:
+            return { name, input: rawParams ?? {} };
+    }
+}

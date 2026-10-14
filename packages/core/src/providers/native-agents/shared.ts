@@ -15,14 +15,14 @@ import { join } from "node:path";
 import { getConfigDir } from "../../brand";
 
 /**
- * Native-agent providers: Claude Code and Cursor run their OWN agent loop
+ * Native-agent providers: Claude Code, Cursor, Codex and Antigravity run their OWN agent loop
  * (tools, approvals, context management) behind an ai-sdk LanguageModel. One
  * `doStream` call is one full native turn; every tool call inside it is
  * reported provider-executed, so loop's tool loop records and renders it but
  * never runs it, and the step ends with finishReason "stop".
  */
-export type NativeAgentProviderId = "claude-code" | "cursor-agent";
-export const NATIVE_AGENT_PROVIDERS: readonly NativeAgentProviderId[] = ["claude-code", "cursor-agent"];
+export type NativeAgentProviderId = "claude-code" | "cursor-agent" | "codex-cli" | "antigravity";
+export const NATIVE_AGENT_PROVIDERS: readonly NativeAgentProviderId[] = ["claude-code", "cursor-agent", "codex-cli", "antigravity"];
 
 export function isNativeAgentProvider(provider: string): provider is NativeAgentProviderId {
     return (NATIVE_AGENT_PROVIDERS as readonly string[]).includes(provider);

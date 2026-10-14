@@ -22,6 +22,8 @@ import {
     listBedrockModels,
     listOllamaModels,
     probeClaudeCode,
+    probeAntigravity,
+    probeCodex,
     probeCursor,
     showOllamaModel,
     type BedrockModelSummary,
@@ -745,9 +747,11 @@ export async function getCatalog(opts: { refresh?: boolean } = {}): Promise<Reco
     // Native agents: zero-login like ollama — present only when the CLI is
     // installed AND signed in on this machine. Probed results are cached on
     // disk (native-agents.json) and refreshed in the background.
-    const [claude, cursor] = await Promise.all([
+    const [claude, cursor, codex, antigravity] = await Promise.all([
         probeClaudeCode({ refresh: opts.refresh }).catch(() => null),
         probeCursor({ refresh: opts.refresh }).catch(() => null),
+        probeCodex({ refresh: opts.refresh }).catch(() => null),
+        probeAntigravity({ refresh: opts.refresh }).catch(() => null),
     ]);
     if (claude?.loggedIn) {
         for (const m of claude.models) {
@@ -774,6 +778,38 @@ export async function getCatalog(opts: { refresh?: boolean } = {}): Promise<Reco
                 id,
                 "cursor-agent" as ProviderId,
                 [{ name: `Cursor · ${f.name}`, cost: PLAN_COST, reasoning: f.reasoning }, vendor],
+                { ...NATIVE_AGENT_FLOOR, reasoning: false },
+            );
+        }
+    }
+    if (codex?.loggedIn) {
+        for (const m of codex.models) {
+            const id = `codex-cli/${m.slug}`;
+            out[id] = buildModelInfo(
+                id,
+                "codex-cli" as ProviderId,
+                [
+                    {
+                        name: `Codex · ${m.name}`,
+                        cost: PLAN_COST,
+                        reasoning: m.efforts.length > 0,
+                        modalities: m.images ? ["text", "image"] : ["text"],
+                        ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}),
+                    },
+                    vendorCatalog.resolve(m.slug),
+                ],
+                NATIVE_AGENT_FLOOR,
+            );
+        }
+    }
+    if (antigravity?.loggedIn) {
+        for (const f of antigravity.families) {
+            const id = `antigravity/${f.id}`;
+            const vendor = vendorCatalog.resolve(f.id);
+            out[id] = buildModelInfo(
+                id,
+                "antigravity" as ProviderId,
+                [{ name: `Antigravity · ${f.name}`, cost: PLAN_COST, reasoning: f.reasoning, modalities: ["text"] }, vendor],
                 { ...NATIVE_AGENT_FLOOR, reasoning: false },
             );
         }
@@ -814,7 +850,7 @@ export function getModelSync(id: string): ModelInfo | undefined {
  * Being logged in is not the same as being usable, and three whole classes of
  * provider have no auth entry at all: ollama (a detected local daemon),
  * bedrock (AWS credentials from the environment), the native agents
- * (claude-code / cursor-agent: a signed-in CLI on this machine), and custom gateways (stored
+ * (claude-code / cursor-agent / codex-cli / antigravity: a signed-in CLI on this machine), and custom gateways (stored
  * under `customProviders`, keyed `custom:<name>`). Filtering a picker by
  * `listAuthorizedProviders()` silently hides all of them — which is exactly
  * what the Telegram and web model pickers were doing. Lives here, beside the
@@ -825,7 +861,7 @@ export async function listUsableProviders(): Promise<ProviderId[]> {
 
     // Zero-login providers announce themselves by landing in the catalog at
     // all: ollama once its daemon answers, bedrock once AWS creds resolve.
-    const ZERO_LOGIN = new Set<string>(["ollama", "bedrock", "claude-code", "cursor-agent"]);
+    const ZERO_LOGIN = new Set<string>(["ollama", "bedrock", "claude-code", "cursor-agent", "codex-cli", "antigravity"]);
     const catalog = await getCatalog();
     for (const model of Object.values(catalog)) {
         if (model.available && ZERO_LOGIN.has(model.provider) && !providers.includes(model.provider)) {

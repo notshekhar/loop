@@ -41,7 +41,9 @@ export const MARK_FOR_ICON_KEY: Readonly<Record<string, string>> = {
   "amazon-bedrock": "BedrockIcon",
   "ollama": "OllamaIcon",
   "claude-code": "ClaudeCodeIcon",
-  "cursor-agent": "CursorIcon"
+  "cursor-agent": "CursorIcon",
+  "codex-cli": "OpenAiIcon",
+  "antigravity": "GoogleAiIcon"
 };
 
 /** A gateway's API shape → the mark it is drawn with (SHAPE_ICONS). */

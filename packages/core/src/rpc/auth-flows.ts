@@ -43,11 +43,14 @@ import { envName } from "../brand";
 import { getExtensionHost } from "../extensions";
 import {
     bedrockRegion,
+    isNativeAgentProvider,
     listOllamaModels,
     NATIVE_AGENT_PROVIDERS,
     ollamaBaseURL,
     peekNativeAgent,
     probeClaudeCode,
+    probeAntigravity,
+    probeCodex,
     probeCursor,
     resolveAwsCredentials,
 } from "../providers";
@@ -345,14 +348,15 @@ async function runOllamaDetect(flow: Flow): Promise<void> {
 }
 
 /**
- * Claude Code / Cursor: nothing to sign in to here — the CLI's own login is
+ * Claude Code / Cursor / Codex / Antigravity: nothing to sign in to here — the CLI's own login is
  * the credential. Re-probe the machine and report what was found, with the
  * exact command to run when something is missing.
  */
 async function runNativeAgentDetect(flow: Flow): Promise<void> {
     const claude = flow.provider === "claude-code";
-    const label = claude ? "Claude Code" : "Cursor";
-    emit(flow, { type: "progress", message: `Looking for ${label} on this machine…` });
+    if (claude || flow.provider === "cursor-agent") {
+        emit(flow, { type: "progress", message: `Looking for ${claude ? "Claude Code" : "Cursor"} on this machine…` });
+    }
     if (claude) {
         const probe = await probeClaudeCode({ refresh: true });
         if (!probe) throw new Error("Claude Code is not installed. Install it (https://claude.com/claude-code), then run `claude auth login`.");
@@ -362,6 +366,27 @@ async function runNativeAgentDetect(flow: Flow): Promise<void> {
             type: "done",
             message: `Claude Code connected${probe.email ? ` as ${probe.email}` : ""} — ${probe.models.length} models.`,
         });
+        return;
+    }
+    if (flow.provider === "codex-cli") {
+        emit(flow, { type: "progress", message: "Looking for Codex on this machine…" });
+        const codex = await probeCodex({ refresh: true });
+        if (!codex) throw new Error("Codex is not installed. Install it (https://developers.openai.com/codex/cli), then run `codex login`.");
+        if (!codex.loggedIn) throw new Error("Codex is installed but not signed in. Run `codex login`, then check again.");
+        bustCatalogCache();
+        finish(flow, "done", {
+            type: "done",
+            message: `Codex connected${codex.account ? ` using ${codex.account}` : ""} — ${codex.models.length} models.`,
+        });
+        return;
+    }
+    if (flow.provider === "antigravity") {
+        emit(flow, { type: "progress", message: "Looking for Antigravity on this machine…" });
+        const agy = await probeAntigravity({ refresh: true });
+        if (!agy) throw new Error("Antigravity's CLI is not installed. Install it (https://antigravity.google), then run `agy` once to sign in.");
+        if (!agy.loggedIn) throw new Error("agy is installed but not signed in (it listed no models). Run `agy` to sign in, then check again.");
+        bustCatalogCache();
+        finish(flow, "done", { type: "done", message: `Antigravity connected — ${agy.families.length} models.` });
         return;
     }
     const probe = await probeCursor({ refresh: true });
@@ -400,7 +425,7 @@ async function runFlow(flow: Flow, method: AuthMethod, custom?: CustomProviderDr
     if (method === "detect") {
         if (flow.provider === "bedrock") return runBedrockDetect(flow);
         if (flow.provider === "ollama") return runOllamaDetect(flow);
-        if (flow.provider === "claude-code" || flow.provider === "cursor-agent") return runNativeAgentDetect(flow);
+        if (isNativeAgentProvider(flow.provider)) return runNativeAgentDetect(flow);
         throw new Error(`${flow.provider} has nothing to detect`);
     }
     const target = OAUTH_PROVIDERS[flow.provider];

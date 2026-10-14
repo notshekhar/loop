@@ -47,12 +47,12 @@ let RpcServer: any, startSocketServer: any, RpcClient: any;
 let realProviders: typeof import("../src/providers");
 let providersMockActive = true;
 
-const NATIVE_BIN_VARS = ["LOOP_CLAUDE_CODE_BIN", "LOOP_CURSOR_AGENT_BIN"] as const;
+const NATIVE_BIN_VARS = ["LOOP_CLAUDE_CODE_BIN", "LOOP_CURSOR_AGENT_BIN", "LOOP_CODEX_BIN", "LOOP_ANTIGRAVITY_BIN"] as const;
 const prevNativeBins = NATIVE_BIN_VARS.map((name) => process.env[name]);
 
 beforeAll(async () => {
     process.env.HOME = HOME;
-    // config.reload refreshes the catalog, which probes Claude Code and Cursor.
+    // config.reload refreshes the catalog, which probes the native agents (Claude Code, Cursor, Codex, Antigravity).
     // Their answers are cached in the REAL home's config (os.homedir() ignores
     // $HOME under Bun), so the test must never run the user's CLIs: point both
     // at a binary that doesn't exist and the probes find nothing to ask.

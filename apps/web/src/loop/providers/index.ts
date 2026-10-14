@@ -83,6 +83,9 @@ const ICONS: Record<string, Icon> = {
   // product's, not the model vendor's.
   "claude-code": ClaudeCodeIcon,
   "cursor-agent": CursorIcon,
+  // Codex and Antigravity have no mark of their own here; the vendor's stands in.
+  "codex-cli": OpenAiIcon,
+  antigravity: GoogleAiIcon,
 };
 
 /**

@@ -21,7 +21,7 @@ import type { CustomProviderConfig, ProviderId } from "../types";
 import { getExtensionHost, type ProviderPlugin } from "../extensions";
 import { anthropicShapeFetch } from "./anthropic-shape";
 import { bedrockRegion } from "./bedrock";
-import { createClaudeCodeModel, createCursorModel } from "./native-agents";
+import { createAntigravityModel, createClaudeCodeModel, createCodexModel, createCursorModel } from "./native-agents";
 
 export * from "./native-agents";
 export {
@@ -604,6 +604,12 @@ export async function getModel(fullId: string): Promise<LanguageModel> {
         case "cursor-agent":
             // The user's own cursor-agent CLI and login; see native-agents/cursor.ts.
             return createCursorModel(model);
+        case "codex-cli":
+            // The user's own codex CLI and login; see native-agents/codex.ts.
+            return createCodexModel(model);
+        case "antigravity":
+            // The user's own agy CLI and sign-in; see native-agents/antigravity.ts.
+            return createAntigravityModel(model);
         case "ollama": {
             // Local daemon — no auth. createOllama wants the /api root.
             const { createOllama } = await import("ollama-ai-provider-v2");

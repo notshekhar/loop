@@ -11,7 +11,12 @@ import { NATIVE_AGENT_PART_KEY, stringify, type NativeAgentProviderId } from "./
  *
  * Loop's stored transcript is untouched — this only shapes what is sent.
  */
-const LABEL: Record<NativeAgentProviderId, string> = { "claude-code": "Claude Code", "cursor-agent": "Cursor" };
+const LABEL: Record<NativeAgentProviderId, string> = {
+    "claude-code": "Claude Code",
+    "cursor-agent": "Cursor",
+    "codex-cli": "Codex",
+    antigravity: "Antigravity",
+};
 const RESULT_LIMIT = 4_000;
 
 type Part = { type?: string; providerOptions?: Record<string, unknown>; [k: string]: unknown };

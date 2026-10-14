@@ -116,7 +116,9 @@ export function groupCursorModels(models: Array<{ id: string; name: string }>): 
     }
     return [...families.entries()].map(([id, variants]) => {
         const representative = variants.find((v) => v.effort === "default") ?? variants[0];
-        const name = representative.name.replace(EFFORT_WORDS, "").replace(/\s{2,}/g, " ").trim() || id;
+        // "Gemini 3.8 Flash (High)" leaves "()" behind once the effort is gone.
+        const name =
+            representative.name.replace(EFFORT_WORDS, "").replace(/\(\s*\)/g, "").replace(/\s{2,}/g, " ").trim() || id;
         const settings = new Set(variants.map((v) => `${v.effort}/${v.thinking}`));
         return { id, name, variants, reasoning: settings.size > 1 || variants.some((v) => v.thinking) };
     });

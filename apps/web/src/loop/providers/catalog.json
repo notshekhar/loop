@@ -267,6 +267,34 @@
           "hint": "Needs `cursor-agent` on this machine, signed in (`cursor-agent login`) or with CURSOR_API_KEY set. Set LOOP_CURSOR_AGENT_BIN to use a specific binary."
         }
       ]
+    },
+    {
+      "id": "codex-cli",
+      "label": "Codex",
+      "tagline": "Your installed Codex CLI, on its own sign-in — loop stores nothing.",
+      "icon": "codex-cli",
+      "keysUrl": "https://developers.openai.com/codex/cli",
+      "login": [
+        {
+          "method": "detect",
+          "label": "Detect Codex",
+          "hint": "Needs the `codex` CLI on this machine, signed in (`codex login`). Set LOOP_CODEX_BIN to use a specific binary."
+        }
+      ]
+    },
+    {
+      "id": "antigravity",
+      "label": "Antigravity",
+      "tagline": "Your installed Antigravity CLI (agy), on its own sign-in — loop stores nothing.",
+      "icon": "antigravity",
+      "keysUrl": "https://antigravity.google",
+      "login": [
+        {
+          "method": "detect",
+          "label": "Detect Antigravity",
+          "hint": "Needs the `agy` CLI on this machine, signed in (run `agy` once). Set LOOP_ANTIGRAVITY_BIN to use a specific binary."
+        }
+      ]
     }
   ]
 }

@@ -40,6 +40,10 @@ export function providerLabel(id: string): string {
             return "Claude Code — your installed CLI and its own login";
         case "cursor-agent":
             return "Cursor — your installed cursor-agent and its own login";
+        case "codex-cli":
+            return "Codex — your installed codex CLI and its own login";
+        case "antigravity":
+            return "Antigravity — your installed agy CLI and its own sign-in";
         default:
             return "";
     }
