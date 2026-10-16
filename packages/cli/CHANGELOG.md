@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.21.22] - 2026-10-16
+
+### Changed
+
+- **Cheaper team and MCP turns on Anthropic models.** The system prompt no longer changes when a thread joins a team or an MCP server finishes connecting, so the prompt cache keeps hitting instead of re-billing the whole conversation at full price.
+  - Who is in a team now arrives in saved messages: a new thread's brief lists the team, and teammates hear about newcomers by message. Finished threads aren't woken for the news; it waits for whatever wakes them next.
+  - The MCP tool-search note names every configured server, and a server's instructions stay in place while it reconnects.
+  - `LOOP_DEBUG=1` logs when the cached prompt prefix changes between turns.
+- **Faster turn start.** AGENTS.md / CLAUDE.md, skill files and the memory index are only re-read when they change.
+- **New working indicator on desktop and web.** The ∞ mark is the brand blue, with a tail that trails its comet, and it moves more smoothly.
+
 ## [0.21.21] - 2026-10-14
 
 ### Added
