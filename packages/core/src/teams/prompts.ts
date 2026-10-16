@@ -3,9 +3,11 @@
  * start a team, when to wait), a member's standing rules and roster, and the
  * opening message each member starts from.
  *
- * The roster carries ids and titles only, never states: it rides the system
- * prompt on every turn, and a prompt that changes whenever a teammate moves
- * would throw away the prompt cache each time.
+ * The notes carry no roster: they ride the system prompt on every turn, and a
+ * prompt that changes whenever someone joins the team would throw away the
+ * prompt cache each time. Who is in the team travels in saved messages instead
+ * — a member's opening message, spawn_threads' result, and "update" mail —
+ * which only ever append to the cached prefix.
  */
 import type { TeamMemberRow } from "./store";
 
@@ -34,15 +36,7 @@ function rosterLines(roster: readonly TeamMemberRow[], selfId: string): string {
 }
 
 /** The lead's guidance: present whenever spawn_threads is offered. */
-export function buildTeamLeadNote(opts: {
-    maxThreads: number;
-    roster: readonly TeamMemberRow[];
-    selfId: string;
-}): string {
-    const current =
-        opts.roster.length > 1
-            ? `\n\nYour team so far:\n${rosterLines(opts.roster, opts.selfId)}\nMessages and reports from these threads reach you on their own. Every thread stays in the team after it reports, with its context: to follow up on its work or give it a new task, message it with ${SEND_MESSAGE_TOOL} rather than starting a new thread. ${SPAWN_THREADS_TOOL} adds new threads to this same team.`
-            : "";
+export function buildTeamLeadNote(opts: { maxThreads: number }): string {
     return `
 
 # Thread teams
@@ -53,21 +47,18 @@ How a team works:
 - ${SPAWN_THREADS_TOOL} starts threads (up to ${opts.maxThreads} working at once) and returns at once with each thread's id. They run in the background. Calling it again later adds to the same team.
 - Threads talk with ${SEND_MESSAGE_TOOL}, addressed by thread id (or "all"), and share notes on ${TEAM_BOARD_TOOL}. Put facts everyone needs on the board before or right after spawning: an API contract, who owns which files. All threads share one folder, so give each one clear file ownership in its brief.
 - Each thread ends with a report. Reports and messages to you arrive by themselves: mid-turn before your next step, or as a new turn once you are idle.
+- Every thread stays in the team after it reports, with its context: to follow up on its work or give it a new task, message it with ${SEND_MESSAGE_TOOL} rather than starting a new thread.
 - ${WAIT_FOR_TEAM_TOOL} pauses your turn at no cost until the team has something for you. Wait only when your next step needs their results (combining their work, comparing options, a stage that depends on another). Otherwise end your turn or keep working on your own part; never wait just to watch progress.
-- Write each brief so the thread can work alone: the goal, the files it owns, the contract it must keep, and how to verify. Give it a short title (it is the thread's name in every list).${current}`;
+- Write each brief so the thread can work alone: the goal, the files it owns, the contract it must keep, and how to verify. Give it a short title (it is the thread's name in every list).`;
 }
 
-/** A member's standing rules and roster, on every one of its turns. */
-export function buildTeamMemberNote(opts: { roster: readonly TeamMemberRow[]; selfId: string }): string {
-    const lead = opts.roster.find((m) => m.role === "lead");
+/** A member's standing rules, on every one of its turns. */
+export function buildTeamMemberNote(): string {
     return `
 
 # You are in a thread team
 
-You are one thread of a team${lead ? ` led by "${lead.title}" (id ${lead.sessionId})` : ""}. Your first message is your brief from the lead.
-
-Team:
-${rosterLines(opts.roster, opts.selfId)}
+You are one thread of a team. Your first message is your brief from the lead, with who else is in the team; teammates who join later are announced in <team-update> messages.
 
 Rules:
 - Work on your own brief autonomously. Stay inside the files it gives you; the folder is shared with your teammates.
@@ -78,7 +69,17 @@ Rules:
 - Teammates who have finished are still in the team and keep their context; message one if your work touches theirs.`;
 }
 
-/** The first message a member starts from: its brief, framed. */
-export function memberOpeningMessage(opts: { leadTitle: string; title: string; brief: string }): string {
-    return `${opts.brief.trim()}\n\n(Brief from "${opts.leadTitle}". Your thread is "${opts.title}". Call ${REPORT_TOOL} when you are done.)`;
+/**
+ * The first message a member starts from: its brief, framed, with the team as
+ * it stands. Saved as the member's opening entry, so the roster it carries is
+ * part of the cached prefix from then on.
+ */
+export function memberOpeningMessage(opts: {
+    leadTitle: string;
+    title: string;
+    brief: string;
+    roster: readonly TeamMemberRow[];
+    selfId: string;
+}): string {
+    return `${opts.brief.trim()}\n\n(Brief from "${opts.leadTitle}". Your thread is "${opts.title}". Call ${REPORT_TOOL} when you are done.)\n\nTeam:\n${rosterLines(opts.roster, opts.selfId)}`;
 }

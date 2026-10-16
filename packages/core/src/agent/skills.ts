@@ -16,9 +16,10 @@
  *   - .gitignore/.ignore files inside skill directories are not honored
  */
 import { CONFIG_DIR_NAME, getConfigDir } from "../brand";
-import { existsSync, readdirSync, readFileSync, statSync, type Dirent } from "node:fs";
+import { existsSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { getExtensionHost } from "../extensions";
+import { readTextCached } from "./file-cache";
 
 const MAX_NAME_LENGTH = 64;
 const MAX_DESCRIPTION_LENGTH = 1024;
@@ -86,7 +87,9 @@ function validateName(name: string): string[] {
 function loadSkillFromFile(filePath: string): { skill: Skill | null; diagnostics: SkillDiagnostic[] } {
     const diagnostics: SkillDiagnostic[] = [];
     try {
-        const fm = parseFrontmatter(readFileSync(filePath, "utf8"));
+        const content = readTextCached(filePath);
+        if (content === null) throw new Error("not a readable file");
+        const fm = parseFrontmatter(content);
         const skillDir = dirname(filePath);
         const description = typeof fm.description === "string" ? fm.description : "";
 

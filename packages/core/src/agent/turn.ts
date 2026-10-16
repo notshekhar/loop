@@ -88,7 +88,8 @@ import {
     isRetryableStreamError,
     resumeDelayMs,
 } from "./retry";
-import { debugLog } from "../debug";
+import { createHash } from "node:crypto";
+import { debugLog, isDebugEnabled } from "../debug";
 import { getMcpManager, isMcpEnabled, shouldUseToolSearch } from "../mcp";
 import { getExtensionHost } from "../extensions";
 import type { TurnContext } from "../extensions/api";
@@ -112,7 +113,6 @@ import {
     formatMailForModel,
     isThreadTeamsEnabled,
     isWaiting,
-    listTeam,
     markTurnActive,
     mailViews,
     maxTeamThreads,
@@ -352,7 +352,9 @@ async function assembleTurnTools(
             // The tools are NOT advertised; mcp_tools reaches them by name.
             // Read through a callback rather than captured, so a server that
             // connects or drops mid-turn is reflected on the next call.
-            toolsForTurn[MCP_TOOLS_TOOL_NAME] = createMcpToolsTool({ tools: () => getMcpManager().getTools() }) as never;
+            toolsForTurn[MCP_TOOLS_TOOL_NAME] = createMcpToolsTool({
+                tools: () => getMcpManager().getTools(),
+            }) as never;
         } else {
             Object.assign(toolsForTurn, mcpTools);
         }
@@ -502,8 +504,40 @@ async function assembleTurnTools(
     return { toolsForTurn, fullToolSet, turnContext, agentPrompt };
 }
 
+/**
+ * The cached prefix Anthropic reuses across turns is tools → system prompt.
+ * Anything that changes either between two turns of a session re-bills the
+ * whole conversation at full input price, so with LOOP_DEBUG=1 say which half
+ * moved — the breadcrumb that catches the next volatile line in the prompt.
+ */
+const lastPrefixHashes = new Map<string, { system: string; tools: string }>();
+
+function notePrefixChange(sessionId: string, system: string, tools: Record<string, unknown>): void {
+    if (!isDebugEnabled()) return;
+    const hash = (text: string) => createHash("sha1").update(text).digest("hex");
+    const now = {
+        system: hash(system),
+        tools: hash(
+            JSON.stringify(
+                Object.entries(tools).map(([name, t]) => [name, (t as { description?: string })?.description]),
+            ),
+        ),
+    };
+    const before = lastPrefixHashes.get(sessionId);
+    lastPrefixHashes.set(sessionId, now);
+    if (!before) return;
+    const moved = [before.system !== now.system && "system prompt", before.tools !== now.tools && "tools"].filter(
+        Boolean,
+    );
+    if (moved.length > 0) debugLog("cache", `prompt prefix changed (${moved.join(" + ")}) in session ${sessionId}`);
+}
+
 /** Stop condition: the step just finished called `report`. */
-function reportedThisStep({ steps }: { steps: ReadonlyArray<{ toolCalls: ReadonlyArray<{ toolName?: string }> }> }): boolean {
+function reportedThisStep({
+    steps,
+}: {
+    steps: ReadonlyArray<{ toolCalls: ReadonlyArray<{ toolName?: string }> }>;
+}): boolean {
     return steps.at(-1)?.toolCalls.some((c) => c.toolName === REPORT_TOOL) === true;
 }
 
@@ -710,13 +744,13 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
     const planModeNote = EXIT_PLAN_MODE_TOOL_NAME in toolsForTurn ? buildPlanModeNote() : "";
     // Keyed off the assembled tools like every note here: a lead is offered
     // spawn_threads, a member report.
-    const teamNow = SPAWN_THREADS_TOOL in toolsForTurn || REPORT_TOOL in toolsForTurn ? teamOf(session.id) : null;
-    const teamRoster = teamNow ? listTeam(teamNow.teamId) : [];
+    // No roster here — it would change the prompt whenever someone joins (see
+    // teams/prompts.ts); the team travels in saved messages instead.
     const teamNote =
         SPAWN_THREADS_TOOL in toolsForTurn
-            ? buildTeamLeadNote({ maxThreads: maxTeamThreads(), roster: teamRoster, selfId: session.id })
+            ? buildTeamLeadNote({ maxThreads: maxTeamThreads() })
             : REPORT_TOOL in toolsForTurn
-              ? buildTeamMemberNote({ roster: teamRoster, selfId: session.id })
+              ? buildTeamMemberNote()
               : "";
     // Keyed off the assembled toolset, not the settings that produced it: a
     // restricted agent that was denied MCP tools — or an extension that removed
@@ -726,16 +760,15 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
     // onAssembleTools also silences the guidance for it.
     const mcpSearchMode = MCP_TOOLS_TOOL_NAME in toolsForTurn;
     const hasMcpTools = mcpSearchMode || Object.keys(toolsForTurn).some((name) => name.startsWith("mcp__"));
-    const mcpInstructionsNote = hasMcpTools ? buildMcpInstructionsNote(getMcpManager().listServers()) : "";
+    const mcpServers = hasMcpTools ? getMcpManager().listServers() : [];
+    const mcpInstructionsNote = hasMcpTools ? buildMcpInstructionsNote(mcpServers) : "";
     // A model shown one unfamiliar tool where it expected a server's tools
     // usually concludes the capability is missing rather than searching for it.
+    // Configured servers, not just ready ones: one finishing its connection
+    // between turns must not change the prompt (and so the cache).
     const mcpToolSearchNote = mcpSearchMode
         ? buildMcpToolSearchNote(
-              Object.keys(getMcpManager().getTools()).length,
-              getMcpManager()
-                  .listServers()
-                  .filter((server) => server.status === "ready")
-                  .map((server) => server.name),
+              mcpServers.filter((server) => server.status !== "disabled").map((server) => server.name),
           )
         : "";
     // Checked post-assembly (not re-derived from settings) so an extension
@@ -761,6 +794,7 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
     // Extension turn middleware may transform the system prompt, scoped by
     // ctx.agent (update any specific agent's prompt). No-op when none.
     system = await applySystemPrompt(system, turnContext);
+    notePrefixChange(session.id, system, toolsForTurn);
     const tools = withToolHooks(toolsForTurn as typeof fullToolSet, {
         cwd,
         sessionId: session.id,
@@ -1185,7 +1219,11 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
     const compactionDue = ({
         steps,
     }: {
-        steps: ReadonlyArray<{ usage?: UsageBlock; toolCalls: ReadonlyArray<unknown>; toolResults: ReadonlyArray<{ output?: unknown }> }>;
+        steps: ReadonlyArray<{
+            usage?: UsageBlock;
+            toolCalls: ReadonlyArray<unknown>;
+            toolResults: ReadonlyArray<{ output?: unknown }>;
+        }>;
     }): boolean => {
         const step = steps.at(-1);
         if (!midTurnCompaction || !modelInfo || !step || step.toolCalls.length === 0) return false;
@@ -1246,7 +1284,8 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
             },
             onToolExecutionEnd: (event) => {
                 const e = event as { toolCall?: { toolCallId?: string }; toolOutput?: { type?: string } };
-                if (e.toolCall?.toolCallId) timing.toolEnded(e.toolCall.toolCallId, e.toolOutput?.type === "tool-error");
+                if (e.toolCall?.toolCallId)
+                    timing.toolEnded(e.toolCall.toolCallId, e.toolOutput?.type === "tool-error");
             },
             // The SDK's default onError does console.error(error) with the whole
             // APICallError (request body, tool defs — a wall of noise). We already
@@ -1560,7 +1599,7 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
         timing.retryWaited(Date.now() - waitFrom);
         if (abortSignal?.aborted) break streamAttempts;
         teamInjections.length = 0;
-                attemptMessages = buildMessages();
+        attemptMessages = buildMessages();
     }
 
     // Flush any in-flight step persistence before deciding on the fallback /
@@ -1736,8 +1775,7 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
         modelInfo
     ) {
         const minPercent = getSetting("idleCompactMinPercent") ?? DEFAULT_IDLE_COMPACT_MIN_PERCENT;
-        const used =
-            contextTokensFromUsage(lastStepUsage) || estimateContextTokens(session, contextOverheadTokens);
+        const used = contextTokensFromUsage(lastStepUsage) || estimateContextTokens(session, contextOverheadTokens);
         if (used >= modelInfo.contextWindow * (minPercent / 100)) {
             scheduleIdleCompact(session.id, idleDelay, async (signal) => {
                 emitter.emit("compact-start", { reason: "idle" });
@@ -1759,7 +1797,10 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
                             const out = await generateText({
                                 model,
                                 ...(call.anthropicCaching
-                                    ? { messages: withAnthropicCaching(system, conversation), allowSystemInMessages: true }
+                                    ? {
+                                          messages: withAnthropicCaching(system, conversation),
+                                          allowSystemInMessages: true,
+                                      }
                                     : { instructions: system, messages: conversation }),
                                 tools,
                                 toolChoice: "none",
@@ -1777,7 +1818,9 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
                         summary: "",
                         cutAt: 0,
                         tokensBefore: used,
-                        ...(signal.aborted ? { aborted: true } : { error: err instanceof Error ? err.message : String(err) }),
+                        ...(signal.aborted
+                            ? { aborted: true }
+                            : { error: err instanceof Error ? err.message : String(err) }),
                     });
                     return;
                 }

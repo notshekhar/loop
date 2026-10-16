@@ -161,7 +161,11 @@ export function createMcpToolsTool(ctx: McpToolsToolContext) {
  * Without it the model sees one unfamiliar tool where it expected the server
  * tools it was told about, and the usual failure is that it never searches —
  * it just reports that the capability is missing.
+ *
+ * Takes configured server names, not live ones, and no tool count: the note
+ * rides the system prompt, and a server finishing its connection between
+ * turns must not change it (that would throw away the prompt cache).
  */
-export function buildMcpToolSearchNote(toolCount: number, serverNames: string[]): string {
-    return `\n\nMCP tools (${toolCount} of them, from ${serverNames.join(", ")}) are NOT listed individually in this conversation — there are too many to carry in every request. Reach them with the ${MCP_TOOLS_TOOL_NAME} tool: search by keyword, describe the one you want, then call it. When a task needs a connected server, search before concluding you cannot do it.`;
+export function buildMcpToolSearchNote(serverNames: string[]): string {
+    return `\n\nMCP tools (from ${serverNames.join(", ")}) are NOT listed individually in this conversation — there are too many to carry in every request. Reach them with the ${MCP_TOOLS_TOOL_NAME} tool: search by keyword, describe the one you want, then call it. When a task needs a connected server, search before concluding you cannot do it.`;
 }

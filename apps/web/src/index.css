@@ -1899,63 +1899,83 @@ label:has(> select#reasoning-effort) select {
 /*
  * Generating indicator (components/chat/GeneratingIndicator.tsx): a comet
  * running loop's ∞ mark, a light band across the label, and a verb that slides
- * in when it changes. Brand blue drifting to violet and cyan; reduced motion
- * leaves a still mark and plain text.
+ * in when it changes. One hue — the brand blue of the `loop_` caret — from a
+ * faint trail to a bright head; reduced motion leaves a still mark and plain
+ * text.
  */
 .loop-gen-mark {
-  --loop-gen-a: #2f5bea;
-  --loop-gen-b: #7c5cff;
-  --loop-gen-c: #22d3ee;
+  --loop-gen-trail: oklch(0.62 0.17 264);
+  --loop-gen-body: oklch(0.55 0.2 264);
+  --loop-gen-head: oklch(0.49 0.22 264);
   color: var(--muted-foreground);
   /* A still glow: an animated filter repaints the mark every frame, and was
      the single most expensive thing on screen while an agent worked. */
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--loop-gen-b) 50%, transparent));
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--loop-gen-body) 45%, transparent));
 }
 
 .dark .loop-gen-mark {
-  --loop-gen-a: #6d8cff;
-  --loop-gen-b: #a78bfa;
-  --loop-gen-c: #67e8f9;
+  --loop-gen-trail: oklch(0.6 0.15 264);
+  --loop-gen-body: oklch(0.74 0.13 264);
+  --loop-gen-head: oklch(0.95 0.035 264);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--loop-gen-body) 55%, transparent));
 }
 
 .loop-gen-mark path {
-  stroke-width: 1.7;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
 .loop-gen-track {
   stroke: currentColor;
-  opacity: 0.18;
+  stroke-width: 1.4;
+  opacity: 0.14;
 }
 
-/* The comet and its tail share one clock; the tail starts 20 units behind
-   and is 20 units longer, so both end on the comet's head.
+/* Three strokes on one clock. Each dash is `--len` long and runs `--lag`
+   behind the head (lag = len − the head's 7), so every one of them ends on
+   the head's tip and the tail tapers out behind it. In px because a unitless
+   calc() is not a valid dash length; with pathLength=100, px are path units.
 
    Stepped, not linear: a dash offset cannot run on the compositor, so every
-   frame is a repaint — 120 a second on a ProMotion display. Sixteen steps over
-   1.6s is 10fps, which still reads as motion for a comet this small. */
-.loop-gen-comet,
+   frame is a repaint — 120 a second on a ProMotion display. 45 steps over
+   1.8s is 25fps: smooth to the eye at this size, a fifth of the repaints. */
+.loop-gen-trail,
+.loop-gen-tail,
+.loop-gen-comet {
+  stroke-dasharray: var(--len) calc(100px - var(--len));
+  stroke-dashoffset: var(--lag);
+  animation: loop-gen-run 1.8s steps(45) infinite;
+}
+
+.loop-gen-trail {
+  --len: 46px;
+  --lag: 39px;
+  stroke: var(--loop-gen-trail);
+  stroke-width: 1.4;
+  opacity: 0.28;
+}
+
 .loop-gen-tail {
-  animation: loop-gen-run 1.6s steps(16) infinite;
+  --len: 22px;
+  --lag: 15px;
+  stroke: var(--loop-gen-body);
+  stroke-width: 1.7;
+  opacity: 0.65;
 }
 
 .loop-gen-comet {
-  stroke-dasharray: 14 86;
-}
-
-.loop-gen-tail {
-  stroke-dasharray: 34 66;
-  opacity: 0.35;
-  animation-delay: -0.32s;
+  --len: 7px;
+  --lag: 0px;
+  stroke: var(--loop-gen-head);
+  stroke-width: 2.1;
 }
 
 @keyframes loop-gen-run {
   from {
-    stroke-dashoffset: 100;
+    stroke-dashoffset: calc(100px + var(--lag));
   }
   to {
-    stroke-dashoffset: 0;
+    stroke-dashoffset: var(--lag);
   }
 }
 
@@ -2008,6 +2028,7 @@ label:has(> select#reasoning-effort) select {
   .loop-gen-mark,
   .loop-gen-comet,
   .loop-gen-tail,
+  .loop-gen-trail,
   .loop-gen-verb {
     animation: none;
   }
@@ -2028,6 +2049,7 @@ label:has(> select#reasoning-effort) select {
   :is(
     .loop-gen-comet,
     .loop-gen-tail,
+    .loop-gen-trail,
     .loop-gen-shimmer,
     .loop-gen-verb,
     .ultrathink-chroma,

@@ -34,7 +34,13 @@ function prefersReducedMotion(): boolean {
   );
 }
 
-/** The ∞ track with a comet on it. Path length is normalized to 100 so the dash maths stays readable. */
+/**
+ * The ∞ track with a comet on it: a faint track, then three strokes of the
+ * same brand blue that share one clock — a long faint trail, a shorter
+ * brighter one, and the head — each lagging just enough to end exactly on the
+ * head, so the tail fades out behind it. Path length is normalized to 100 so
+ * the dash maths stays readable.
+ */
 export function LoopMark({ className }: { className?: string }) {
   const path =
     "M12 6 C9.5 2.2 3.5 2.2 3.5 6 C3.5 9.8 9.5 9.8 12 6 C14.5 2.2 20.5 2.2 20.5 6 C20.5 9.8 14.5 9.8 12 6 Z";
@@ -45,23 +51,10 @@ export function LoopMark({ className }: { className?: string }) {
       className={cn("loop-gen-mark h-3 w-6 shrink-0 overflow-visible", className)}
       fill="none"
     >
-      <defs>
-        <linearGradient
-          id="loop-gen-gradient"
-          x1="0"
-          y1="0"
-          x2="24"
-          y2="0"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop offset="0%" stopColor="var(--loop-gen-a)" />
-          <stop offset="55%" stopColor="var(--loop-gen-b)" />
-          <stop offset="100%" stopColor="var(--loop-gen-c)" />
-        </linearGradient>
-      </defs>
       <path d={path} pathLength={100} className="loop-gen-track" />
-      <path d={path} pathLength={100} className="loop-gen-tail" stroke="url(#loop-gen-gradient)" />
-      <path d={path} pathLength={100} className="loop-gen-comet" stroke="url(#loop-gen-gradient)" />
+      <path d={path} pathLength={100} className="loop-gen-trail" />
+      <path d={path} pathLength={100} className="loop-gen-tail" />
+      <path d={path} pathLength={100} className="loop-gen-comet" />
     </svg>
   );
 }

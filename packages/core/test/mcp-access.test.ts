@@ -192,8 +192,7 @@ describe("mcp_tools", () => {
     });
 
     test("the prompt note names the servers, so the model knows what it can reach", () => {
-        const note = buildMcpToolSearchNote(212, ["gh", "jira"]);
-        expect(note).toContain("212");
+        const note = buildMcpToolSearchNote(["gh", "jira"]);
         expect(note).toContain("gh, jira");
         expect(note).toContain("mcp_tools");
         // The failure this prevents: concluding the capability is missing.

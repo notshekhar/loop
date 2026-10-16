@@ -12,11 +12,11 @@
  * tools, so every memory write is visible in the transcript like any other
  * file change, and the user can edit or delete the plain files at will.
  */
-import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir } from "../brand";
 import { slugCwd } from "../sessions/manager";
 import { findRepoRoot } from "./context";
+import { readTextCached } from "./file-cache";
 
 /** Keep the injected index small — ~2k tokens even for a memory-hoarder. */
 const MAX_INDEX_BYTES = 8 * 1024;
@@ -63,8 +63,9 @@ export function loadMemoryContext(cwd: string, baseDir?: string): MemoryContext 
     const indexPath = join(dir, "MEMORY.md");
     let index = "(empty — no memories saved yet)";
     try {
-        if (existsSync(indexPath) && statSync(indexPath).isFile()) {
-            let content = readFileSync(indexPath, "utf8").trim();
+        const raw = readTextCached(indexPath);
+        if (raw !== null) {
+            let content = raw.trim();
             if (Buffer.byteLength(content) > MAX_INDEX_BYTES) {
                 // Cut on a line boundary: the cap is in bytes but slice() counts
                 // UTF-16 units, so a raw slice could split a multibyte character

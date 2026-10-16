@@ -1,6 +1,7 @@
 import { CONFIG_DIR_NAME, getConfigDir } from "../brand";
-import { existsSync, readFileSync, statSync, watch, type FSWatcher } from "node:fs";
+import { existsSync, watch, type FSWatcher } from "node:fs";
 import { dirname, join } from "node:path";
+import { readTextCached } from "./file-cache";
 
 const CONTEXT_FILES = ["AGENTS.md", "CLAUDE.md", `${CONFIG_DIR_NAME}/AGENTS.md`, `${CONFIG_DIR_NAME}/CLAUDE.md`];
 // Global instructions, loaded everywhere (mirrors Claude's ~/.claude/CLAUDE.md).
@@ -46,11 +47,9 @@ export function loadWorkspaceContext(cwd: string): WorkspaceContext {
     for (const p of candidatePaths) {
         if (seen.has(p)) continue;
         seen.add(p);
-        if (!existsSync(p)) continue;
         try {
-            const stat = statSync(p);
-            if (!stat.isFile()) continue;
-            let content = readFileSync(p, "utf8");
+            let content = readTextCached(p);
+            if (content === null) continue;
             if (Buffer.byteLength(content) > MAX_FILE_BYTES) {
                 content = content.slice(0, MAX_FILE_BYTES) + "\n...[truncated]";
             }

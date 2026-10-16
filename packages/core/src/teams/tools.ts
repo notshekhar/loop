@@ -170,28 +170,35 @@ export function createSpawnThreadsTool(ctx: TeamToolContext) {
             }
             emitTeamChange({ teamId, kind: "members" });
 
-            // Teammates still at work hear who joined. Finished ones are not
-            // woken for it — a new turn just to read the news would cost a model
-            // call each; they see the whole roster in their notes next time
-            // anyone messages them.
+            // Every earlier member hears who joined — the roster is no longer in
+            // the system prompt (see prompts.ts), so this mail is how they learn.
+            // Only those still at work are woken for it: a new turn just to read
+            // the news would cost a finished one a model call, so theirs waits in
+            // the inbox and arrives with whatever wakes them next.
             const roster = listTeam(teamId);
             const earlier = roster.filter(
                 (m) => m.role === "member" && !created.some((c) => c.session.id === m.sessionId),
             );
             const veterans = earlier.filter((m) => !FINISHED_STATES.has(m.state));
-            if (veterans.length > 0) {
+            if (earlier.length > 0) {
                 const joined = created.map((c) => `"${c.title}" (id ${c.session.id})`).join(", ");
                 postTeamMessages({
                     teamId,
                     from: self,
-                    to: veterans.map((v) => v.sessionId),
+                    to: earlier.map((m) => m.sessionId),
                     kind: "update",
                     body: `New in the team: ${joined}.`,
                 });
             }
 
             for (const c of created) {
-                const opening = memberOpeningMessage({ leadTitle, title: c.title, brief: c.brief });
+                const opening = memberOpeningMessage({
+                    leadTitle,
+                    title: c.title,
+                    brief: c.brief,
+                    roster,
+                    selfId: c.session.id,
+                });
                 await runtime.deliver(c.session.id, opening, {
                     kind: "spawn",
                     teamId,

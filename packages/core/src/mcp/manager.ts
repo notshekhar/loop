@@ -295,7 +295,17 @@ export class McpManager {
             });
             return;
         }
-        this.servers.set(name, { name, status: "connecting", toolCount: 0, config: cfg });
+        // The last instructions this server published stay through a reconnect:
+        // they ride the system prompt, and dropping them for the seconds a
+        // server spends connecting would cost a prompt-cache miss each way.
+        const instructions = this.servers.get(name)?.instructions;
+        this.servers.set(name, {
+            name,
+            status: "connecting",
+            toolCount: 0,
+            config: cfg,
+            ...(instructions ? { instructions } : {}),
+        });
         const connecting = connectServer(name, cfg, {
             onDisconnect: (err) => this.markDisconnected(name, generation, err),
             onNotification: (notification) => this.handleNotification(name, generation, notification),
@@ -618,12 +628,16 @@ export class McpManager {
             err instanceof McpAuthRequiredError ||
             err instanceof UnauthorizedError ||
             (isHttpServer(cfg) && isUnauthorizedError(err));
+        // Kept for the same reason as on connect: a flapping server must not
+        // flip the system prompt.
+        const instructions = this.servers.get(name)?.instructions;
         this.servers.set(name, {
             name,
             status: needsAuth ? "needs-auth" : "error",
             toolCount: 0,
             config: cfg,
             error: needsAuth ? undefined : describe(err),
+            ...(instructions ? { instructions } : {}),
         });
     }
 

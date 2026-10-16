@@ -197,10 +197,11 @@ describe("a team that outlives its first spawn", () => {
         expect(roster.map((m) => m.title)).toEqual(["A", "B", "C", "D", "E", "F", "G"]);
         // The newcomers got their briefs, and the one still working hears who
         // joined (idle here, so as a turn); the four finished threads were not
-        // woken just for the news.
+        // woken just for the news — it waits in their inbox for whatever wakes
+        // them next, since the roster no longer rides their system prompt.
         const newcomers = roster.slice(5).map((m) => m.sessionId);
         expect(delivered).toEqual([...newcomers, firstFive[4]!.sessionId]);
-        for (const m of firstFive.slice(0, 4)) expect(teams.inboxCount(m.sessionId)).toBe(0);
+        for (const m of firstFive.slice(0, 4)) expect(teams.inboxCount(m.sessionId)).toBe(1);
 
         // A finished thread can still be messaged: it is still a teammate.
         expect(await tools.send_message!.execute({ to: firstFive[0]!.sessionId, message: "one more thing" }, {})).toBe(
