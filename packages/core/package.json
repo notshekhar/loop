@@ -63,7 +63,6 @@
     "diff": "^9.0.0",
     "ollama-ai-provider-v2": "^3.5.1",
     "ulid": "^3.0.0",
-    "wasmoon": "1.16.0",
     "zhipu-ai-provider": "^0.3.1",
     "zod": "^4.3.5"
   },

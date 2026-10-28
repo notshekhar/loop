@@ -6,11 +6,6 @@ turn loop. They are plain **Bun/TypeScript** packages loaded in-process — no
 build step ({{name}} transpiles the entry on import) and they may carry their own npm
 dependencies (resolved by the Bun runtime shipped inside the {{name}} binary).
 
-> **Want a widget, a panel, a terminal, a keybinding or a status-line tweak?**
-> Write a Lua script instead — one file in `~/.loop/lua/`, no package and no
-> install, live after `/reload`. See `lua.md`. Extensions are the right tool for
-> tools, providers, agents, skills and the turn loop.
-
 ## Anatomy
 
 An extension is an npm-style package: a directory (or published package, or

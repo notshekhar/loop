@@ -442,8 +442,8 @@ export function createExtensionUiServices(
             /**
              * Bindings ride the TUI's input listeners rather than the keybinding
              * registry: that registry is built once at startup
-             * (registerAppKeybindings), so it cannot take entries from a script
-             * that loads later or a `/lua reload` mid-session.
+             * (registerAppKeybindings), so it cannot take entries from an
+             * extension that loads later or is reloaded mid-session.
              *
              * A listener sees the key before the editor does, so a binding wins
              * over typing — deliberate, since that is what a global shortcut is.

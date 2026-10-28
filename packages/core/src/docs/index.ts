@@ -27,7 +27,6 @@ const SUMMARIES: Record<string, string> = {
     "config.md": `Configure ${PRODUCT_NAME} by editing its JSON/markdown config yourself: add models, custom providers, datasources (database connections for the sql tool), hooks, MCP servers, and custom agents.`,
     "permissions.md": `How ${PRODUCT_NAME} decides whether a tool call runs: allow/ask/deny rule syntax and evaluation order, bash guardrails, per-project grants, the sandbox, and plan mode.`,
     "extensions.md": `Write a ${PRODUCT_NAME} extension (Bun/TS): add or override slash commands, tools, providers + models, agents, skills, settings, the system prompt, and the turn loop.`,
-    "lua.md": `Script ${PRODUCT_NAME} in Lua — READ THIS BEFORE BUILDING AN EXTENSION when asked for a widget, panel, terminal, keybinding or status-line addition. Write one .lua file into ~/.loop/lua/ and run /reload: no package, no install, no build step. Covers widgets, docked panels, a real terminal, mouse and dragging, keymaps, timers and subprocesses.`,
 };
 
 export const DOCS: Record<string, DocEntry> = Object.fromEntries(

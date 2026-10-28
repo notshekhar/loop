@@ -234,7 +234,7 @@ export class ExtensionHost {
      *
      * `init()` runs before the interactive app builds its TUI, so an extension
      * that binds a key or shows a widget from `activate` — which is exactly
-     * where a Lua script's top level runs — would otherwise get a silent no-op.
+     * where most extensions set themselves up — would otherwise get a silent no-op.
      * These queue instead, and `setServices` flushes them once the screen is
      * real. Print mode never provides the services, so the queue is simply
      * dropped, which is the correct outcome there.
@@ -631,8 +631,8 @@ export class ExtensionHost {
 
     /**
      * Re-run every loaded extension from disk — what `/reload` needs so an
-     * edited extension (a Lua script above all, since those are files a user or
-     * an agent writes mid-session) takes effect without restarting loop.
+     * edited extension (files a user or an agent may write mid-session) takes
+     * effect without restarting loop.
      *
      * Each is unloaded and loaded again, so `deactivate` runs and long-lived
      * resources are released: an LSP server is shut down and re-provisioned on

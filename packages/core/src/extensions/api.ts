@@ -435,8 +435,7 @@ export interface ExtensionThemeJson {
  *
  * Deliberately structural rather than the TUI's `Component` type: core cannot
  * import the TUI package, and this is the whole contract anyway — given a
- * width, return lines. Anything satisfying it can be shown, which is what lets
- * a table coming out of a Lua VM be a widget.
+ * width, return lines. Anything satisfying it can be shown.
  */
 /**
  * A mouse event delivered to a widget.

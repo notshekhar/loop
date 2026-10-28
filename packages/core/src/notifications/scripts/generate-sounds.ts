@@ -7,7 +7,7 @@
  * files into the binary, and an asset import (`with { type: "file" }`) does not
  * survive loop's two-stage build — core is bundled to dist/index.js first,
  * which emits the asset next to it, and the later --compile of the CLI does not
- * pick it up. The same trap the Lua wasm hit: the shipped binary looks for a
+ * pick it up. The shipped binary looks for a
  * path that exists only on the build machine. Bytes in a module survive both
  * stages, so that is what ships.
  *

@@ -504,8 +504,8 @@ export function createSettingsHandlers(state: AppState, deps: AppDeps): Settings
 
                 // Extensions: re-run from disk BEFORE the command registry is
                 // rebuilt, so the commands re-registered below are the fresh
-                // ones. This is what makes an edited Lua script take effect on
-                // /reload — its file is as much a config surface as any other.
+                // ones. This is what makes an edited extension take effect on
+                // /reload — its files are as much a config surface as any other.
                 await getExtensionHost().reloadAll();
 
                 // Commands: prompts, skills, agents — rebuilt from disk.
