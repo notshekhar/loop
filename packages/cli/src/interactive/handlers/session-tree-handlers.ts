@@ -200,6 +200,7 @@ export function createSessionTreeHandlers(state: AppState, deps: AppDeps): Sessi
                                 tracker: deps.tracker,
                                 sessionPub: session.info.id,
                                 cwd: state.cwd,
+                                thinkingLevel: state.thinkingLevel,
                             });
                             await session.branchWithSummary(
                                 newLeafId,

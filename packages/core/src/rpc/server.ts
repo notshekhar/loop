@@ -18,6 +18,7 @@ import {
     runTurn,
     CostTracker,
     runCompact,
+    CompactAbortedError,
     TURN_EVENT_NAMES,
     buildContextReport,
     generateCommitMessage,
@@ -1219,15 +1220,20 @@ export class RpcServer {
                             : {}),
                         tracker: ctx.tracker,
                         cwd: ctx.session.info.cwd,
+                        // session.cancel aborts this, as it does a turn.
+                        abortSignal: ctx.abort.signal,
                     });
                     this.broadcast(id, ctx, { type: "compact-end", data: result });
                     return result;
                 } catch (err) {
                     // A failed compaction must still close the event, or a
-                    // client renders "Compacting…" forever.
+                    // client renders "Compacting…" forever — and say WHY, so a
+                    // provider error is not shown as a cancel.
+                    const aborted = err instanceof CompactAbortedError;
+                    const reason = aborted ? { aborted: true } : { error: err instanceof Error ? err.message : String(err) };
                     this.broadcast(id, ctx, {
                         type: "compact-end",
-                        data: { summary: "", cutAt: 0, tokensBefore: 0, tokensAfter: 0, aborted: true },
+                        data: { summary: "", cutAt: 0, tokensBefore: 0, tokensAfter: 0, ...reason },
                     });
                     throw err;
                 } finally {

@@ -13,7 +13,7 @@
  * purpose — if it mattered it is in a file, in the todos, or in agent memory.
  */
 import type { Entry } from "../types";
-import { toolOutputText } from "./compact";
+import { toolOutputText } from "./summarize";
 import { isTodosPayload, formatTodoList, hasActiveTodos, type TodoItem } from "../tools/todo";
 
 /** Absolute ceiling; the live budget usually cuts well below this. */

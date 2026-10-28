@@ -231,6 +231,7 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
                 const result = await runCompact({
                     session: state.session,
                     modelId: state.modelId,
+                    thinkingLevel: state.thinkingLevel,
                     manual: true,
                     ...(focus?.trim() ? { focus: focus.trim() } : {}),
                     abortSignal: state.abort.signal,

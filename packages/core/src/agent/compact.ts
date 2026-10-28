@@ -1,12 +1,12 @@
-import { generateText } from "ai";
 import { getCatalog, modelInfoIn } from "../catalog";
-import { getModel } from "../providers";
 import { attachLedgerEntry, type Session } from "../sessions";
 import { formatTodoList, hasActiveTodos, isTodosPayload, type TodoItem } from "../tools/todo";
 import { isAbortError } from "./abort";
 import { BRANCH_SUMMARY_PREAMBLE } from "./branch-summary";
 import { stampUsageCost, sumUsage, type CostTracker } from "./cost";
 import { isContextOverflowError } from "./retry";
+import { requestSummary, serializeConversation, serializeMessage, SummaryAbortedError } from "./summarize";
+import type { ThinkingLevel } from "./thinking";
 import type { UsageBlock } from "../types";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
@@ -45,74 +45,101 @@ export function compactionBodyText(entry: { summary: string; handoff?: string })
 }
 
 /**
- * The summarizer's system prompt. The conversation reaches it as text, not as
- * turns, so the one failure left to rule out is the model answering it.
+ * pi's checkpoint prompts (core/compaction/compaction.ts), word for word. The
+ * conversation reaches the summarizer as text inside <conversation>, not as
+ * turns, so it reads it rather than continuing it.
  */
-const SUMMARY_SYSTEM = `You are a context summarization assistant. You read a conversation between a user and an AI coding assistant and produce a structured summary in the exact format you are given.
+const SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
 
-Do NOT continue the conversation. Do NOT answer questions in it or carry out its requests. Output ONLY the structured summary.`;
+Use this EXACT format:
 
-/**
- * The checkpoint format (pi's), plus one section from Claude Code's: every
- * user message verbatim. A summary that paraphrases what was asked is how the
- * work drifts after a compaction — the words themselves have to survive.
- */
-const SUMMARY_FORMAT = `## Goal
-[What the user is trying to accomplish. Several items if the session covers several tasks.]
-
-## User Messages
-- [Every message the user typed — not tool results — verbatim, oldest first. Shorten only a very long paste, and mark where you cut it.]
+## Goal
+[What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]
 
 ## Constraints & Preferences
-- [Requirements, preferences and corrections the user gave, or "(none)"]
+- [Any constraints, preferences, or requirements mentioned by user]
+- [Or "(none)" if none were mentioned]
 
 ## Progress
 ### Done
-- [x] [Completed tasks and changes]
+- [x] [Completed tasks/changes]
 
 ### In Progress
-- [ ] [The work under way when this summary was written]
+- [ ] [Current work]
 
 ### Blocked
-- [What is preventing progress, if anything]
+- [Issues preventing progress, if any]
 
 ## Key Decisions
 - **[Decision]**: [Brief rationale]
 
 ## Next Steps
-1. [What should happen next, in order — only what follows from the user's most recent requests]
+1. [Ordered list of what should happen next]
 
 ## Critical Context
-- [Data, errors, commands or references needed to continue, or "(none)"]`;
+- [Any data, examples, or references needed to continue]
+- [Or "(none)" if not applicable]
 
-const SUMMARY_RULES = "Keep each section concise, except User Messages. Preserve exact file paths, function names, commands and error messages.";
+Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
-const INITIAL_INSTRUCTIONS = `The messages in <conversation> are a coding session to summarize. Write a structured checkpoint that another model will use to continue the work.
+const UPDATE_SUMMARIZATION_PROMPT = `The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
 
-Use this EXACT format:
-
-${SUMMARY_FORMAT}
-
-${SUMMARY_RULES}`;
-
-const UPDATE_INSTRUCTIONS = `The messages in <conversation> are NEW messages that follow the existing summary in <previous-summary>. Fold them into it. RULES:
-- PRESERVE everything in the previous summary that is still true, and every user message it quotes
-- APPEND the new user messages, verbatim, after the ones already listed
-- MOVE items from In Progress to Done when they were completed
-- UPDATE Next Steps to follow the most recent requests
-- REMOVE only what is no longer relevant
+Update the existing structured summary with new information. RULES:
+- PRESERVE all existing information from the previous summary
+- ADD new progress, decisions, and context from the new messages
+- UPDATE the Progress section: move items from "In Progress" to "Done" when completed
+- UPDATE "Next Steps" based on what was accomplished
+- PRESERVE exact file paths, function names, and error messages
+- If something is no longer relevant, you may remove it
 
 Use this EXACT format:
 
-${SUMMARY_FORMAT}
+## Goal
+[Preserve existing goals, add new ones if the task expanded]
 
-${SUMMARY_RULES}`;
+## Constraints & Preferences
+- [Preserve existing, add new ones discovered]
 
-/** When the kept window opens in the middle of a request, not on the user's message. */
-const SPLIT_REQUEST_NOTE = `The most recent request is still in progress: its latest steps follow this summary word for word, so they are not in <conversation>. Make sure Goal and In Progress state that request and how far it had got.`;
+## Progress
+### Done
+- [x] [Include previously done items AND newly completed items]
 
-/** Summaries are dense; this is far above a good one and far below a runaway one. */
-const SUMMARY_MAX_OUTPUT_TOKENS = 13_000;
+### In Progress
+- [ ] [Current work - update based on progress]
+
+### Blocked
+- [Current blockers - remove if resolved]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale] (preserve all previous, add new)
+
+## Next Steps
+1. [Update based on current state]
+
+## Critical Context
+- [Preserve important context, add new if needed]
+
+Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+
+/**
+ * When the kept window opens inside a request, the start of that request is
+ * summarized on its own (pi's split turn), so the summary says what was asked
+ * even though the kept steps never show the user's message.
+ */
+const TURN_PREFIX_SUMMARIZATION_PROMPT = `The messages above are earlier context from an ongoing conversation. Later messages are stored separately and do not need to be reconstructed.
+
+Create a concise checkpoint of the user's request and the progress shown above. This checkpoint will be placed before the later messages so the conversation can continue with the necessary context.
+
+## Original Request
+[What did the user ask for?]
+
+## Progress So Far
+- [Key decisions and work completed in these messages]
+
+## Context Needed to Continue
+- [Information from these messages needed to understand the later work]
+
+Only summarize information explicitly present above. Do not infer or recreate later messages.`;
 
 /**
  * How much recent conversation a compaction keeps word for word. The summary
@@ -154,10 +181,11 @@ export function collectFileLists(
     return { readFiles: [...read].filter((f) => !modified.has(f)).sort(), modifiedFiles: [...modified].sort() };
 }
 
-function formatFileLists(files: CompactionFileLists): string {
+export function formatFileLists(files: CompactionFileLists): string {
     let out = "";
     if (files.readFiles.length > 0) out += `\n\n<read-files>\n${files.readFiles.join("\n")}\n</read-files>`;
-    if (files.modifiedFiles.length > 0) out += `\n\n<modified-files>\n${files.modifiedFiles.join("\n")}\n</modified-files>`;
+    if (files.modifiedFiles.length > 0)
+        out += `\n\n<modified-files>\n${files.modifiedFiles.join("\n")}\n</modified-files>`;
     return out;
 }
 
@@ -193,10 +221,6 @@ const SUMMARY_INPUT_WINDOW_SHARE = 0.7;
 const SUMMARY_INPUT_MAX_CHARS = 800_000;
 /** Floor for a model with no catalog entry, or a window too small to share. */
 const SUMMARY_INPUT_MIN_CHARS = 16_000;
-/** A tool result keeps its head and tail; the middle is what a summary drops anyway. */
-const TOOL_OUTPUT_HEAD_CHARS = 1_500;
-const TOOL_OUTPUT_TAIL_CHARS = 1_500;
-const TOOL_ARGS_MAX_CHARS = 500;
 /** Halvings of the chunk budget after the provider says the request is too big. */
 const MAX_OVERFLOW_RETRIES = 3;
 
@@ -211,54 +235,6 @@ export function clipMiddle(text: string, head: number, tail: number): string {
     if (text.length <= head + tail) return text;
     const omitted = text.length - head - tail;
     return `${text.slice(0, head)}\n[… ${omitted} chars omitted …]\n${text.slice(text.length - tail)}`;
-}
-
-/** A persisted tool result's output as plain text. */
-export function toolOutputText(output: unknown): string {
-    if (typeof output === "string") return output;
-    const o = output as { type?: string; value?: unknown } | undefined;
-    if (!o || typeof o !== "object") return "";
-    if (o.type === "text" || o.type === "error-text") return String(o.value ?? "");
-    if (o.type === "content" && Array.isArray(o.value)) {
-        return o.value
-            .map((p: { type?: string; text?: string }) => (p.type === "text" ? (p.text ?? "") : `[${p.type ?? "media"}]`))
-            .join("\n");
-    }
-    return JSON.stringify(o.value ?? o);
-}
-
-/**
- * One message as the summarizer reads it: what was said and done, without the
- * weight that never helps a summary — reasoning, provider metadata (signed
- * thinking blobs), media bytes, and the middle of long tool results.
- */
-export function summarizationText(message: { role: string; content: unknown }): string {
-    if (typeof message.content === "string") return `[${message.role}] ${message.content}`;
-    if (!Array.isArray(message.content)) return `[${message.role}]`;
-    const parts: string[] = [];
-    for (const part of message.content as Array<Record<string, unknown>>) {
-        switch (part.type) {
-            case "text":
-                parts.push(String(part.text ?? ""));
-                break;
-            case "tool-call":
-                parts.push(
-                    `→ ${String(part.toolName)}(${clipMiddle(JSON.stringify(part.input ?? {}), TOOL_ARGS_MAX_CHARS, 0)})`,
-                );
-                break;
-            case "tool-result":
-                parts.push(
-                    `← ${String(part.toolName)}: ${clipMiddle(toolOutputText(part.output), TOOL_OUTPUT_HEAD_CHARS, TOOL_OUTPUT_TAIL_CHARS)}`,
-                );
-                break;
-            case "image":
-            case "file":
-                parts.push(`[${part.type}]`);
-                break;
-            // reasoning and anything provider-specific carry nothing a summary keeps
-        }
-    }
-    return `[${message.role}] ${parts.join("\n")}`;
 }
 
 /** Greedy packing of whole messages into chunks of at most `budget` chars. */
@@ -307,24 +283,14 @@ function messageToText(message: { role: "user" | "assistant" | "tool"; content: 
     return `[${message.role}] ${typeof message.content === "string" ? message.content : JSON.stringify(message.content)}`;
 }
 
-export function compactedContextMessages(
-    session: Session,
-): Array<{ role: "user" | "assistant" | "tool"; content: unknown }> {
-    const messages = session.messages();
-    const compact = latestCompact(session);
-    if (!compact) return messages;
-
-    return [{ role: "user", content: compactionBlockText(compact) }, ...messages.slice(compact.cutAt)];
-}
-
 export type ContextEntry =
     | { kind: "message"; role: "user" | "assistant" | "tool"; content: unknown; interrupted?: boolean }
     | { kind: "subagent"; agent: string; result: string };
 
 /**
- * Like compactedContextMessages, but keeps subagent entries interleaved in
- * chronological order so resumed sessions retain subagent reports in the
- * model context. The compact cutAt counts only message entries — subagent
+ * The model's view of the session: the latest compaction's summary, then
+ * what it kept, with subagent entries interleaved in chronological order so
+ * resumed sessions retain subagent reports in the model context. The compact cutAt counts only message entries — subagent
  * entries ride along with the messages that survive the cut.
  *
  * Walks the current branch path (leaf → root), not the whole file, so
@@ -424,11 +390,13 @@ export async function runCompact(opts: {
     cwd?: string;
     /** Sizes the summarizer's requests; looked up in the catalog when omitted. */
     contextWindow?: number;
+    /** The session's reasoning level, used for the summary as for its turns. */
+    thinkingLevel?: ThinkingLevel;
     /**
      * Write the summary another way: idle compaction's single request over
      * the conversation exactly as the provider has it cached (agent/
-     * idle-compact.ts). Replaces the chunked text summarizer; where the cut
-     * falls, the file lists and the saved entry are the same either way.
+     * idle-compact.ts). Replaces the text summarizer; where the cut falls,
+     * the file lists and the saved entry are the same either way.
      */
     summarize?: () => Promise<{ text: string; usage?: UsageBlock; finishReason?: string }>;
     /** Recorded on the entry: what started this compaction. */
@@ -437,8 +405,7 @@ export async function runCompact(opts: {
     const messages = opts.session.messages();
     const previousCompact = latestCompact(opts.session);
     const previousCut = previousCompact?.cutAt ?? 0;
-    const modelInfo = modelInfoIn(await getCatalog(), opts.modelId);
-    const contextWindow = opts.contextWindow ?? modelInfo?.contextWindow;
+    const contextWindow = opts.contextWindow ?? modelInfoIn(await getCatalog(), opts.modelId)?.contextWindow;
     const keep =
         opts.keepRecentTokens ??
         (contextWindow
@@ -454,101 +421,110 @@ export async function runCompact(opts: {
 
     const head = messages.slice(previousCut, cut);
     const previousBody = previousCompact ? withoutFileLists(compactionBodyText(previousCompact)) : "";
-    const previousSummary = previousBody ? `${COMPACTION_SUMMARY_PREFIX}${previousBody}${COMPACTION_SUMMARY_SUFFIX}\n` : "";
+    const previousSummary = previousBody
+        ? `${COMPACTION_SUMMARY_PREFIX}${previousBody}${COMPACTION_SUMMARY_SUFFIX}\n`
+        : "";
     const fullContextText = previousSummary + messages.slice(previousCut).map(messageToText).join("\n");
     const tokensBefore = estimateTokens(fullContextText);
 
-    const model = await getModel(opts.modelId);
-    const texts = head.map(summarizationText);
-    const splitsRequest = cut < messages.length && messages[cut]?.role !== "user";
-    const maxOutputTokens =
-        modelInfo?.maxOutput && modelInfo.maxOutput > 0
-            ? Math.min(SUMMARY_MAX_OUTPUT_TOKENS, modelInfo.maxOutput)
-            : SUMMARY_MAX_OUTPUT_TOKENS;
+    // pi's split turn: a kept window that opens inside a request (on an
+    // assistant step) would leave the summary without the user's message. The
+    // start of that request is summarized on its own, beside the history.
+    let turnStart = -1;
+    if (cut < messages.length && messages[cut]?.role !== "user") {
+        for (let i = cut - 1; i >= previousCut; i--) {
+            if (messages[i].role === "user") {
+                turnStart = i;
+                break;
+            }
+        }
+    }
+    const history = turnStart >= 0 ? messages.slice(previousCut, turnStart) : head;
+    const turnPrefix = turnStart >= 0 ? messages.slice(turnStart, cut) : [];
+
     let usage: UsageBlock | undefined;
-
-    /**
-     * One summarizer request. The conversation goes in as text inside tags so
-     * the model reads it rather than continuing it; with a summary so far it
-     * is folded into that summary instead of written from scratch.
-     */
-    const summarizeChunk = async (chunk: string, previous: string, isLast: boolean): Promise<string> => {
-        let prompt = `<conversation>\n${chunk}\n</conversation>\n\n`;
-        if (previous) prompt += `<previous-summary>\n${previous}\n</previous-summary>\n\n`;
-        prompt += previous ? UPDATE_INSTRUCTIONS : INITIAL_INSTRUCTIONS;
-        if (isLast && splitsRequest) prompt += `\n\n${SPLIT_REQUEST_NOTE}`;
-        if (opts.focus?.trim()) prompt += `\n\nAdditional focus: ${opts.focus.trim()}`;
-        const result = await generateText({
-            model,
-            instructions: SUMMARY_SYSTEM,
-            prompt,
-            maxOutputTokens,
-            abortSignal: opts.abortSignal,
+    const bill = (u: UsageBlock) => {
+        usage = sumUsage(usage, u);
+        opts.tracker?.add(opts.modelId, u, {
+            cwd: opts.cwd ?? opts.session.info.cwd,
+            sessionPub: opts.session.info.id,
+            source: "compact",
         });
-        if (result.usage) {
-            usage = sumUsage(usage, result.usage);
-            opts.tracker?.add(opts.modelId, result.usage, {
-                cwd: opts.cwd ?? opts.session.info.cwd,
-                sessionPub: opts.session.info.id,
-                source: "compact",
-            });
-        }
-        // A summary cut off mid-section would become the session's only
-        // memory of everything before it — refuse it rather than keep half.
-        if (result.finishReason === "length") {
-            throw new Error("the summary hit the output limit before it finished");
-        }
-        if (!result.text.trim()) throw new Error("the model returned an empty summary");
-        return result.text.trim();
     };
+    const focus = opts.focus?.trim() ? `\n\nAdditional focus: ${opts.focus.trim()}` : "";
+    const request = async (prompt: string) =>
+        (
+            await requestSummary({
+                modelId: opts.modelId,
+                prompt,
+                abortSignal: opts.abortSignal,
+                ...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
+                onUsage: bill,
+            })
+        ).text;
 
     /**
-     * Rolling summary: each chunk is folded into the summary so far, so a head
-     * bigger than one request loses nothing but detail. Nearly always one
-     * chunk — stripping alone shrinks the head several-fold.
+     * The history, folded into the previous summary. Nearly always one
+     * request; a history bigger than one request is summarized as a rolling
+     * summary, each chunk folded into the summary so far.
      */
-    const summarize = async (budget: number): Promise<string> => {
+    const summarizeHistory = async (budget: number): Promise<string> => {
         let running = previousBody;
+        if (history.length === 0) return running || "No prior history.";
+        const texts = history.map((m) => serializeMessage(m)).filter(Boolean);
         const chunks = chunkForSummary(texts, Math.max(SUMMARY_INPUT_MIN_CHARS / 2, budget - running.length));
-        for (const [i, chunk] of chunks.entries()) {
-            running = await summarizeChunk(chunk, running, i === chunks.length - 1);
+        for (const chunk of chunks) {
+            let prompt = `<conversation>\n${chunk}\n</conversation>\n\n`;
+            if (running) prompt += `<previous-summary>\n${running}\n</previous-summary>\n\n`;
+            prompt += (running ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT) + focus;
+            running = await request(prompt);
         }
         return running;
     };
+    const summarizeTurnPrefix = async (budget: number): Promise<string> => {
+        const text = serializeConversation(turnPrefix);
+        const clipped = clipMiddle(text, Math.floor(budget / 2), Math.floor(budget / 2));
+        return request(`# Conversation\n${clipped}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}${focus}`);
+    };
 
     let text = "";
-    let budget = summaryInputBudgetChars(contextWindow);
-    if (opts.summarize) {
-        try {
+    try {
+        if (opts.summarize) {
             const result = await opts.summarize();
-            if (result.usage) {
-                usage = sumUsage(usage, result.usage);
-                opts.tracker?.add(opts.modelId, result.usage, {
-                    cwd: opts.cwd ?? opts.session.info.cwd,
-                    sessionPub: opts.session.info.id,
-                    source: "compact",
-                });
-            }
-            if (result.finishReason === "length") throw new Error("the summary hit the output limit before it finished");
+            if (result.usage) bill(result.usage);
+            if (result.finishReason === "length")
+                throw new Error("the summary hit the output limit before it finished");
             if (!result.text.trim()) throw new Error("the model returned an empty summary");
             text = result.text.trim();
-        } catch (err) {
-            if (isAbortError(err) || opts.abortSignal?.aborted) throw new CompactAbortedError();
-            throw err;
+        } else {
+            let budget = summaryInputBudgetChars(contextWindow);
+            for (let retry = 0; ; retry++) {
+                try {
+                    // Independent requests: run side by side, so a split turn
+                    // costs no more wall time than one summary.
+                    const [historyText, prefixText] = await Promise.all([
+                        summarizeHistory(budget),
+                        turnPrefix.length > 0 ? summarizeTurnPrefix(budget) : Promise.resolve(""),
+                    ]);
+                    text = prefixText
+                        ? `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${prefixText}`
+                        : historyText;
+                    break;
+                } catch (err) {
+                    // Our window numbers are estimates and a gateway's body limit is
+                    // invisible until it refuses: step the chunk size down instead of
+                    // leaving the session stuck too big to compact.
+                    if (err instanceof SummaryAbortedError || !isContextOverflowError(err)) throw err;
+                    if (retry >= MAX_OVERFLOW_RETRIES) throw err;
+                    budget = Math.floor(budget / 2);
+                }
+            }
         }
-    }
-    for (let retry = 0; !opts.summarize; retry++) {
-        try {
-            text = await summarize(budget);
-            break;
-        } catch (err) {
-            if (isAbortError(err) || opts.abortSignal?.aborted) throw new CompactAbortedError();
-            // Our window numbers are estimates and a gateway's body limit is
-            // invisible until it refuses: step the chunk size down instead of
-            // leaving the session stuck too big to compact.
-            if (!isContextOverflowError(err) || retry >= MAX_OVERFLOW_RETRIES) throw err;
-            budget = Math.floor(budget / 2);
+    } catch (err) {
+        if (err instanceof SummaryAbortedError || isAbortError(err) || opts.abortSignal?.aborted) {
+            throw new CompactAbortedError();
         }
+        throw err;
     }
 
     if (opts.abortSignal?.aborted) throw new CompactAbortedError();

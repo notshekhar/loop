@@ -76,7 +76,7 @@ import { runHooks, type HookOutcome } from "./hooks";
 import { isTrusted } from "./trust";
 import type { ThinkingLevel } from "./thinking";
 import { estimateContextTokens, estimateOverheadTokens, toModelMessages, withAnthropicCaching } from "./model-messages";
-import { buildAgentCallConfig, createStepBilling, createYieldGate } from "./model-call";
+import { buildAgentCallConfig, createStepBilling, createYieldGate, withOllamaContext } from "./model-call";
 import { withToolHooks } from "./tool-hooks";
 import { createTaskTool } from "./subagent";
 import { isAbortError } from "./abort";
@@ -881,7 +881,15 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
             cwd,
         );
         try {
-            const result = await runCompact({ session, modelId, abortSignal, tracker, cwd, contextWindow });
+            const result = await runCompact({
+                session,
+                modelId,
+                abortSignal,
+                tracker,
+                cwd,
+                contextWindow,
+                ...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
+            });
             emitter.emit("compact-end", result);
             return result.cutAt > 0 ? "compacted" : "declined";
         } catch (err) {
@@ -993,18 +1001,7 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
     const call = buildAgentCallConfig({ provider, modelShortId, thinkingLevel, modelInfo });
     let providerOptions = call.providerOptions;
 
-    // Ollama defaults num_ctx to ~4096 regardless of the model's real context,
-    // which truncates long agent loops and makes the model stop early. Pin it to
-    // the model's actual context window so history isn't silently dropped.
-    if (provider === "ollama") {
-        const numCtx = modelInfo?.contextWindow ?? 8192;
-        const existing = (providerOptions?.ollama as Record<string, unknown> | undefined) ?? {};
-        const existingOpts = (existing.options as Record<string, unknown> | undefined) ?? {};
-        providerOptions = {
-            ...providerOptions,
-            ollama: { ...existing, options: { ...existingOpts, num_ctx: numCtx } },
-        };
-    }
+    providerOptions = withOllamaContext(providerOptions, provider, modelInfo);
 
     // Native agents (Claude Code, Cursor) run their own loop: they need to
     // know which loop session they continue (to resume their native session

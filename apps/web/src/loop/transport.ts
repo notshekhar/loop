@@ -526,13 +526,20 @@ export class LoopTransportError extends Error {
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * Calls that legitimately run for minutes — a compaction summarizes the whole
+ * conversation. They report progress as session events and end with the
+ * socket if it drops, so a fixed deadline only turned a working compaction
+ * into "session.compact: timed out" while the server carried on without it.
+ */
+const UNTIMED_METHODS = new Set(["session.compact"]);
 const RECONNECT_MIN_MS = 500;
 const RECONNECT_MAX_MS = 10_000;
 
 type Pending = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | undefined;
 };
 
 type ConnectionState = "connecting" | "open" | "closed";
@@ -629,9 +636,11 @@ class LoopSocket {
     }
     const id = this.#nextId++;
     return await new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        if (this.#pending.delete(id)) reject(new LoopTransportError(method, "timed out"));
-      }, REQUEST_TIMEOUT_MS);
+      const timer = UNTIMED_METHODS.has(method)
+        ? undefined
+        : setTimeout(() => {
+            if (this.#pending.delete(id)) reject(new LoopTransportError(method, "timed out"));
+          }, REQUEST_TIMEOUT_MS);
       this.#pending.set(id, { resolve, reject, timer });
       socket.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
     });

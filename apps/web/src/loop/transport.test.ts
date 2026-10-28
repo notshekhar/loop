@@ -5,6 +5,8 @@ import { createSocketHost, defaultLoopHost } from "./transport.ts";
 /** Just enough of a WebSocket to see what a host dials and sends. */
 class FakeSocket {
   static opened: FakeSocket[] = [];
+  /** Methods the fake server never answers on its own — a call still running. */
+  static silent = new Set<string>();
   readonly sent: { id: number; method: string; params: Record<string, unknown> }[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
@@ -19,11 +21,16 @@ class FakeSocket {
   send(raw: string): void {
     const message = JSON.parse(raw);
     this.sent.push(message);
+    if (FakeSocket.silent.has(message.method)) return;
     queueMicrotask(() =>
       this.onmessage?.({
         data: JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { from: this.url } }),
       }),
     );
+  }
+
+  reply(id: number, result: unknown): void {
+    this.onmessage?.({ data: JSON.stringify({ jsonrpc: "2.0", id, result }) });
   }
 
   notify(method: string, params: unknown): void {
@@ -40,6 +47,7 @@ let realWebSocket: unknown;
 
 beforeEach(() => {
   FakeSocket.opened = [];
+  FakeSocket.silent = new Set();
   realWebSocket = globals.WebSocket;
   globals.WebSocket = FakeSocket;
 });
@@ -99,6 +107,22 @@ describe("createSocketHost", () => {
     expect(FakeSocket.opened).toHaveLength(1);
     expect(states.at(-1)).toBe("closed");
     await expect(host.call("server.info")).rejects.toThrow(/not connected/);
+  });
+
+  it("gives a compaction as long as it takes, but still times out an ordinary call", async () => {
+    vi.useFakeTimers();
+    FakeSocket.silent = new Set(["session.compact", "server.info"]);
+    const host = createSocketHost("mac", "ws://mac/ws");
+    const compacting = host.call("session.compact", { sessionId: "s1" });
+    const info = host.call("server.info");
+    const infoFailed = expect(info).rejects.toThrow(/timed out/);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    await infoFailed;
+
+    const socket = FakeSocket.opened[0]!;
+    const compactCall = socket.sent.find((m) => m.method === "session.compact")!;
+    socket.reply(compactCall.id, { summary: "S", cutAt: 4 });
+    expect(await compacting).toEqual({ summary: "S", cutAt: 4 });
   });
 
   it("stops redialing once closed", async () => {

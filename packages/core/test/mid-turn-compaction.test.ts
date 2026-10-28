@@ -67,12 +67,44 @@ const answer = (text: string): Part[] => [
     { type: "finish", finishReason: { unified: "stop", raw: "end_turn" }, usage: usage(1_000) },
 ];
 
-const summaryReply = (text: string) => ({
-    content: [{ type: "text" as const, text }],
-    finishReason: { unified: "stop" as const, raw: "stop" },
-    usage: usage(100, 20),
-    warnings: [],
-});
+/** A streamed summary — the summarizer streams, so a long one never sits silent. */
+const summaryReply = (text: string, finish: "stop" | "length" = "stop"): Part[] => [
+    { type: "text-start", id: "s" },
+    { type: "text-delta", id: "s", delta: text },
+    { type: "text-end", id: "s" },
+    { type: "finish", finishReason: { unified: finish, raw: finish }, usage: usage(100, 20) },
+];
+
+/** Prompts the summarizer sent, in order — told apart from turn requests by its system prompt. */
+let summaryPrompts: string[] = [];
+const isSummaryCall = (o: { prompt: unknown }) => JSON.stringify(o.prompt).includes("context summarization assistant");
+
+/**
+ * One mock serving both the turn (`turn`) and the summarizer (`summary`,
+ * called with the 1-based summary request number; an Error is thrown as the
+ * provider's refusal).
+ */
+function mockModel(opts: { turn?: (n: number) => Part[]; summary?: (n: number) => Part[] | Error }) {
+    let turns = 0;
+    let summaries = 0;
+    return new MockLanguageModelV3({
+        doStream: async (o) => {
+            if (isSummaryCall(o)) {
+                summaryPrompts.push(JSON.stringify(o.prompt));
+                const reply = opts.summary ? opts.summary(++summaries) : summaryReply("unused");
+                if (reply instanceof Error) throw reply;
+                return streamOf(reply);
+            }
+            return streamOf(opts.turn ? opts.turn(++turns) : answer("unused"));
+        },
+    });
+}
+
+/** The turn's own requests, without the summarizer's. */
+const turnCalls = () => currentModel!.doStreamCalls.filter((c) => !isSummaryCall(c));
+
+const apiError = (message: string, statusCode: number) =>
+    new APICallError({ message, url: "https://example.test", requestBodyValues: {}, statusCode, isRetryable: false });
 
 const msg = (role: "user" | "assistant", content: string): Entry => ({ type: "message", role, content, ts: 0 });
 
@@ -116,15 +148,15 @@ beforeEach(() => {
 
 afterEach(() => {
     currentModel = null;
+    summaryPrompts = [];
 });
 
 describe("a turn that crosses the threshold between steps compacts and carries on", () => {
     test("stops at the step boundary, summarizes, and reopens the stream over the summary", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-midturn-"));
-        let streams = 0;
-        currentModel = new MockLanguageModelV3({
-            doStream: async () => (streams++ === 0 ? streamOf(toolStep("c1", 230_000)) : streamOf(answer("done"))),
-            doGenerate: async () => summaryReply("SUMMARY OF EARLIER WORK"),
+        currentModel = mockModel({
+            turn: (n) => (n === 1 ? toolStep("c1", 230_000) : answer("done")),
+            summary: () => summaryReply("SUMMARY OF EARLIER WORK"),
         });
         const session = mkSession(dir, oldHistory());
         const events = await runTurnWith(session, dir);
@@ -136,39 +168,30 @@ describe("a turn that crosses the threshold between steps compacts and carries o
         expect(events.filter((e) => e.type === "text-delta").map((e) => e.payload)).toEqual(["done"]);
 
         const compact = session.entries().find((e) => e.type === "compact") as { summary: string; cutAt: number };
-        expect(compact.summary).toBe("SUMMARY OF EARLIER WORK");
+        expect(compact.summary.startsWith("SUMMARY OF EARLIER WORK")).toBe(true);
         expect(compact.cutAt).toBeGreaterThan(0);
 
         // The reopened stream reads the summary, not the history it replaced.
-        const resumedPrompt = JSON.stringify(currentModel.doStreamCalls[1].prompt);
+        const resumedPrompt = JSON.stringify(turnCalls()[1].prompt);
         expect(resumedPrompt).toContain("SUMMARY OF EARLIER WORK");
         expect(resumedPrompt).not.toContain("old message 0");
-        expect(streams).toBe(2);
+        expect(turnCalls()).toHaveLength(2);
     });
 
     test("under the threshold nothing stops early", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-midturn-"));
-        let streams = 0;
-        currentModel = new MockLanguageModelV3({
-            doStream: async () => (streams++ === 0 ? streamOf(toolStep("c1", 50_000)) : streamOf(answer("done"))),
-            doGenerate: async () => summaryReply("unused"),
-        });
+        currentModel = mockModel({ turn: (n) => (n === 1 ? toolStep("c1", 50_000) : answer("done")) });
         const events = await runTurnWith(mkSession(dir, oldHistory()), dir);
         expect(events.some((e) => e.type === "compact-start")).toBe(false);
-        expect(currentModel.doGenerateCalls).toHaveLength(0);
+        expect(summaryPrompts).toHaveLength(0);
         expect(events.filter((e) => e.type === "finish")).toHaveLength(1);
     });
 
     test("a compaction that frees nothing is not retried after every step", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-midturn-"));
-        let streams = 0;
-        currentModel = new MockLanguageModelV3({
+        currentModel = mockModel({
             // Three over-threshold steps in a session too short to cut.
-            doStream: async () => {
-                streams++;
-                return streams <= 3 ? streamOf(toolStep(`c${streams}`, 230_000)) : streamOf(answer("done"));
-            },
-            doGenerate: async () => summaryReply("unused"),
+            turn: (n) => (n <= 3 ? toolStep(`c${n}`, 230_000) : answer("done")),
         });
         const events = await runTurnWith(mkSession(dir), dir);
         expect(events.filter((e) => e.type === "compact-start")).toHaveLength(1);
@@ -178,18 +201,9 @@ describe("a turn that crosses the threshold between steps compacts and carries o
 
     test("a failed summary is reported and the turn still finishes", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-midturn-"));
-        let streams = 0;
-        currentModel = new MockLanguageModelV3({
-            doStream: async () => (streams++ === 0 ? streamOf(toolStep("c1", 230_000)) : streamOf(answer("done"))),
-            doGenerate: async () => {
-                throw new APICallError({
-                    message: "invalid api key",
-                    url: "https://example.test",
-                    requestBodyValues: {},
-                    statusCode: 401,
-                    isRetryable: false,
-                });
-            },
+        currentModel = mockModel({
+            turn: (n) => (n === 1 ? toolStep("c1", 230_000) : answer("done")),
+            summary: () => apiError("invalid api key", 401),
         });
         const events = await runTurnWith(mkSession(dir, oldHistory()), dir);
         const end = events.find((e) => e.type === "compact-end")?.payload as { error?: string };
@@ -231,19 +245,20 @@ describe("the summarizer's input", () => {
         ...Array.from({ length: 6 }, (_, i) => msg(i % 2 === 0 ? "user" : "assistant", `later ${i}`)),
     ];
 
-    test("carries no reasoning, no provider blobs, and only the ends of a long tool result", async () => {
+    test("carries no reasoning, no provider blobs, and only the start of a long tool result", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-compact-"));
-        currentModel = new MockLanguageModelV3({ doGenerate: async () => summaryReply("S") });
+        currentModel = mockModel({ summary: () => summaryReply("S") });
         const { runCompact } = await import("../src/agent/compact");
         // Manual: the history is under the kept window, and this is about the input.
         await runCompact({ session: mkSession(dir, bulkyHistory()), modelId: MODEL, manual: true });
-        const prompt = JSON.stringify(currentModel.doGenerateCalls[0].prompt);
+        const prompt = summaryPrompts[0];
         expect(prompt).not.toContain("SECRET CHAIN OF THOUGHT");
         expect(prompt).not.toContain("BLOB");
-        expect(prompt).toContain("HEAD");
-        expect(prompt).toContain("TAIL");
-        expect(prompt).toContain("chars omitted");
-        expect(prompt).toContain("→ read(");
+        expect(prompt).toContain("[Tool result]: HEAD");
+        expect(prompt).not.toContain("TAIL");
+        expect(prompt).toContain("more characters truncated");
+        expect(prompt).toContain("[Assistant tool calls]: read(path=");
+        expect(prompt).toContain("[User]: fix the parser");
         expect(prompt.length).toBeLessThan(12_000);
     });
 
@@ -253,19 +268,10 @@ describe("the summarizer's input", () => {
             msg(i % 2 === 0 ? "user" : "assistant", `turn ${i} ${"y".repeat(2_500)}`),
         );
         let calls = 0;
-        currentModel = new MockLanguageModelV3({
-            doGenerate: async () => {
-                calls++;
-                if (calls === 1) {
-                    throw new APICallError({
-                        message: "Request Entity Too Large",
-                        url: "https://example.test",
-                        requestBodyValues: {},
-                        statusCode: 413,
-                        isRetryable: false,
-                    });
-                }
-                return summaryReply(`SUMMARY-${calls}`);
+        currentModel = mockModel({
+            summary: (n) => {
+                calls = n;
+                return n === 1 ? apiError("Request Entity Too Large", 413) : summaryReply(`SUMMARY-${n}`);
             },
         });
         const { runCompact } = await import("../src/agent/compact");
@@ -273,7 +279,7 @@ describe("the summarizer's input", () => {
         // A 10k window → the minimum budget, so ten ~2.5k messages need chunks.
         const result = await runCompact({ session, modelId: MODEL, contextWindow: 10_000 });
 
-        const prompts = currentModel.doGenerateCalls.map((c) => JSON.stringify(c.prompt));
+        const prompts = summaryPrompts;
         expect(prompts.length).toBeGreaterThan(2); // the refusal, then 2+ chunks
         // Each chunk after the first reads the summary so far.
         expect(prompts[2]).toContain("SUMMARY-2");
@@ -285,22 +291,14 @@ describe("the summarizer's input", () => {
 
     test("a refusal for any other reason is not retried", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-compact-"));
-        currentModel = new MockLanguageModelV3({
-            doGenerate: async () => {
-                throw new APICallError({
-                    message: "invalid api key",
-                    url: "https://example.test",
-                    requestBodyValues: {},
-                    statusCode: 401,
-                    isRetryable: false,
-                });
-            },
-        });
+        currentModel = mockModel({ summary: () => apiError("invalid api key", 401) });
         const { runCompact } = await import("../src/agent/compact");
         await expect(runCompact({ session: mkSession(dir, oldHistory()), modelId: MODEL })).rejects.toThrow(
             "invalid api key",
         );
-        expect(currentModel.doGenerateCalls).toHaveLength(1);
+        // Each request once — a split turn sends two, neither is retried.
+        expect(summaryPrompts.length).toBeGreaterThan(0);
+        expect(new Set(summaryPrompts).size).toBe(summaryPrompts.length);
     });
 });
 
@@ -335,11 +333,11 @@ describe("the summary", () => {
         toolResult("edit", `src/edit-${n}.ts`),
         msg("assistant", `done with ${n} ${"w".repeat(90_000)}`),
     ];
-    const promptOf = (call: number) => JSON.stringify(currentModel!.doGenerateCalls[call].prompt);
+    const promptOf = (call: number) => summaryPrompts[call];
 
     test("is a structured checkpoint that quotes the user and lists the files from the tool calls", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-compact-"));
-        currentModel = new MockLanguageModelV3({ doGenerate: async () => summaryReply("## Goal\nTidy.") });
+        currentModel = mockModel({ summary: () => summaryReply("## Goal\nTidy.") });
         const { runCompact } = await import("../src/agent/compact");
         const session = mkSession(dir, [...work(1), ...work(2)]);
         await runCompact({ session, modelId: MODEL });
@@ -347,7 +345,7 @@ describe("the summary", () => {
         const prompt = promptOf(0);
         expect(prompt).toContain("Do NOT continue the conversation");
         expect(prompt).toContain("<conversation>");
-        expect(prompt).toContain("## User Messages");
+        expect(prompt).toContain("## Critical Context");
         expect(prompt).not.toContain("<previous-summary>");
         const entry = session.entries().find((e) => e.type === "compact") as {
             summary: string;
@@ -361,18 +359,19 @@ describe("the summary", () => {
     test("a second compaction folds the new messages into the previous summary, file lists carried", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-compact-"));
         let n = 0;
-        currentModel = new MockLanguageModelV3({ doGenerate: async () => summaryReply(`SUMMARY-${++n}`) });
+        currentModel = mockModel({ summary: () => summaryReply(`SUMMARY-${++n}`) });
         const { runCompact } = await import("../src/agent/compact");
         const session = mkSession(dir, [...work(1), ...work(2)]);
         await runCompact({ session, modelId: MODEL });
+        const firstCount = summaryPrompts.length;
         for (const e of [...work(3), ...work(4)]) await session.append(e);
         await runCompact({ session, modelId: MODEL });
 
-        const second = promptOf(1);
-        expect(second).toContain("<previous-summary>\\nSUMMARY-1\\n</previous-summary>");
+        const second = summaryPrompts.slice(firstCount).find((p) => p.includes("<conversation>")) ?? "";
+        expect(second).toContain("<previous-summary>\\nSUMMARY-");
         // The lists are rebuilt from the calls, never handed back to be re-summarized.
         expect(second).not.toContain("<read-files>");
-        expect(second).toContain("NEW messages");
+        expect(second).toContain("NEW conversation messages");
         const latest = session
             .entries()
             .filter((e) => e.type === "compact")
@@ -383,7 +382,7 @@ describe("the summary", () => {
 
     test("keeps the recent window word for word and counts it in tokensAfter", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-compact-"));
-        currentModel = new MockLanguageModelV3({ doGenerate: async () => summaryReply("S") });
+        currentModel = mockModel({ summary: () => summaryReply("S") });
         const { runCompact } = await import("../src/agent/compact");
         const session = mkSession(dir, [...work(1), ...work(2)]);
         const result = await runCompact({ session, modelId: MODEL });
@@ -399,7 +398,7 @@ describe("the summary", () => {
 
     test("a request bigger than the kept window is cut inside it, and the summary is told so", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-compact-"));
-        currentModel = new MockLanguageModelV3({ doGenerate: async () => summaryReply("S") });
+        currentModel = mockModel({ summary: () => summaryReply("S") });
         const { runCompact } = await import("../src/agent/compact");
         const session = mkSession(dir, [
             msg("user", "one long request"),
@@ -407,12 +406,16 @@ describe("the summary", () => {
         ]);
         const result = await runCompact({ session, modelId: MODEL });
         expect(session.messages()[result.cutAt].role).toBe("assistant");
-        expect(promptOf(0)).toContain("still in progress");
+        // pi's split turn: the request's start is summarized on its own.
+        expect(summaryPrompts).toHaveLength(1);
+        expect(promptOf(0)).toContain("earlier context from an ongoing conversation");
+        expect(promptOf(0)).toContain("[User]: one long request");
+        expect(result.summary).toContain("**Turn Context (split turn):**");
     });
 
     test("/compact <focus> steers it", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-compact-"));
-        currentModel = new MockLanguageModelV3({ doGenerate: async () => summaryReply("S") });
+        currentModel = mockModel({ summary: () => summaryReply("S") });
         const { runCompact } = await import("../src/agent/compact");
         await runCompact({ session: mkSession(dir, work(1)), modelId: MODEL, manual: true, focus: "the API changes" });
         expect(promptOf(0)).toContain("Additional focus: the API changes");
@@ -420,7 +423,7 @@ describe("the summary", () => {
 
     test("an explicit /compact on a short session still summarizes all of it", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-compact-"));
-        currentModel = new MockLanguageModelV3({ doGenerate: async () => summaryReply("S") });
+        currentModel = mockModel({ summary: () => summaryReply("S") });
         const { runCompact } = await import("../src/agent/compact");
         const session = mkSession(dir, [msg("user", "hi"), msg("assistant", "hello")]);
         expect((await runCompact({ session, modelId: MODEL })).cutAt).toBe(0);
@@ -429,12 +432,7 @@ describe("the summary", () => {
 
     test("a summary cut off at the output limit is refused, not saved", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-compact-"));
-        currentModel = new MockLanguageModelV3({
-            doGenerate: async () => ({
-                ...summaryReply("## Goal\nhalf a summ"),
-                finishReason: { unified: "length" as const, raw: "max_tokens" },
-            }),
-        });
+        currentModel = mockModel({ summary: () => summaryReply("## Goal\nhalf a summ", "length") });
         const { runCompact } = await import("../src/agent/compact");
         const session = mkSession(dir, [...work(1), ...work(2)]);
         await expect(runCompact({ session, modelId: MODEL })).rejects.toThrow("output limit");
@@ -456,10 +454,9 @@ describe("a request refused as too big for the window", () => {
 
     test("is compacted and retried, and the user never sees the refusal", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-overflow-"));
-        let streams = 0;
-        currentModel = new MockLanguageModelV3({
-            doStream: async () => (streams++ === 0 ? streamOf([tooLong()]) : streamOf(answer("done"))),
-            doGenerate: async () => summaryReply("SUMMARY"),
+        currentModel = mockModel({
+            turn: (n) => (n === 1 ? [tooLong()] : answer("done")),
+            summary: () => summaryReply("SUMMARY"),
         });
         const events = await runTurnWith(mkSession(dir, oldHistory()), dir);
         expect(events.filter((e) => e.type !== "text-delta").map((e) => e.type)).toEqual([
@@ -467,17 +464,14 @@ describe("a request refused as too big for the window", () => {
             "compact-end",
             "finish",
         ]);
-        expect(JSON.stringify(currentModel.doStreamCalls[1].prompt)).toContain("SUMMARY");
+        expect(JSON.stringify(turnCalls()[1].prompt)).toContain("SUMMARY");
     });
 
     test("is retried once: a second refusal is reported", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-overflow-"));
-        currentModel = new MockLanguageModelV3({
-            doStream: async () => streamOf([tooLong()]),
-            doGenerate: async () => summaryReply("SUMMARY"),
-        });
+        currentModel = mockModel({ turn: () => [tooLong()], summary: () => summaryReply("SUMMARY") });
         const events = await runTurnWith(mkSession(dir, oldHistory()), dir);
-        expect(currentModel.doStreamCalls).toHaveLength(2);
+        expect(turnCalls()).toHaveLength(2);
         expect(events.filter((e) => e.type === "compact-start")).toHaveLength(1);
         expect(events.filter((e) => e.type === "error")).toHaveLength(1);
         expect(events.filter((e) => e.type === "finish")).toHaveLength(1);

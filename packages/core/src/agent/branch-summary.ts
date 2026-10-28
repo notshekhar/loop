@@ -4,12 +4,14 @@
  * branch, its entries can be summarized into a branch-summary entry that
  * joins the model context at the navigation target.
  */
-import { generateText } from "ai";
-import { getModel } from "../providers";
+import { getCatalog, modelInfoIn } from "../catalog";
 import type { Session } from "../sessions";
 import type { Entry, UsageBlock } from "../types";
 import { isAbortError } from "./abort";
+import { collectFileLists, formatFileLists } from "./compact";
 import type { CostTracker } from "./cost";
+import { requestSummary, serializeConversation, serializeMessage, SummaryAbortedError } from "./summarize";
+import type { ThinkingLevel } from "./thinking";
 
 export const BRANCH_SUMMARY_PREAMBLE = `The user explored a different conversation branch before returning here.
 Summary of that exploration:
@@ -80,19 +82,31 @@ export function collectEntriesForBranchSummary(
     return { entries, commonAncestorId };
 }
 
-function branchEntryToText(e: Entry): string | null {
+/** pi's reserve: room for the prompt and the summary in the summarizer's window. */
+const BRANCH_RESERVE_TOKENS = 16_384;
+
+/**
+ * An entry as the summarizer reads it. Tool results are left out (pi's
+ * choice for branches): the calls say what was done, and the outputs are
+ * what makes a long branch too big to send.
+ */
+function branchEntryMessage(e: Entry): { role: string; content: unknown } | null {
     switch (e.type) {
         case "message":
-            return `[${e.role}] ${typeof e.content === "string" ? e.content : JSON.stringify(e.content)}`;
+            return e.role === "tool" ? null : { role: e.role, content: e.content };
         case "subagent":
-            return `[subagent ${e.agent}] ${e.result}`;
+            return { role: "user", content: `[subagent ${e.agent} report] ${e.result}` };
         case "compact":
             // A rollover has no summary; its handoff is the record of the window.
-            return e.rollover || e.handoff
-                ? `[context rollover] ${e.handoff ?? ""}`
-                : `[compaction summary] ${e.summary}`;
+            return {
+                role: "user",
+                content:
+                    e.rollover || e.handoff
+                        ? `[context rollover] ${e.handoff ?? ""}`
+                        : `[compaction summary] ${e.summary}`,
+            };
         case "branch-summary":
-            return `[branch summary] ${e.summary}`;
+            return { role: "user", content: `[branch summary] ${e.summary}` };
         default:
             return null;
     }
@@ -106,10 +120,11 @@ export class BranchSummaryAbortedError extends Error {
 }
 
 /**
- * Summarize an abandoned branch's entries for a branch-summary entry. When a
- * tracker is passed the summarization call is billed (source
- * "branch-summary" — real API spend that historically went unrecorded); the
- * returned usage should be stamped onto the entry the caller appends.
+ * Summarize an abandoned branch's entries for a branch-summary entry, on the
+ * session's own model (see summarize.ts). Newest entries win when the branch
+ * is bigger than the window. When a tracker is passed the summarization call
+ * is billed (source "branch-summary"); the returned usage should be stamped
+ * onto the entry the caller appends.
  */
 export async function runBranchSummary(opts: {
     entries: Entry[];
@@ -119,34 +134,44 @@ export async function runBranchSummary(opts: {
     tracker?: CostTracker;
     sessionPub?: string;
     cwd?: string;
+    thinkingLevel?: ThinkingLevel;
 }): Promise<{ text: string; usage?: UsageBlock }> {
-    const conversationText = opts.entries
-        .map(branchEntryToText)
-        .filter((t): t is string => t !== null)
-        .join("\n");
+    const contextWindow = modelInfoIn(await getCatalog(), opts.modelId)?.contextWindow ?? 128_000;
+    const budget = Math.max(contextWindow - BRANCH_RESERVE_TOKENS, 4_000);
+    const kept: Array<{ role: string; content: unknown }> = [];
+    let tokens = 0;
+    for (let i = opts.entries.length - 1; i >= 0; i--) {
+        const message = branchEntryMessage(opts.entries[i]);
+        if (!message) continue;
+        const size = Math.ceil(serializeMessage(message).length / 4);
+        if (tokens + size > budget) break;
+        kept.unshift(message);
+        tokens += size;
+    }
+    const files = collectFileLists(kept);
+    if (kept.length === 0) return { text: "No content to summarize" };
+
     const instructions = opts.customInstructions
         ? `${BRANCH_SUMMARY_PROMPT}\n\nAdditional focus: ${opts.customInstructions}`
         : BRANCH_SUMMARY_PROMPT;
-
-    if (opts.abortSignal?.aborted) throw new BranchSummaryAbortedError();
-
-    const model = await getModel(opts.modelId);
     try {
-        const result = await generateText({
-            model,
-            prompt: `<conversation>\n${conversationText}\n</conversation>\n\n${instructions}`,
+        const result = await requestSummary({
+            modelId: opts.modelId,
+            prompt: `<conversation>\n${serializeConversation(kept)}\n</conversation>\n\n${instructions}`,
             abortSignal: opts.abortSignal,
+            ...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
+            onUsage: (usage) =>
+                opts.tracker?.add(opts.modelId, usage, {
+                    cwd: opts.cwd,
+                    sessionPub: opts.sessionPub,
+                    source: "branch-summary",
+                }),
         });
-        if (opts.tracker && result.usage) {
-            opts.tracker.add(opts.modelId, result.usage, {
-                cwd: opts.cwd,
-                sessionPub: opts.sessionPub,
-                source: "branch-summary",
-            });
-        }
-        return { text: result.text, usage: result.usage };
+        return { text: result.text + formatFileLists(files), ...(result.usage ? { usage: result.usage } : {}) };
     } catch (err) {
-        if (isAbortError(err) || opts.abortSignal?.aborted) throw new BranchSummaryAbortedError();
+        if (err instanceof SummaryAbortedError || isAbortError(err) || opts.abortSignal?.aborted) {
+            throw new BranchSummaryAbortedError();
+        }
         throw err;
     }
 }

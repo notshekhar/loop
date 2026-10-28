@@ -74,6 +74,24 @@ export function buildAgentCallConfig(opts: {
     };
 }
 
+/**
+ * Ollama defaults num_ctx to ~4096 regardless of the model's real context,
+ * which truncates long agent loops (and summarizer prompts) and makes the
+ * model stop early. Pin it to the model's actual context window so history
+ * isn't silently dropped.
+ */
+export function withOllamaContext(
+    providerOptions: AgentCallConfig["providerOptions"],
+    provider: string,
+    modelInfo: ModelInfo | undefined,
+): AgentCallConfig["providerOptions"] {
+    if (provider !== "ollama") return providerOptions;
+    const numCtx = modelInfo?.contextWindow ?? 8192;
+    const existing = (providerOptions?.ollama as Record<string, unknown> | undefined) ?? {};
+    const existingOpts = (existing.options as Record<string, unknown> | undefined) ?? {};
+    return { ...providerOptions, ollama: { ...existing, options: { ...existingOpts, num_ctx: numCtx } } };
+}
+
 /** Per-step accrual state for one agent stream (turn or subagent run). */
 export interface StepBilling {
     /**
