@@ -241,7 +241,7 @@ function xaiAuthFetch(): typeof fetch {
         const res = await fetch(input, { ...(init as RequestInit), headers });
         if (res.status === 401) {
             try {
-                const fresh = await getAccessToken("xai", { forceRefresh: true });
+                const fresh = await getAccessToken("xai", { forceRefresh: true, rejected: token });
                 headers.set("authorization", `Bearer ${fresh}`);
                 return fetch(input, { ...(init as RequestInit), headers });
             } catch {

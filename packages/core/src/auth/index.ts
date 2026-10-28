@@ -5,6 +5,7 @@ import { clearCustomOAuthCreds, getCustomOAuthCreds, saveCustomOAuthCreds } from
 import { login as xaiLogin, refresh as xaiRefresh } from "./xai-oauth";
 import { XaiErrorCode, XaiOAuthError } from "./errors";
 import { getOAuthProvider } from "./oauth/registry";
+import { singleFlight, withAuthLock } from "./refresh-lock";
 import type { OAuthLoginCallbacks } from "./oauth/types";
 import type {
     AuthEntry,
@@ -34,6 +35,23 @@ function writeProviders(p: ProviderMap): void {
     authStore.set("providers", p);
 }
 
+/**
+ * Read-modify-write of the provider map against the FILE, never the cache.
+ *
+ * auth.json is shared by every loop process (and pi). Writing back a map read
+ * from this process's cache would put back whatever it held when it last
+ * looked — including a refresh token another process has since rotated and
+ * spent, which the provider then treats as a replayed token and revokes the
+ * whole login. Every write goes through here.
+ */
+function updateProviders(mutate: (providers: ProviderMap) => void): ProviderMap {
+    authStore.refresh();
+    const providers = { ...readProviders() };
+    mutate(providers);
+    writeProviders(providers);
+    return providers;
+}
+
 export function listAuthorizedProviders(): ProviderId[] {
     return Object.keys(readProviders()) as ProviderId[];
 }
@@ -47,9 +65,9 @@ export function setActiveProvider(p: ProviderId): void {
 }
 
 export function loginApiKey(provider: ProviderId, apiKey: string): void {
-    const providers = readProviders();
-    providers[provider] = { mode: "apikey", provider, apiKey };
-    writeProviders(providers);
+    updateProviders((providers) => {
+        providers[provider] = { mode: "apikey", provider, apiKey };
+    });
     if (!getActiveProvider()) setActiveProvider(provider);
 }
 
@@ -65,9 +83,9 @@ export function getApiKey(provider: ProviderId): string | undefined {
 
 export async function loginXaiOAuth(onAuth: (info: { url: string; instructions: string }) => void): Promise<void> {
     const creds = await xaiLogin({ onAuth });
-    const providers = readProviders();
-    providers.xai = { mode: "oauth", provider: "xai", xai: creds };
-    writeProviders(providers);
+    updateProviders((providers) => {
+        providers.xai = { mode: "oauth", provider: "xai", xai: creds };
+    });
     if (!getActiveProvider()) setActiveProvider("xai");
 }
 
@@ -77,16 +95,39 @@ export function getXaiCreds(): XaiOAuthCredentials | undefined {
     return undefined;
 }
 
-export async function getAccessToken(provider: "xai", opts: { forceRefresh?: boolean } = {}): Promise<string> {
+/**
+ * A usable xAI bearer token, refreshed when it has expired.
+ *
+ * `rejected` is the token a request just had refused (401): a refresh is only
+ * needed if the stored token is still that one — another process may have
+ * renewed it already.
+ */
+export async function getAccessToken(
+    provider: "xai",
+    opts: { forceRefresh?: boolean; rejected?: string } = {},
+): Promise<string> {
     const creds = getXaiCreds();
     if (!creds) throw new XaiOAuthError("No xAI OAuth credentials.", XaiErrorCode.AUTH_MISSING, true);
-    const expired = Date.now() >= creds.expires;
-    if (!opts.forceRefresh && !expired) return creds.access;
-    const fresh = await xaiRefresh(creds);
-    const providers = readProviders();
-    providers.xai = { mode: "oauth", provider: "xai", xai: fresh };
-    writeProviders(providers);
-    return fresh.access;
+    if (!opts.forceRefresh && Date.now() < creds.expires) return creds.access;
+    const rejected = opts.forceRefresh ? (opts.rejected ?? creds.access) : null;
+    return singleFlight(`xai:${rejected ?? ""}`, () => refreshXai(rejected));
+}
+
+async function refreshXai(rejected: string | null): Promise<string> {
+    return withAuthLock(async () => {
+        // Re-read under the lock: whoever held it before us may have renewed
+        // the token, and refreshing from our stale copy would spend a refresh
+        // token that has already been used.
+        authStore.refresh();
+        const current = getXaiCreds();
+        if (!current) throw new XaiOAuthError("No xAI OAuth credentials.", XaiErrorCode.AUTH_MISSING, true);
+        if (Date.now() < current.expires && current.access !== rejected) return current.access;
+        const fresh = await xaiRefresh(current);
+        updateProviders((providers) => {
+            providers.xai = { mode: "oauth", provider: "xai", xai: fresh };
+        });
+        return fresh.access;
+    });
 }
 
 // ─── Generic OAuth (anthropic, github-copilot) ────────────
@@ -95,9 +136,9 @@ export async function loginOAuth(provider: ProviderId, cb: OAuthLoginCallbacks):
     const impl = getOAuthProvider(provider);
     if (!impl) throw new Error(`No OAuth provider registered for ${provider}`);
     const creds = await impl.login(cb);
-    const providers = readProviders();
-    providers[provider] = { mode: "oauth", provider, creds };
-    writeProviders(providers);
+    updateProviders((providers) => {
+        providers[provider] = { mode: "oauth", provider, creds };
+    });
     if (!getActiveProvider()) setActiveProvider(provider);
 }
 
@@ -106,25 +147,15 @@ export async function loginOAuth(provider: ProviderId, cb: OAuthLoginCallbacks):
  * (auto-refresh + persist), or env var fallback. Pi-mono pattern.
  */
 export async function resolveAuthToken(provider: ProviderId): Promise<string | null> {
-    const providers = readProviders();
-    const entry = providers[provider];
+    const entry = readProviders()[provider];
 
     if (entry?.mode === "apikey") return entry.apiKey;
 
     if (entry?.mode === "oauth" && "creds" in entry) {
         const impl = getOAuthProvider(provider);
         if (!impl) return null;
-        let creds = entry.creds;
-        if (Date.now() >= creds.expires) {
-            try {
-                creds = await impl.refreshToken(creds);
-                providers[provider] = { mode: "oauth", provider, creds };
-                writeProviders(providers);
-            } catch {
-                return null;
-            }
-        }
-        return impl.getApiKey(creds);
+        const creds = await resolveOAuthCreds(provider);
+        return creds ? impl.getApiKey(creds) : null;
     }
 
     // env var fallback (PROVIDER_API_KEY uppercased, with - → _)
@@ -138,28 +169,31 @@ export async function resolveAuthToken(provider: ProviderId): Promise<string | n
  * the ChatGPT plan catalog keys its cache by the issued client id.
  */
 export async function resolveOAuthCreds(provider: ProviderId): Promise<GenericOAuthCredentials | null> {
-    let entry = readProviders()[provider];
+    const entry = readProviders()[provider];
     if (entry?.mode !== "oauth" || !("creds" in entry)) return null;
     const impl = getOAuthProvider(provider);
     if (!impl) return null;
     if (Date.now() < entry.creds.expires) return entry.creds;
-
-    // Another loop process may already have refreshed — and with rotating
-    // refresh tokens, refreshing again from our stale copy would present a
-    // spent token and get the whole session revoked. Re-read the file first.
-    authStore.refresh();
-    entry = readProviders()[provider];
-    if (entry?.mode !== "oauth" || !("creds" in entry)) return null;
-    if (Date.now() < entry.creds.expires) return entry.creds;
-    try {
-        const creds = await impl.refreshToken(entry.creds);
-        const providers = readProviders();
-        providers[provider] = { mode: "oauth", provider, creds };
-        writeProviders(providers);
-        return creds;
-    } catch {
-        return null;
-    }
+    return singleFlight(`oauth:${provider}`, () =>
+        withAuthLock(async () => {
+            // Another process may already have refreshed — and with rotating
+            // refresh tokens, refreshing again from our stale copy would
+            // present a spent token and get the whole session revoked.
+            authStore.refresh();
+            const latest = readProviders()[provider];
+            if (latest?.mode !== "oauth" || !("creds" in latest)) return null;
+            if (Date.now() < latest.creds.expires) return latest.creds;
+            try {
+                const creds = await impl.refreshToken(latest.creds);
+                updateProviders((providers) => {
+                    providers[provider] = { mode: "oauth", provider, creds };
+                });
+                return creds;
+            } catch {
+                return null;
+            }
+        }),
+    );
 }
 
 /** Best-effort server-side revocation; a failure never blocks signing out locally. */
@@ -177,15 +211,17 @@ async function revokeRemote(entry: AuthEntry | undefined): Promise<void> {
  */
 export function logout(provider?: ProviderId): Promise<void> {
     if (!provider) {
+        authStore.refresh();
         const revoking = Object.values(readProviders()).map(revokeRemote);
         writeProviders({});
         authStore.set("active", null);
         return Promise.all(revoking).then(() => {});
     }
-    const providers = readProviders();
-    const revoking = revokeRemote(providers[provider]);
-    delete providers[provider];
-    writeProviders(providers);
+    let revoking: Promise<void> = Promise.resolve();
+    const providers = updateProviders((all) => {
+        revoking = revokeRemote(all[provider]);
+        delete all[provider];
+    });
     if (getActiveProvider() === provider) {
         const remaining = Object.keys(providers) as ProviderId[];
         authStore.set("active", remaining[0] ?? null);
