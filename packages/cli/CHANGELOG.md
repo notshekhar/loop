@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.21.24] - 2026-10-28
+
+### Fixed
+
+- **xAI sign-in no longer drops after a token refresh.** xAI replaces its refresh token every time one is used, so two refreshes at once — two loop windows, the desktop app beside the terminal, or a request retry racing the scheduled refresh — used the same token, the second failed, and you had to `/login` again. Refreshes now take turns across every loop process, and one that finds the token already refreshed by another uses it instead of spending it twice.
+  - Saving credentials no longer overwrites a newer token another loop process had just written.
+
+### Removed
+
+- **The Lua extension builtin.** Scripts in `~/.loop/lua` are no longer loaded; extensions are TypeScript.
+
 ## [0.21.23] - 2026-10-28
 
 ### Fixed
