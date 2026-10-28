@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.21.23] - 2026-10-28
+
+### Fixed
+
+- **Compaction no longer times out.** On desktop and web, `/compact` failed after 30 seconds with `session.compact: timed out` while the server kept working; it now runs as long as it needs, and Stop cancels it. In the terminal, big sessions could fail after about five minutes because the summary request sent nothing back until it was done; it now streams.
+  - The summary uses the session's own model, provider settings and reasoning level, and a dropped connection or an overloaded provider (5xx/529) is retried instead of failing the compaction.
+  - A failed compaction shows its error instead of looking cancelled.
+
+### Changed
+
+- **Compaction works like pi's.** Same summary prompts and conversation format: old tool output is cut to 2,000 characters and reasoning is left out, so the request is smaller and faster (a 260k-token session went from 94s to 36s). When the kept part starts mid-request, the start of that request gets its own short summary, written at the same time.
+- **`/tree` branch summaries** use the same summarizer and stay within the model's context window.
+
 ## [0.21.22] - 2026-10-16
 
 ### Changed
