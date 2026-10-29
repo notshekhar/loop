@@ -465,19 +465,15 @@ export class AssistantMessageComponent extends Container {
                 const block =
                     cached instanceof ThinkingBlock
                         ? cached
-                        : new ThinkingBlock(
-                              index,
-                              content.thinking.trim(),
-                              () => {
-                                  const time = this.thinkingTimes.get(index);
-                                  return {
-                                      streaming: this.isLiveBlock(index),
-                                      expanded: this.thinkingOverride.get(index) ?? this.thinkingExpanded,
-                                      selected: this.selectedThinking === index,
-                                      durationMs: time?.end !== undefined ? time.end - time.start : undefined,
-                                  };
-                              },
-                          );
+                        : new ThinkingBlock(index, content.thinking.trim(), () => {
+                              const time = this.thinkingTimes.get(index);
+                              return {
+                                  streaming: this.isLiveBlock(index),
+                                  expanded: this.thinkingOverride.get(index) ?? this.thinkingExpanded,
+                                  selected: this.selectedThinking === index,
+                                  durationMs: time?.end !== undefined ? time.end - time.start : undefined,
+                              };
+                          });
                 block.setText(content.thinking.trim());
                 this.blocks.set(index, block);
                 this.contentContainer.addChild(block);
@@ -573,8 +569,14 @@ export interface CompactionSummaryLike {
     handoff?: string;
 }
 
-export class CompactionSummaryMessageComponent extends Box {
+/**
+ * The `[compaction]` box: a selectable transcript entry like a thought or a
+ * call — reached by the nav selection, opened with → or Enter, and offering
+ * the hint only while selected (the only time → does anything).
+ */
+export class CompactionSummaryMessageComponent extends Box implements FoldableHandle {
     private expanded = false;
+    private selected = false;
 
     constructor(
         private message: CompactionSummaryLike,
@@ -584,9 +586,29 @@ export class CompactionSummaryMessageComponent extends Box {
         this.updateDisplay();
     }
 
+    isExpanded(): boolean {
+        return this.expanded;
+    }
+
     setExpanded(expanded: boolean): void {
         this.expanded = expanded;
         this.updateDisplay();
+    }
+
+    setSelected(selected: boolean): void {
+        if (this.selected === selected) return;
+        this.selected = selected;
+        this.updateDisplay();
+    }
+
+    /** What y-copy takes: the recovery record on a rollover, else the summary. */
+    getText(): string {
+        return this.message.handoff ?? this.message.summary;
+    }
+
+    override render(width: number): string[] {
+        const lines = super.render(width);
+        return this.selected ? markSelectedLines(lines) : lines;
     }
 
     override invalidate(): void {
@@ -608,26 +630,13 @@ export class CompactionSummaryMessageComponent extends Box {
         this.addChild(new Spacer(1));
         if (this.expanded) {
             this.addChild(
-                new Markdown(
-                    `**${lead}**\n\n${body}`,
-                    0,
-                    0,
-                    this.markdownTheme,
-                    {
-                        color: (text: string) => theme.fg("customMessageText", text),
-                    },
-                ),
+                new Markdown(`**${lead}**\n\n${body}`, 0, 0, this.markdownTheme, {
+                    color: (text: string) => theme.fg("customMessageText", text),
+                }),
             );
         } else {
-            this.addChild(
-                new Text(
-                    theme.fg("customMessageText", `${lead} (`) +
-                        theme.fg("dim", EXPAND_HINT) +
-                        theme.fg("customMessageText", " to expand)"),
-                    0,
-                    0,
-                ),
-            );
+            const hint = this.selected ? theme.fg("dim", ` (${EXPAND_HINT} to expand)`) : "";
+            this.addChild(new Text(theme.fg("customMessageText", lead) + hint, 0, 0));
         }
     }
 }

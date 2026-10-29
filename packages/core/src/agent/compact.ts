@@ -357,15 +357,26 @@ export function compactedContextEntries(session: Session): ContextEntry[] {
 
 /**
  * One summarizer request: an opening user message (carrying the summary so
- * far, when there is one), the span's own messages, then the instructions.
- * The opening message also means the request never starts on an assistant
- * turn, which some providers refuse.
+ * far, when there is one), the span's own messages, the instructions, and —
+ * when the user gave any with `/compact <instructions>` — theirs, as one more
+ * user message. The opening message also means the request never starts on
+ * an assistant turn, which some providers refuse.
  */
-function summaryRequest(span: ModelMessage[], instructions: string, previousSummary = ""): ModelMessage[] {
+function summaryRequest(
+    span: ModelMessage[],
+    instructions: string,
+    { previousSummary = "", focus = "" }: { previousSummary?: string; focus?: string } = {},
+): ModelMessage[] {
     const opening = previousSummary
         ? `<previous-summary>\n${previousSummary}\n</previous-summary>\n\nThe conversation to fold into it follows.`
         : "The conversation to summarize follows.";
-    return [{ role: "user", content: opening }, ...span, { role: "user", content: instructions }];
+    const messages: ModelMessage[] = [
+        { role: "user", content: opening },
+        ...span,
+        { role: "user", content: instructions },
+    ];
+    if (focus) messages.push({ role: "user", content: `Additional instructions for this summary: ${focus}` });
+    return messages;
 }
 
 export class CompactAbortedError extends Error {
@@ -408,7 +419,11 @@ export async function runCompact(opts: {
      * there is, summarize everything rather than report there is nothing to do.
      */
     manual?: boolean;
-    /** What the user asked the summary to focus on (`/compact <focus>`). */
+    /**
+     * The user's own instructions for this summary (`/compact <instructions>`),
+     * sent as their own user message after the standing instructions — the
+     * way they were written, not folded into the prompt.
+     */
     focus?: string;
     abortSignal?: AbortSignal;
     /** Bills the summarization call (source "compact") — real API spend that
@@ -479,7 +494,7 @@ export async function runCompact(opts: {
             source: "compact",
         });
     };
-    const focus = opts.focus?.trim() ? `\n\nAdditional focus: ${opts.focus.trim()}` : "";
+    const focus = opts.focus?.trim() ?? "";
     const request = async (messages: ModelMessage[]) =>
         (
             await requestSummary({
@@ -501,14 +516,14 @@ export async function runCompact(opts: {
         const messages = toSummaryMessages(history);
         if (messages.length === 0) return running || "No prior history.";
         for (const chunk of chunkMessages(messages, Math.max(SUMMARY_INPUT_MIN_CHARS / 2, budget - running.length))) {
-            const instructions = (running ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT) + focus;
-            running = await request(summaryRequest(chunk, instructions, running));
+            const instructions = running ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
+            running = await request(summaryRequest(chunk, instructions, { previousSummary: running, focus }));
         }
         return running;
     };
     const summarizeTurnPrefix = async (budget: number): Promise<string> => {
         const [chunk] = chunkMessages(toSummaryMessages(turnPrefix), budget);
-        return request(summaryRequest(chunk ?? [], TURN_PREFIX_SUMMARIZATION_PROMPT + focus));
+        return request(summaryRequest(chunk ?? [], TURN_PREFIX_SUMMARIZATION_PROMPT, { focus }));
     };
 
     let text = "";

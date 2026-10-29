@@ -69,7 +69,7 @@ function turnDuration(seconds: number): string {
 
 /** A selectable transcript entry: a prompt, a response, a thought, a call. */
 interface Foldable extends FoldParticipant {
-    kind: "user" | "response" | "thinking" | "tool";
+    kind: "user" | "response" | "thinking" | "tool" | "compaction";
     handle: FoldableHandle;
     getText: () => string;
     /** Component that renders this entry (user/tool: the component itself;
@@ -324,7 +324,10 @@ export class ChatHistory extends Container {
             const role = view.roleOf(this.foldables[fIdx]);
             if (role.kind === "hidden") return;
             if (role.kind === "self") {
-                push(fIdx, drawSafely("tool call", width, () => call.render(width)));
+                push(
+                    fIdx,
+                    drawSafely("tool call", width, () => call.render(width)),
+                );
                 return;
             }
             const header = drawSafely("fold header", width, () =>
@@ -362,7 +365,11 @@ export class ChatHistory extends Container {
                 } else if (single.has(child)) {
                     const fIdx = single.get(child)!;
                     if (child instanceof ToolExecutionComponent) pushTool(fIdx, child);
-                    else push(fIdx, drawSafely(this.foldables[fIdx].kind, width, () => child.render(width)));
+                    else
+                        push(
+                            fIdx,
+                            drawSafely(this.foldables[fIdx].kind, width, () => child.render(width)),
+                        );
                 } else if (child instanceof Container) {
                     // Plain grouping container (assistant turn) — its render is
                     // just child concatenation, so walking keeps line counts
@@ -595,8 +602,15 @@ export class ChatHistory extends Container {
         const lines: string[] = [];
         if (team.kind === "spawn") {
             const from = team.from ? `"${team.from.title}"` : "the lead";
-            lines.push(accent("⧉ ") + accentTitle(`Brief from ${from}`) + (team.title ? dim(` · this thread is "${team.title}"`) : ""));
-            const brief = text.replace(/\n\n\(Brief from "[^"]*"\. Your thread is "[^"]*"\. Call report when you are done\.\)$/, "");
+            lines.push(
+                accent("⧉ ") +
+                    accentTitle(`Brief from ${from}`) +
+                    (team.title ? dim(` · this thread is "${team.title}"`) : ""),
+            );
+            const brief = text.replace(
+                /\n\n\(Brief from "[^"]*"\. Your thread is "[^"]*"\. Call report when you are done\.\)$/,
+                "",
+            );
             for (const line of brief.split("\n")) lines.push(`  ${line}`);
         } else {
             for (const mail of team.mail ?? []) {
@@ -870,6 +884,13 @@ export class ChatHistory extends Container {
         this.addChild(new Spacer(1));
         this.addChild(comp);
         this.compactionComponents.push(comp);
+        this.foldables.push({
+            kind: "compaction",
+            handle: comp,
+            getText: () => comp.getText(),
+            comp,
+            foldStep: NEVER_FOLDS,
+        });
         this.assistantTurn = null;
     }
 

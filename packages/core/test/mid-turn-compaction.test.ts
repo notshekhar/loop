@@ -443,7 +443,13 @@ describe("the summary", () => {
         currentModel = mockModel({ summary: () => summaryReply("S") });
         const { runCompact } = await import("../src/agent/compact");
         await runCompact({ session: mkSession(dir, work(1)), modelId: MODEL, manual: true, focus: "the API changes" });
-        expect(promptOf(0)).toContain("Additional focus: the API changes");
+        // The user's instructions are their own user message, after the
+        // standing ones.
+        const last = messagesOf(promptOf(0)).at(-1);
+        expect(last?.role).toBe("user");
+        expect(JSON.stringify(last)).toContain("Additional instructions for this summary: the API changes");
+        expect(messagesOf(promptOf(0)).at(-2)?.role).toBe("user");
+        expect(JSON.stringify(messagesOf(promptOf(0)).at(-2))).not.toContain("the API changes");
     });
 
     test("an explicit /compact on a short session still summarizes all of it", async () => {
