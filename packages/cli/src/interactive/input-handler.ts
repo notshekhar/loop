@@ -96,7 +96,10 @@ function droppedAttachments(
 }
 
 export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandContext): InputListener {
-    const { tui, history, queuedMessages, renderPending, hideWorking, cleanExit, editor, statusLine, scrollbackFocus } = deps;
+    const { tui, history, queuedMessages, renderPending, hideWorking, cleanExit, editor, statusLine, scrollbackFocus } =
+        deps;
+    /** Nothing typed: where a bare ctrl+e can only mean nav (keys.ts:isCtrlE). */
+    const promptEmpty = (): boolean => (editor.getText?.() ?? "") === "";
 
     const clipboardTip = new ClipboardImageTip();
     // Coming back to the terminal is when a freshly copied image is worth
@@ -209,7 +212,7 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
             copySelected();
             return { consume: true };
         }
-        if (isEsc(data) || isCtrlE(data) || isTab(data) || data === " " || data === "q") {
+        if (isEsc(data) || isCtrlE(data, promptEmpty()) || isTab(data) || data === " " || data === "q") {
             scrollbackFocus.exit();
             return { consume: true };
         }
@@ -350,7 +353,7 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
         // `e` inside means expand-all) — Esc/ctrl+arrows used to enter too,
         // but stray Esc presses on an idle prompt kept flinging people into
         // it. See keys.ts:isCtrlE for why Ghostty's cmd+→ no longer counts.
-        if (isCtrlE(data) && editorFocused && deps.getSelectorDepth() === 0) {
+        if (isCtrlE(data, promptEmpty()) && editorFocused && deps.getSelectorDepth() === 0) {
             scrollbackFocus.enter();
             return { consume: true };
         }

@@ -66,6 +66,12 @@ describe("isCtrlE (nav-mode toggle)", () => {
         expect(isCtrlE("\x05")).toBe(false);
     });
 
+    test("under kitty, a raw \\x05 on an empty prompt opens nav (a cmux tab sends ctrl+e bare)", () => {
+        setKittyProtocolActive(true);
+        expect(isCtrlE("\x05", true)).toBe(true);
+        expect(isCtrlE("\x05", false)).toBe(false);
+    });
+
     test("without kitty, the raw byte is the only form ctrl+e has", () => {
         setKittyProtocolActive(false);
         expect(isCtrlE("\x05")).toBe(true);

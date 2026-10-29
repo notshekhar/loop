@@ -22,16 +22,22 @@ export const isCtrlL = (d: string) => d === "\x0c" || matchesKey(d, "ctrl+l");
  * terminal `text:` macro still sends the raw byte. So when kitty is active,
  * require the CSI-u form; when it isn't (dumb terminals, no negotiation),
  * fall back to the raw byte or ctrl+e breaks entirely.
+ *
+ * `promptEmpty` widens that: a terminal can negotiate the protocol and still
+ * deliver some keys bare — a cmux tab passing ctrl+e through unencoded made
+ * nav unreachable. End-of-line on an empty prompt moves nothing, so there the
+ * raw byte can only mean nav, and is taken.
  */
-export const isCtrlE = (d: string) =>
-    isKittyProtocolActive() ? matchesKey(d, "ctrl+e") && d !== "\x05" : d === "\x05" || matchesKey(d, "ctrl+e");
+export const isCtrlE = (d: string, promptEmpty = false) =>
+    isKittyProtocolActive()
+        ? matchesKey(d, "ctrl+e") && (d !== "\x05" || promptEmpty)
+        : d === "\x05" || matchesKey(d, "ctrl+e");
 export const isCtrlV = (d: string) => d === "\x16" || matchesKey(d, "ctrl+v");
 export const isCtrlG = (d: string) => d === "\x07" || matchesKey(d, "ctrl+g");
 export const isCtrlS = (d: string) => d === "\x13" || matchesKey(d, "ctrl+s");
 export const isCtrlP = (d: string) => d === "\x10" || matchesKey(d, "ctrl+p");
 /** Delete-to-line-start — loop's "clear what I typed" gesture. */
-export const isClearLine = (d: string) =>
-    d === "\x15" || matchesKey(d, "ctrl+u") || matchesKey(d, "super+backspace");
+export const isClearLine = (d: string) => d === "\x15" || matchesKey(d, "ctrl+u") || matchesKey(d, "super+backspace");
 // NOTE: \x09 is TAB which legacy terminals share with Ctrl+I (i & 0x1f === 9),
 // and matchesKey's legacy ctrl+letter branch treats them as the same byte.
 // Exclude raw "\t" so only the Kitty-protocol Ctrl+I (a distinct CSI-u
