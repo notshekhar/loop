@@ -238,6 +238,9 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
                     tracker: deps.tracker,
                     cwd: state.cwd,
                 });
+                if (result.truncated) {
+                    history.addSystem(`summary failed: ${result.truncated} — truncated the older conversation instead`);
+                }
                 if (result.summary) {
                     history.addCompactionSummary(result.summary, result.tokensBefore);
                     // The last reported size measured the context this replaced.

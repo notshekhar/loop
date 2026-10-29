@@ -5,9 +5,12 @@ import { isAbortError } from "./abort";
 import { BRANCH_SUMMARY_PREAMBLE } from "./branch-summary";
 import { stampUsageCost, sumUsage, type CostTracker } from "./cost";
 import { isContextOverflowError } from "./retry";
-import { requestSummary, serializeConversation, serializeMessage, SummaryAbortedError } from "./summarize";
+import type { ModelMessage } from "ai";
+import { requestSummary, SummaryAbortedError } from "./summarize";
+import { chunkMessages, toSummaryMessages } from "./summary-messages";
 import type { ThinkingLevel } from "./thinking";
-import type { UsageBlock } from "../types";
+import { buildRolloverHandoff, MAX_HANDOFF_CHARS } from "./rollover";
+import type { Entry, UsageBlock } from "../types";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -194,11 +197,46 @@ function withoutFileLists(summary: string): string {
     return summary.replace(/\n*<(read|modified)-files>[\s\S]*?<\/\1-files>/g, "").trimEnd();
 }
 
+/**
+ * Opens the record a compaction saves when its summary could not be written.
+ * It sits inside the usual summary block, so it says plainly that it is not
+ * one: what follows is the user's own words and the work's externalized
+ * state, taken from the transcript, and nothing in it claims progress.
+ */
+export const TRUNCATION_PREAMBLE = `The summary of the conversation before this point could not be written, so the conversation was truncated instead. What follows is a record built from the transcript — inputs and state, NOT a record of progress. Check live state (files on disk, the todo list) before continuing any work it mentions.`;
+
+/**
+ * The fallback when every summary attempt failed: drop the same span a
+ * summary would have replaced, keep a mechanical record of it. No model call,
+ * so it cannot fail the way the summary just did — a session too big to
+ * summarize still gets smaller instead of failing at every turn until it no
+ * longer fits at all.
+ *
+ * The record is a rollover's (agent/rollover.ts) over the dropped span alone:
+ * every user message, the files touched, the commands run. An earlier
+ * summary is carried whole — it is already the only memory of what came
+ * before it. The todo list is re-injected on its own (compactedContextEntries).
+ */
+function truncationRecord(
+    dropped: ReadonlyArray<{ role: "user" | "assistant" | "tool"; content: unknown }>,
+    previousBody: string,
+): string {
+    const entries = dropped.map((m) => ({ type: "message", role: m.role, content: m.content, ts: 0 }) as Entry);
+    const record = buildRolloverHandoff(entries, { limit: MAX_HANDOFF_CHARS });
+    let text = TRUNCATION_PREAMBLE;
+    if (previousBody) text += `\n\n## Summary from an earlier compaction\n${previousBody}`;
+    text += `\n\n${record ?? "(nothing in the truncated part could be carried over)"}`;
+    return text;
+}
+
 export interface CompactResult {
     summary: string;
     cutAt: number;
     tokensBefore: number;
     tokensAfter: number;
+    /** The summary failed with this error, so the span was truncated instead
+     * (truncationRecord) — `summary` is that record. */
+    truncated?: string;
 }
 
 /** A message's weight in context, on the same chars/4 scale as the context estimate. */
@@ -228,30 +266,6 @@ export function summaryInputBudgetChars(contextWindow: number | undefined): numb
     if (!contextWindow) return SUMMARY_INPUT_MIN_CHARS;
     const share = Math.floor(contextWindow * SUMMARY_INPUT_WINDOW_SHARE) * 4;
     return Math.max(SUMMARY_INPUT_MIN_CHARS, Math.min(SUMMARY_INPUT_MAX_CHARS, share));
-}
-
-/** Keep the head and tail of `text`, naming how much of the middle went. */
-export function clipMiddle(text: string, head: number, tail: number): string {
-    if (text.length <= head + tail) return text;
-    const omitted = text.length - head - tail;
-    return `${text.slice(0, head)}\n[… ${omitted} chars omitted …]\n${text.slice(text.length - tail)}`;
-}
-
-/** Greedy packing of whole messages into chunks of at most `budget` chars. */
-export function chunkForSummary(texts: string[], budget: number): string[] {
-    const chunks: string[] = [];
-    let current = "";
-    for (const raw of texts) {
-        // One message bigger than a whole chunk still has to fit somewhere.
-        const text = raw.length > budget ? clipMiddle(raw, Math.floor(budget / 2), Math.floor(budget / 2)) : raw;
-        if (current && current.length + 1 + text.length > budget) {
-            chunks.push(current);
-            current = "";
-        }
-        current = current ? `${current}\n${text}` : text;
-    }
-    if (current) chunks.push(current);
-    return chunks;
 }
 
 export function latestCompactEntry(session: Session) {
@@ -341,6 +355,19 @@ export function compactedContextEntries(session: Session): ContextEntry[] {
     return out;
 }
 
+/**
+ * One summarizer request: an opening user message (carrying the summary so
+ * far, when there is one), the span's own messages, then the instructions.
+ * The opening message also means the request never starts on an assistant
+ * turn, which some providers refuse.
+ */
+function summaryRequest(span: ModelMessage[], instructions: string, previousSummary = ""): ModelMessage[] {
+    const opening = previousSummary
+        ? `<previous-summary>\n${previousSummary}\n</previous-summary>\n\nThe conversation to fold into it follows.`
+        : "The conversation to summarize follows.";
+    return [{ role: "user", content: opening }, ...span, { role: "user", content: instructions }];
+}
+
 export class CompactAbortedError extends Error {
     constructor() {
         super("compact aborted");
@@ -390,7 +417,8 @@ export async function runCompact(opts: {
     cwd?: string;
     /** Sizes the summarizer's requests; looked up in the catalog when omitted. */
     contextWindow?: number;
-    /** The session's reasoning level, used for the summary as for its turns. */
+    /** The session's reasoning level. The summary runs at the model's lowest
+     * (lowestThinkingLevel); this is only its fallback when that is refused. */
     thinkingLevel?: ThinkingLevel;
     /**
      * Write the summary another way: idle compaction's single request over
@@ -452,11 +480,11 @@ export async function runCompact(opts: {
         });
     };
     const focus = opts.focus?.trim() ? `\n\nAdditional focus: ${opts.focus.trim()}` : "";
-    const request = async (prompt: string) =>
+    const request = async (messages: ModelMessage[]) =>
         (
             await requestSummary({
                 modelId: opts.modelId,
-                prompt,
+                messages,
                 abortSignal: opts.abortSignal,
                 ...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
                 onUsage: bill,
@@ -470,24 +498,21 @@ export async function runCompact(opts: {
      */
     const summarizeHistory = async (budget: number): Promise<string> => {
         let running = previousBody;
-        if (history.length === 0) return running || "No prior history.";
-        const texts = history.map((m) => serializeMessage(m)).filter(Boolean);
-        const chunks = chunkForSummary(texts, Math.max(SUMMARY_INPUT_MIN_CHARS / 2, budget - running.length));
-        for (const chunk of chunks) {
-            let prompt = `<conversation>\n${chunk}\n</conversation>\n\n`;
-            if (running) prompt += `<previous-summary>\n${running}\n</previous-summary>\n\n`;
-            prompt += (running ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT) + focus;
-            running = await request(prompt);
+        const messages = toSummaryMessages(history);
+        if (messages.length === 0) return running || "No prior history.";
+        for (const chunk of chunkMessages(messages, Math.max(SUMMARY_INPUT_MIN_CHARS / 2, budget - running.length))) {
+            const instructions = (running ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT) + focus;
+            running = await request(summaryRequest(chunk, instructions, running));
         }
         return running;
     };
     const summarizeTurnPrefix = async (budget: number): Promise<string> => {
-        const text = serializeConversation(turnPrefix);
-        const clipped = clipMiddle(text, Math.floor(budget / 2), Math.floor(budget / 2));
-        return request(`# Conversation\n${clipped}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}${focus}`);
+        const [chunk] = chunkMessages(toSummaryMessages(turnPrefix), budget);
+        return request(summaryRequest(chunk ?? [], TURN_PREFIX_SUMMARIZATION_PROMPT + focus));
     };
 
     let text = "";
+    let truncated: string | undefined;
     try {
         if (opts.summarize) {
             const result = await opts.summarize();
@@ -524,7 +549,11 @@ export async function runCompact(opts: {
         if (err instanceof SummaryAbortedError || isAbortError(err) || opts.abortSignal?.aborted) {
             throw new CompactAbortedError();
         }
-        throw err;
+        // Idle compaction has nobody waiting on it, and the next turn compacts
+        // properly if it must: a failure there is reported, never truncated.
+        if (opts.summarize) throw err;
+        truncated = err instanceof Error ? err.message : String(err);
+        text = truncationRecord(head, previousBody);
     }
 
     if (opts.abortSignal?.aborted) throw new CompactAbortedError();
@@ -541,11 +570,12 @@ export async function runCompact(opts: {
         tokensAfter,
         details: files,
         ...(opts.trigger ? { trigger: opts.trigger } : {}),
+        ...(truncated !== undefined ? { truncated } : {}),
         ...(usage ? { usage: stampUsageCost(opts.modelId, usage), model: opts.modelId } : {}),
     };
     await opts.session.append(entry);
     const rowId = opts.tracker?.takeLastLedgerRowId();
     const entryId = (entry as { id?: string }).id;
     if (rowId !== undefined && entryId) attachLedgerEntry(rowId, entryId);
-    return { summary: text, cutAt: cut, tokensBefore, tokensAfter };
+    return { summary: text, cutAt: cut, tokensBefore, tokensAfter, ...(truncated !== undefined ? { truncated } : {}) };
 }

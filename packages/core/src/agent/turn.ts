@@ -8,7 +8,7 @@ import { ProviderExecutedTail } from "./provider-executed-tail";
 import { toolInputDeltaEvent, toolInputStartEvent, type TurnEmitter } from "./events";
 import { getModel, isNativeAgentProvider, parseModelId, type NativeAgentTurnContext } from "../providers";
 import { getCatalog, modelInfoIn } from "../catalog";
-import { getSetting } from "../settings";
+import { DEFAULT_AUTO_COMPACT_THRESHOLD, getSetting } from "../settings";
 import {
     ARTIFACT_TOOL_NAME,
     createArtifactTool,
@@ -813,7 +813,7 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
     // Compaction only needs to land before toModelMessages() below; nothing
     // above reads the transcript.
     const contextOverheadTokens = estimateOverheadTokens(system, toolsForTurn);
-    const threshold = getSetting("autoCompactThreshold") ?? 0.8;
+    const threshold = getSetting("autoCompactThreshold") ?? DEFAULT_AUTO_COMPACT_THRESHOLD;
 
     /**
      * The context crossed the threshold: let the context policy choose between

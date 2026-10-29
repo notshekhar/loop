@@ -349,6 +349,10 @@ export type Entry = EntryTreeFields &
               rollover?: true;
               /** Written by idle compaction, before the prompt cache lapsed (agent/idle-compact.ts). */
               trigger?: "idle";
+              /** The summary failed with this error, so the span was truncated
+               * instead: `summary` holds a mechanical record, not a summary
+               * (agent/compact.ts truncationRecord). */
+              truncated?: string;
               /** Files the summarized span read and changed, from its tool
                * calls — cumulative across compactions (see collectFileLists). */
               details?: { readFiles: string[]; modifiedFiles: string[] };

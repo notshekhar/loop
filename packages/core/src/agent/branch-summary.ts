@@ -157,7 +157,12 @@ export async function runBranchSummary(opts: {
     try {
         const result = await requestSummary({
             modelId: opts.modelId,
-            prompt: `<conversation>\n${serializeConversation(kept)}\n</conversation>\n\n${instructions}`,
+            messages: [
+                {
+                    role: "user",
+                    content: `<conversation>\n${serializeConversation(kept)}\n</conversation>\n\n${instructions}`,
+                },
+            ],
             abortSignal: opts.abortSignal,
             ...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
             onUsage: (usage) =>

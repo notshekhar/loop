@@ -3,7 +3,9 @@
  * type — call sites get autocomplete and lose the `as X | undefined` casts.
  * Unknown/extra keys in the file are preserved untouched.
  */
-import { settingsStore } from "./auth/storage";
+import { DEFAULT_AUTO_COMPACT_THRESHOLD, settingsStore } from "./auth/storage";
+
+export { DEFAULT_AUTO_COMPACT_THRESHOLD };
 import type { ThinkingLevel } from "./agent/thinking";
 import type { HooksConfig } from "./agent/hooks";
 import type { McpServerConfig } from "./mcp/config";
@@ -137,6 +139,7 @@ export interface AppSettings {
     clock?: boolean;
     /** Fire /reminder alerts. Default on; set false to mute reminders entirely. */
     reminders?: boolean;
+    /** Share of the window that triggers auto-compaction (DEFAULT_AUTO_COMPACT_THRESHOLD). */
     autoCompactThreshold?: number;
     /**
      * Idle compaction (agent/idle-compact.ts): summarize a big conversation

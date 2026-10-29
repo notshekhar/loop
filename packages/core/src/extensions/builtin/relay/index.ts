@@ -22,7 +22,7 @@
 import { z } from "zod";
 import { tool } from "ai";
 import type { ExtensionAPI } from "../../api";
-import { getSetting } from "../../../settings";
+import { DEFAULT_AUTO_COMPACT_THRESHOLD, getSetting } from "../../../settings";
 import { buildRolloverHandoff, MAX_HANDOFF_CHARS, MIN_USABLE_TOKENS } from "../../../agent/rollover";
 import { compactionBodyText } from "../../../agent/compact";
 import type { Entry } from "../../../types";
@@ -242,7 +242,7 @@ At most one checkpoint reminder arrives before the automatic rollover line. It i
                 const arg = args.trim().toLowerCase();
                 if (!arg || arg === "status") {
                     const b = api.context.read();
-                    const threshold = getSetting("autoCompactThreshold") ?? 0.8;
+                    const threshold = getSetting("autoCompactThreshold") ?? DEFAULT_AUTO_COMPACT_THRESHOLD;
                     if (!b) {
                         ctx.emit("help", `relay: ${cfg().mode} — budget unknown until the next turn is assembled.`);
                         return;

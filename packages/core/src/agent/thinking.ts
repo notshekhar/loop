@@ -13,6 +13,24 @@ export const THINKING_LEVEL_DESCRIPTIONS: Record<ThinkingLevel, string> = {
     xhigh: "Maximum reasoning (~32k tokens)",
 };
 
+/** Anthropic models that always think: an explicit `disabled` is rejected. */
+const ANTHROPIC_ALWAYS_THINKS = /claude-(fable-5|mythos-(5|preview))/;
+
+/**
+ * The least reasoning a model takes — what one-off utility requests (the
+ * compaction summary) run at, whatever level the session itself uses.
+ *
+ * A summary is reading and restating, not solving: reasoning adds nothing to
+ * it but minutes of silence before the first word, on a request that is
+ * already the largest the session ever sends — which is how a big compaction
+ * times out. "off" wherever reasoning can be turned off; on a model that
+ * always thinks, "off" would fall back to the model's OWN default effort, so
+ * the lowest effort is asked for instead.
+ */
+export function lowestThinkingLevel(modelShortId: string): ThinkingLevel {
+    return ANTHROPIC_ALWAYS_THINKS.test(modelShortId) ? "minimal" : "off";
+}
+
 /**
  * AI SDK v7's portable `reasoning` effort value. Our ThinkingLevel maps onto it
  * 1:1 (`off` → `none`), so first-party providers translate the level into the
@@ -142,7 +160,7 @@ function anthropicThinkingOptions(
     level: ThinkingLevel,
 ): Record<string, Record<string, unknown>> | undefined {
     if (level === "off") {
-        if (/claude-(fable-5|mythos-(5|preview))/.test(modelShortId)) return undefined;
+        if (ANTHROPIC_ALWAYS_THINKS.test(modelShortId)) return undefined;
         return { anthropic: { thinking: { type: "disabled" } } };
     }
     // "xhigh" effort exists on Opus 5, Opus 4.7+, Sonnet 5, and Fable/Mythos 5,

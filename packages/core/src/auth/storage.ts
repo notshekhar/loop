@@ -76,13 +76,21 @@ export const authStore = new CachedStore(
     { configPath: join(CONFIG_DIR, "auth.json") },
 );
 
+/**
+ * The share of the context window at which a session compacts on its own.
+ * 70%, not higher: compaction itself needs room — the summary request is
+ * the largest one a session sends — and the turn waiting on it is the
+ * user's.
+ */
+export const DEFAULT_AUTO_COMPACT_THRESHOLD = 0.7;
+
 export const settingsStore = new CachedStore(
     `${PRODUCT_NAME}-agent-settings`,
     {
         defaultModel: null,
         theme: "dark",
         maxSteps: 0, // 0 = unlimited; loop ends when the model stops calling tools
-        autoCompactThreshold: 0.8,
+        autoCompactThreshold: DEFAULT_AUTO_COMPACT_THRESHOLD,
         workspaceContext: true,
     },
     { configPath: join(CONFIG_DIR, "settings.json") },

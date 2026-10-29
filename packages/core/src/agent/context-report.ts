@@ -7,7 +7,7 @@
  * total, so a breakdown is necessarily an estimate.
  */
 import { getCatalog, modelInfoIn } from "../catalog";
-import { getSetting } from "../settings";
+import { DEFAULT_AUTO_COMPACT_THRESHOLD, getSetting } from "../settings";
 import { getMcpManager, isMcpEnabled, shouldUseToolSearch } from "../mcp";
 import { getExtensionHost } from "../extensions";
 import { parseModelId } from "../providers";
@@ -100,7 +100,7 @@ export async function buildContextReport(opts: {
     const { session, modelId, cwd } = opts;
     const catalog = await getCatalog();
     const contextWindow = modelInfoIn(catalog, modelId)?.contextWindow ?? 0;
-    const autoCompactThreshold = getSetting("autoCompactThreshold") ?? 0.8;
+    const autoCompactThreshold = getSetting("autoCompactThreshold") ?? DEFAULT_AUTO_COMPACT_THRESHOLD;
 
     const workspace = getSetting("workspaceContext") !== false ? loadWorkspaceContext(cwd) : { text: "", files: [] };
     const memoryText = getSetting("memory") !== false ? loadMemoryContext(cwd).text : "";

@@ -229,6 +229,7 @@ export function wireTurnEmitter(emitter: TurnEmitter, deps: TurnEmitterDeps): vo
             handoff?: string;
             aborted?: boolean;
             error?: string;
+            truncated?: string;
         }) => {
             if (idleCompacting) {
                 idleCompacting = false;
@@ -252,7 +253,11 @@ export function wireTurnEmitter(emitter: TurnEmitter, deps: TurnEmitterDeps): vo
             } else if (r.aborted) history.addSystem("compact aborted");
             else if (r.error) history.addSystem(`compact failed: ${r.error} — continuing uncompacted`);
             // A rollover has no summary, only its recovery record.
-            else if (r.summary || r.handoff) history.addCompactionSummary(r.summary, r.tokensBefore, Date.now(), r.handoff);
+            else if (r.summary || r.handoff) {
+                if (r.truncated)
+                    history.addSystem(`summary failed: ${r.truncated} — truncated the older conversation instead`);
+                history.addCompactionSummary(r.summary, r.tokensBefore, Date.now(), r.handoff);
+            }
             // The last reported size measured the context this just replaced.
             if (r.cutAt > 0 || r.handoff) state.latestContextTokens = 0;
             refreshStatusLine();

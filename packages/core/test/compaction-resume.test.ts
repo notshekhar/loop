@@ -197,7 +197,7 @@ describe("/tree around a compaction", () => {
         await runCompact({ session: s, modelId: MODEL });
         const prompt = JSON.stringify(currentModel.doStreamCalls[0].prompt);
         expect(prompt).not.toContain("ABANDONED PATH");
-        expect(prompt).toContain("[User]: request 0");
+        expect(prompt).toContain('"text":"request 0 ');
         expect((await contextOf(reload(s))).some((l) => l.includes("ABANDONED"))).toBe(false);
     });
 });

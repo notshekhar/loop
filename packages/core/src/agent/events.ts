@@ -48,6 +48,9 @@ export interface TurnEvents {
         aborted?: boolean;
         /** The summary failed; the turn carries on uncompacted. */
         error?: string;
+        /** The summary failed with this error and the span was truncated
+         * instead; `summary` is the record that replaced it. */
+        truncated?: string;
         handoff?: string;
         mode?: "summary" | "rollover";
     };

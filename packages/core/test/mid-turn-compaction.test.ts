@@ -77,6 +77,16 @@ const summaryReply = (text: string, finish: "stop" | "length" = "stop"): Part[] 
 
 /** Prompts the summarizer sent, in order — told apart from turn requests by its system prompt. */
 let summaryPrompts: string[] = [];
+
+type PromptMessage = { role: string; content: unknown };
+type PromptPart = { type?: string; text?: string; toolName?: string; input?: unknown; output?: unknown };
+
+/** A captured summarizer prompt, as the messages it carried. */
+const messagesOf = (prompt: string): PromptMessage[] => JSON.parse(prompt) as PromptMessage[];
+
+/** Every content part of the messages with this role. */
+const partsOf = (messages: PromptMessage[], role: string): PromptPart[] =>
+    messages.filter((m) => m.role === role && Array.isArray(m.content)).flatMap((m) => m.content as PromptPart[]);
 const isSummaryCall = (o: { prompt: unknown }) => JSON.stringify(o.prompt).includes("context summarization assistant");
 
 /**
@@ -199,15 +209,21 @@ describe("a turn that crosses the threshold between steps compacts and carries o
         expect(events.filter((e) => e.type === "text-delta").map((e) => e.payload)).toEqual(["done"]);
     });
 
-    test("a failed summary is reported and the turn still finishes", async () => {
+    test("a failed summary truncates instead, is reported, and the turn still finishes", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-midturn-"));
         currentModel = mockModel({
             turn: (n) => (n === 1 ? toolStep("c1", 230_000) : answer("done")),
             summary: () => apiError("invalid api key", 401),
         });
         const events = await runTurnWith(mkSession(dir, oldHistory()), dir);
-        const end = events.find((e) => e.type === "compact-end")?.payload as { error?: string };
-        expect(end.error).toContain("invalid api key");
+        const end = events.find((e) => e.type === "compact-end")?.payload as {
+            error?: string;
+            truncated?: string;
+            cutAt: number;
+        };
+        expect(end.truncated).toContain("invalid api key");
+        expect(end.error).toBeUndefined();
+        expect(end.cutAt).toBeGreaterThan(0);
         expect(events.some((e) => e.type === "error")).toBe(false);
         expect(events.filter((e) => e.type === "text-delta").map((e) => e.payload)).toEqual(["done"]);
     });
@@ -254,12 +270,19 @@ describe("the summarizer's input", () => {
         const prompt = summaryPrompts[0];
         expect(prompt).not.toContain("SECRET CHAIN OF THOUGHT");
         expect(prompt).not.toContain("BLOB");
-        expect(prompt).toContain("[Tool result]: HEAD");
         expect(prompt).not.toContain("TAIL");
-        expect(prompt).toContain("more characters truncated");
-        expect(prompt).toContain("[Assistant tool calls]: read(path=");
-        expect(prompt).toContain("[User]: fix the parser");
         expect(prompt.length).toBeLessThan(12_000);
+        // The span arrives as real messages: the call and its (capped) result
+        // stay paired, and the user's words are their own message.
+        const messages = messagesOf(prompt);
+        const call = partsOf(messages, "assistant").find((p) => p.type === "tool-call");
+        expect(call).toMatchObject({ toolName: "read", input: { path: "src/parser.ts" } });
+        const result = partsOf(messages, "tool").find((p) => p.type === "tool-result");
+        const output = JSON.stringify(result?.output);
+        expect(output).toStartWith('{"type":"text","value":"HEAD');
+        expect(output).toContain("more characters truncated");
+        expect(partsOf(messages, "user").some((p) => p.text === "fix the parser")).toBe(true);
+        expect(messages.at(-1)?.role).toBe("user");
     });
 
     test("a request refused as too big is split into a rolling summary", async () => {
@@ -293,9 +316,9 @@ describe("the summarizer's input", () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-compact-"));
         currentModel = mockModel({ summary: () => apiError("invalid api key", 401) });
         const { runCompact } = await import("../src/agent/compact");
-        await expect(runCompact({ session: mkSession(dir, oldHistory()), modelId: MODEL })).rejects.toThrow(
-            "invalid api key",
-        );
+        // Not retried: the compaction truncates on the first refusal.
+        const result = await runCompact({ session: mkSession(dir, oldHistory()), modelId: MODEL });
+        expect(result.truncated).toContain("invalid api key");
         // Each request once — a split turn sends two, neither is retried.
         expect(summaryPrompts.length).toBeGreaterThan(0);
         expect(new Set(summaryPrompts).size).toBe(summaryPrompts.length);
@@ -344,9 +367,11 @@ describe("the summary", () => {
 
         const prompt = promptOf(0);
         expect(prompt).toContain("Do NOT continue the conversation");
-        expect(prompt).toContain("<conversation>");
-        expect(prompt).toContain("## Critical Context");
         expect(prompt).not.toContain("<previous-summary>");
+        // The instructions come last, after the span's own messages.
+        const messages = messagesOf(prompt);
+        expect(messages.some((m) => m.role === "tool")).toBe(true);
+        expect(JSON.stringify(messages.at(-1))).toContain("## Critical Context");
         const entry = session.entries().find((e) => e.type === "compact") as {
             summary: string;
             details: { readFiles: string[]; modifiedFiles: string[] };
@@ -367,7 +392,7 @@ describe("the summary", () => {
         for (const e of [...work(3), ...work(4)]) await session.append(e);
         await runCompact({ session, modelId: MODEL });
 
-        const second = summaryPrompts.slice(firstCount).find((p) => p.includes("<conversation>")) ?? "";
+        const second = summaryPrompts.slice(firstCount).find((p) => p.includes("NEW conversation messages")) ?? "";
         expect(second).toContain("<previous-summary>\\nSUMMARY-");
         // The lists are rebuilt from the calls, never handed back to be re-summarized.
         expect(second).not.toContain("<read-files>");
@@ -409,7 +434,7 @@ describe("the summary", () => {
         // pi's split turn: the request's start is summarized on its own.
         expect(summaryPrompts).toHaveLength(1);
         expect(promptOf(0)).toContain("earlier context from an ongoing conversation");
-        expect(promptOf(0)).toContain("[User]: one long request");
+        expect(partsOf(messagesOf(promptOf(0)), "user").some((p) => p.text === "one long request")).toBe(true);
         expect(result.summary).toContain("**Turn Context (split turn):**");
     });
 
@@ -430,13 +455,16 @@ describe("the summary", () => {
         expect((await runCompact({ session, modelId: MODEL, manual: true })).cutAt).toBe(2);
     });
 
-    test("a summary cut off at the output limit is refused, not saved", async () => {
+    test("a summary cut off at the output limit is never saved: the span is truncated instead", async () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-compact-"));
         currentModel = mockModel({ summary: () => summaryReply("## Goal\nhalf a summ", "length") });
         const { runCompact } = await import("../src/agent/compact");
         const session = mkSession(dir, [...work(1), ...work(2)]);
-        await expect(runCompact({ session, modelId: MODEL })).rejects.toThrow("output limit");
-        expect(session.entries().some((e) => e.type === "compact")).toBe(false);
+        const result = await runCompact({ session, modelId: MODEL });
+        expect(result.truncated).toContain("output limit");
+        const saved = session.entries().filter((e) => e.type === "compact");
+        expect(saved).toHaveLength(1);
+        expect((saved[0] as { summary: string }).summary).not.toContain("half a summ");
     });
 });
 
