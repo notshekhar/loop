@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.21.25] - 2026-10-29
+
+### Changed
+
+- **Compaction reads the conversation as it happened.** The summary is written from the real messages — each tool call next to its result, your messages as your messages — instead of one flattened text block, so it keeps track of what answered what. Old tool output is still cut to 2,000 characters and reasoning still left out.
+- **Compaction runs without reasoning.** The summary request uses the model's lowest reasoning level whatever the session's is (Fable and Mythos, which always think, at their lowest effort), so a big compaction no longer spends minutes thinking before it writes. A model that refuses that level is asked once more at the session's own.
+- **Auto-compaction starts at 70% of the context window** (was 80%), leaving room for the compaction itself. A `settings.json` that already sets `autoCompactThreshold` keeps its value.
+
+### Fixed
+
+- **A compaction whose summary fails still frees the context.** When every attempt fails, the older conversation is truncated instead and a record of it takes its place: your messages word for word, the files touched and the commands run. Previously the session stayed full and failed again on the next turn. You see `summary failed: … — truncated the older conversation instead`.
+
 ## [0.21.24] - 2026-10-28
 
 ### Fixed
