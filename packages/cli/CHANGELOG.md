@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.21.27] - 2026-10-30
+
+### Fixed
+
+- **ctrl+e opens transcript navigation in every terminal.** A terminal that announces the kitty keyboard protocol but still sends ctrl+e unencoded — a cmux tab, for one — could not reach nav at all. With an empty prompt ctrl+e now always opens it; with text typed, cmd+→ still moves to the end of the line.
+
 ## [0.21.26] - 2026-10-30
 
 ### Fixed
