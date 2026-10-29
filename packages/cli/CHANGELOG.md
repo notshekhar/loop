@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.21.26] - 2026-10-30
+
+### Fixed
+
+- **The compaction box opens from the keyboard.** In transcript navigation the `[compaction]` box can now be selected like a thought or a tool call, and opened and closed with →, ← and Enter (y copies the summary). Outside navigation it no longer shows a "(→ to expand)" hint that did nothing.
+
+### Changed
+
+- **`/compact <instructions>` sends your instructions as a message of their own**, after the summary's standing instructions, instead of folding them into the prompt.
+
 ## [0.21.25] - 2026-10-29
 
 ### Changed
