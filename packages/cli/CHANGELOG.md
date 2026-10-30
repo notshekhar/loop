@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.21.28] - 2026-10-30
+
+### Added
+
+- **`/compact <instructions>` is remembered.** What you asked the summary to keep is saved with the compaction and shown in its `[compaction]` box — under "Compacted from …" when collapsed, above the summary when open — including after you resume the session.
+
 ## [0.21.27] - 2026-10-30
 
 ### Fixed
