@@ -353,6 +353,9 @@ export type Entry = EntryTreeFields &
                * instead: `summary` holds a mechanical record, not a summary
                * (agent/compact.ts truncationRecord). */
               truncated?: string;
+              /** The user's own instructions for this summary
+               * (`/compact <instructions>`), shown with the compaction. */
+              focus?: string;
               /** Files the summarized span read and changed, from its tool
                * calls — cumulative across compactions (see collectFileLists). */
               details?: { readFiles: string[]; modifiedFiles: string[] };

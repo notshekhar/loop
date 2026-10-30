@@ -120,6 +120,7 @@ export function renderBranchEntries(
                 latestCompact.tokensBefore,
                 latestCompact.ts,
                 latestCompact.handoff,
+                latestCompact.focus,
             );
         }
     };

@@ -242,7 +242,13 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
                     history.addSystem(`summary failed: ${result.truncated} — truncated the older conversation instead`);
                 }
                 if (result.summary) {
-                    history.addCompactionSummary(result.summary, result.tokensBefore);
+                    history.addCompactionSummary(
+                        result.summary,
+                        result.tokensBefore,
+                        Date.now(),
+                        undefined,
+                        result.focus,
+                    );
                     // The last reported size measured the context this replaced.
                     state.latestContextTokens = 0;
                     refreshStatusLine();

@@ -567,6 +567,8 @@ export interface CompactionSummaryLike {
     timestamp?: number;
     /** A rollover's recovery record — shown in place of the (empty) summary. */
     handoff?: string;
+    /** What the user asked the summary to keep (`/compact <instructions>`). */
+    focus?: string;
 }
 
 /**
@@ -628,15 +630,24 @@ export class CompactionSummaryMessageComponent extends Box implements FoldableHa
         const body = this.message.handoff ?? this.message.summary;
         this.addChild(new Text(theme.fg("customMessageLabel", `\x1b[1m${label}\x1b[22m`), 0, 0));
         this.addChild(new Spacer(1));
+        const instructions = this.message.focus ? theme.fg("dim", `Instructions: ${this.message.focus}`) : "";
         if (this.expanded) {
-            this.addChild(
-                new Markdown(`**${lead}**\n\n${body}`, 0, 0, this.markdownTheme, {
-                    color: (text: string) => theme.fg("customMessageText", text),
-                }),
-            );
+            const markdown = (text: string) =>
+                new Markdown(text, 0, 0, this.markdownTheme, {
+                    color: (t: string) => theme.fg("customMessageText", t),
+                });
+            if (instructions) {
+                this.addChild(markdown(`**${lead}**`));
+                this.addChild(new Text(instructions, 0, 0));
+                this.addChild(new Spacer(1));
+                this.addChild(markdown(body));
+            } else {
+                this.addChild(markdown(`**${lead}**\n\n${body}`));
+            }
         } else {
             const hint = this.selected ? theme.fg("dim", ` (${EXPAND_HINT} to expand)`) : "";
             this.addChild(new Text(theme.fg("customMessageText", lead) + hint, 0, 0));
+            if (instructions) this.addChild(new Text(instructions, 0, 0));
         }
     }
 }

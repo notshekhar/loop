@@ -44,3 +44,22 @@ describe("the compaction box in nav", () => {
         expect(text(history)).toContain("SUMMARY_BODY");
     });
 });
+
+describe("the compaction box with /compact instructions", () => {
+    test("shows the instructions collapsed and expanded", () => {
+        const history = new ChatHistory(tui, "/repo");
+        history.addCompactionSummary("SUMMARY_BODY", 1_000, Date.now(), undefined, "keep the API changes");
+        expect(text(history)).toContain("Instructions: keep the API changes");
+        history.moveSelection(-1);
+        history.setSelectedExpanded(true);
+        const open = text(history);
+        expect(open).toContain("Instructions: keep the API changes");
+        expect(open).toContain("SUMMARY_BODY");
+    });
+
+    test("says nothing about instructions when none were given", () => {
+        const history = new ChatHistory(tui, "/repo");
+        history.addCompactionSummary("SUMMARY_BODY", 1_000);
+        expect(text(history)).not.toContain("Instructions:");
+    });
+});

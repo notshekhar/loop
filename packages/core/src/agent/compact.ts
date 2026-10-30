@@ -237,6 +237,8 @@ export interface CompactResult {
     /** The summary failed with this error, so the span was truncated instead
      * (truncationRecord) — `summary` is that record. */
     truncated?: string;
+    /** The user's instructions for this summary, as given to `/compact`. */
+    focus?: string;
 }
 
 /** A message's weight in context, on the same chars/4 scale as the context estimate. */
@@ -586,11 +588,19 @@ export async function runCompact(opts: {
         details: files,
         ...(opts.trigger ? { trigger: opts.trigger } : {}),
         ...(truncated !== undefined ? { truncated } : {}),
+        ...(focus ? { focus } : {}),
         ...(usage ? { usage: stampUsageCost(opts.modelId, usage), model: opts.modelId } : {}),
     };
     await opts.session.append(entry);
     const rowId = opts.tracker?.takeLastLedgerRowId();
     const entryId = (entry as { id?: string }).id;
     if (rowId !== undefined && entryId) attachLedgerEntry(rowId, entryId);
-    return { summary: text, cutAt: cut, tokensBefore, tokensAfter, ...(truncated !== undefined ? { truncated } : {}) };
+    return {
+        summary: text,
+        cutAt: cut,
+        tokensBefore,
+        tokensAfter,
+        ...(truncated !== undefined ? { truncated } : {}),
+        ...(focus ? { focus } : {}),
+    };
 }

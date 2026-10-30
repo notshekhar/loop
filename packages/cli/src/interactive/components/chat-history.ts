@@ -878,8 +878,14 @@ export class ChatHistory extends Container {
         this.tail.addChild(new Markdown(md, 1, 0, getMarkdownTheme()));
     }
 
-    addCompactionSummary(summary: string, tokensBefore: number, timestamp = Date.now(), handoff?: string): void {
-        const comp = new CompactionSummaryMessageComponent({ summary, tokensBefore, timestamp, handoff });
+    addCompactionSummary(
+        summary: string,
+        tokensBefore: number,
+        timestamp = Date.now(),
+        handoff?: string,
+        focus?: string,
+    ): void {
+        const comp = new CompactionSummaryMessageComponent({ summary, tokensBefore, timestamp, handoff, focus });
         comp.setExpanded(this.expanded);
         this.addChild(new Spacer(1));
         this.addChild(comp);

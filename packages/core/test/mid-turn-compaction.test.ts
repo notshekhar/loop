@@ -442,7 +442,11 @@ describe("the summary", () => {
         const dir = mkdtempSync(join(tmpdir(), "loop-compact-"));
         currentModel = mockModel({ summary: () => summaryReply("S") });
         const { runCompact } = await import("../src/agent/compact");
-        await runCompact({ session: mkSession(dir, work(1)), modelId: MODEL, manual: true, focus: "the API changes" });
+        const session = mkSession(dir, work(1));
+        const result = await runCompact({ session, modelId: MODEL, manual: true, focus: "the API changes" });
+        // Kept with the compaction, so the transcript can show what was asked.
+        expect(result.focus).toBe("the API changes");
+        expect(session.entries().find((e) => e.type === "compact")).toMatchObject({ focus: "the API changes" });
         // The user's instructions are their own user message, after the
         // standing ones.
         const last = messagesOf(promptOf(0)).at(-1);
