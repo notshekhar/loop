@@ -25,24 +25,24 @@ describe("formatTodoPanel", () => {
         expect(lines[0].endsWith("─")).toBe(true);
     });
 
-    test("status markers: [ ] pending, [>] in_progress, [x] completed", () => {
+    test("status markers: ○ pending, ◌ in_progress, ✓ completed", () => {
         const lines = plain(
             formatTodoPanel([item("read", "completed"), item("wire", "in_progress"), item("test")], 60),
         );
-        expect(lines[1]).toBe("[x] read");
-        expect(lines[2]).toBe("[>] wire");
-        expect(lines[3]).toBe("[ ] test");
+        expect(lines[1]).toBe("✓ read");
+        expect(lines[2]).toBe("◌ wire");
+        expect(lines[3]).toBe("○ test");
     });
 
-    test("cancelled renders as a [-] row", () => {
+    test("cancelled renders as a · row", () => {
         const lines = plain(formatTodoPanel([item("dropped", "cancelled"), item("next")], 60));
-        expect(lines[1]).toBe("[-] dropped");
-        expect(lines[2]).toBe("[ ] next");
+        expect(lines[1]).toBe("· dropped");
+        expect(lines[2]).toBe("○ next");
     });
 
     test("in_progress shows activeForm when present", () => {
         const lines = plain(formatTodoPanel([item("wire handler", "in_progress", "wiring handler")], 60));
-        expect(lines[1]).toBe("[>] wiring handler");
+        expect(lines[1]).toBe("◌ wiring handler");
     });
 
     test("long rows clip to width with an ellipsis", () => {
@@ -77,7 +77,7 @@ describe("formatTodoPanel", () => {
         const lines = plain(formatTodoPanel([item("🙂".repeat(40))], 20));
         expect(visibleWidth(lines[1])).toBeLessThanOrEqual(20);
         // Whole emoji + ellipsis only — a code-unit slice leaves a lone surrogate.
-        expect(lines[1]).toMatch(/^\[ \] (?:🙂)+…$/u);
+        expect(lines[1]).toMatch(/^○ (?:🙂)+…$/u);
     });
 
     test("overflow keeps in_progress + pending and adds a +N more row", () => {
@@ -88,10 +88,10 @@ describe("formatTodoPanel", () => {
         ];
         const lines = plain(formatTodoPanel(items, 60, 6));
         expect(lines.length).toBe(1 + 6); // header + 5 items + "+N more"
-        expect(lines.some((l) => l.includes("[>] active"))).toBe(true);
+        expect(lines.some((l) => l.includes("◌ active"))).toBe(true);
         expect(lines.at(-1)).toBe("    +5 more");
         // Every pending item beats older completed ones into the panel.
-        expect(lines.filter((l) => l.includes("[ ] next")).length).toBe(4);
+        expect(lines.filter((l) => l.includes("○ next")).length).toBe(4);
     });
 
     test("small lists render every item with no more-row", () => {

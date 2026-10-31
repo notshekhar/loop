@@ -7,7 +7,7 @@
  */
 import { truncateToWidth, visibleWidth, type Component } from "@notshekhar/loop-tui";
 import type { TodoItem } from "@notshekhar/loop-core";
-import { accentTitle, dim, dimStruck } from "../ui/text";
+import { accentTitle, dim, dimStruck, ok } from "../ui/text";
 
 const MAX_BODY_ROWS = 6;
 
@@ -18,11 +18,17 @@ function clip(s: string, width: number): string {
     return visibleWidth(s) <= width ? s : truncateToWidth(s, width, "…");
 }
 
+/**
+ * One mark per status, the same family fx's /status uses: ○ still to do, ◌
+ * on its way (the dotted ring is the half-drawn one), ✓ done, · dropped.
+ * Only the tick is coloured, so a finished step reads as finished at a
+ * glance while its text recedes with the rest of the done work.
+ */
 function row(item: TodoItem): string {
-    if (item.status === "completed") return dim(`[x] ${item.content}`);
-    if (item.status === "cancelled") return dimStruck(`[-] ${item.content}`);
-    if (item.status === "in_progress") return accentTitle(`[>] ${item.activeForm?.trim() || item.content}`);
-    return dim(`[ ] ${item.content}`);
+    if (item.status === "completed") return `${ok("✓")} ${dim(item.content)}`;
+    if (item.status === "cancelled") return dimStruck(`· ${item.content}`);
+    if (item.status === "in_progress") return accentTitle(`◌ ${item.activeForm?.trim() || item.content}`);
+    return dim(`○ ${item.content}`);
 }
 
 /** Completed and cancelled are both terminal — no work left on the item. */

@@ -50,7 +50,7 @@ Other notable keys (all managed via `/settings` too):
   opens the index).
 - `"todos": true` — enables the `todo` tool: a visible checklist the agent
   maintains during multi-step work, pinned above the editor while the turn
-  runs (`[>]` in progress, `[-]` cancelled) and retired into the scrollback
+  runs (`○` to do, `◌` in progress, `✓` done, `·` cancelled) and retired into the scrollback
   as a one-line summary when the turn ends. Lists persist with the session
   (`/resume`, `/fork`, `/tree` restore them). Default off.
 - `"backgroundShells": true` — enables background shells. Default **off**, so
