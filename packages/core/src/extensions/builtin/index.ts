@@ -3,14 +3,16 @@
  * `bun --compile` includes them). They're "pre-installed": they appear in
  * `/extensions` and `loop list` without `loop install`, and the user just
  * enables the ones they want. Enable state lives in the extensions store; all
- * ship disabled by default (opt-in), so a clean install behaves exactly as
- * before until a user turns one on.
+ * but anatomy ship disabled by default (opt-in), so a clean install behaves
+ * exactly as before until a user turns one on. Anatomy is on because it does
+ * nothing until /anatomy is typed.
  */
 import type { ExtensionModule } from "../api";
 import lsp from "./lsp/index";
 import ponytail from "./ponytail/index";
 import caveman from "./caveman/index";
 import wayfinder from "./wayfinder/index";
+import anatomy from "./anatomy/index";
 import rtk from "./rtk/index";
 import statuslineThemes from "./statusline-themes/index";
 import relay from "./relay/index";
@@ -20,7 +22,7 @@ export interface BuiltinExtension {
     displayName: string;
     description: string;
     module: ExtensionModule;
-    /** Whether it's on unless the user disables it. All false today (opt-in). */
+    /** Whether it's on unless the user disables it. Only command-only extensions default on. */
     defaultEnabled: boolean;
 }
 
@@ -54,6 +56,14 @@ export const BUILTIN_EXTENSIONS: BuiltinExtension[] = [
             "Charts an effort too big for one session as a map of decision tickets on your issue tracker. /wayfinder",
         module: wayfinder,
         defaultEnabled: false,
+    },
+    {
+        name: "anatomy",
+        displayName: "Anatomy",
+        description:
+            "Explains an idea by building it as a real, working object — crafted, interactive isometric figures in SVG, WebGL and 3D. /anatomy <idea>",
+        module: anatomy,
+        defaultEnabled: true,
     },
     {
         name: "rtk",

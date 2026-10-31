@@ -168,12 +168,13 @@ A **goal** is a background task tied to a directory. `/goal <text>` parses natur
 
 - **MCP servers** — `loop mcp add` (or `/mcp`): stdio and http/sse transports, OAuth login flows, `${env:VAR}` secrets, per-project servers in `.loop/mcp.json`. Server tools join the agent's toolset automatically.
 - **Extensions** — `loop install <spec>` / `/extensions`: JS extensions can add tools, slash commands, providers, UI modes and themes, status-line segments, and tool/turn middleware. `loop link` develops one from a local folder.
-- **Built-in extensions** — six ship inside the binary, disabled until you run `loop enable <name>`:
+- **Built-in extensions** — these ship inside the binary; all but `anatomy` are disabled until you run `loop enable <name>`:
     - `lsp` — type errors appended to the `write`/`edit` that caused them, plus an `lsp` tool for definitions, references, hover, symbols and call hierarchy. **37 languages**; TypeScript 7 speaks LSP natively so it needs nothing installed, ten more self-install, the rest resolve from PATH.
     - `rtk` — rewrites bash commands through [rtk](https://github.com/rtk-ai/rtk) to cut command output 60–90% (needs the `rtk` binary; a silent no-op without it).
     - `caveman` — ultra-terse replies, same technical substance. `/caveman lite|full|ultra`.
     - `ponytail` — "lazy senior dev": the smallest change that solves it. `/ponytail lite|full|ultra`.
     - `wayfinder` — charts an effort too big for one session as a map of decision tickets on your issue tracker, then works them one per session. `/wayfinder <idea|map url>`.
+    - `anatomy` — explains an idea by building it as a real, working object: crafted, interactive isometric figures in SVG, WebGL and 3D ([wheresryan22/anatomy](https://github.com/wheresryan22/anatomy)). `/anatomy <idea>`. The one built-in that is on by default — it only ever runs when you type the command, and downloads its kit (about 27 MB) the first time.
     - `statusline-themes` — six status-line layouts and a colour picker. `/statusline`, `/statuscolor`.
 
 ### Bash sandbox

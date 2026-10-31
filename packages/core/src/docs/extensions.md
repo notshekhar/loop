@@ -74,13 +74,14 @@ newly added **slash commands** need `/reload`.
 install step; the user enables the ones they want (`{{name}} enable <name>` or the
 panel). They can be enabled/disabled/reloaded but not uninstalled.
 
-| name        | what it does                                                                                      |
-| ----------- | ------------------------------------------------------------------------------------------------- |
-| `lsp`       | Appends type/lint diagnostics after `write`/`edit` via language servers (auto-provisioned).       |
-| `ponytail`  | "Lazy senior dev" persona — write the minimal solution. `/ponytail lite\|full\|ultra\|off`.       |
-| `caveman`   | Ultra-terse replies, fewer tokens. `/caveman lite\|full\|ultra\|wenyan-…\|off`.                   |
-| `wayfinder` | Charts a big, foggy effort as a map of decision tickets. `/wayfinder <idea\|map url>`.            |
-| `rtk`       | Rewrites bash commands through the `rtk` binary to compress output. No-op if `rtk` isn't on PATH. |
+| name        | what it does                                                                                                                   |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `lsp`       | Appends type/lint diagnostics after `write`/`edit` via language servers (auto-provisioned).                                    |
+| `ponytail`  | "Lazy senior dev" persona — write the minimal solution. `/ponytail lite\|full\|ultra\|off`.                                    |
+| `caveman`   | Ultra-terse replies, fewer tokens. `/caveman lite\|full\|ultra\|wenyan-…\|off`.                                                |
+| `wayfinder` | Charts a big, foggy effort as a map of decision tickets. `/wayfinder <idea\|map url>`.                                         |
+| `anatomy`   | Explains an idea as a crafted, interactive isometric figure. `/anatomy <idea>`. On by default; downloads its kit on first use. |
+| `rtk`       | Rewrites bash commands through the `rtk` binary to compress output. No-op if `rtk` isn't on PATH.                              |
 
 `lsp` finds a language server in the project's `node_modules/.bin`, then on
 `PATH`. Only if neither has one does it install: npm packages and `go install`
