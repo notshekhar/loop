@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.21.29] - 2026-10-31
+
+### Fixed
+
+- **Compaction works on Azure OpenAI models with thinking on.** Through a Responses API gateway such as bifrost, the summary request pointed at earlier replies by their stored ids without the reasoning that came with them, and Azure refused it ("…was provided without its required 'reasoning' item") — so every compaction fell back to truncating the conversation. The summary now sends the replies themselves.
+
 ## [0.21.28] - 2026-10-30
 
 ### Added
