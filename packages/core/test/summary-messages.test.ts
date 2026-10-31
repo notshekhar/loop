@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { ModelMessage } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+import { streamText, type ModelMessage } from "ai";
 import { toolStubs } from "../src/agent/summarize";
 import { chunkMessages, messageChars, toSummaryMessages } from "../src/agent/summary-messages";
 
@@ -35,6 +36,71 @@ describe("toSummaryMessages", () => {
         const value = (out[2].content as Array<{ output: { value: string } }>)[0].output.value;
         expect(value).toContain("more characters truncated");
         expect(value.length).toBeLessThan(2_200);
+    });
+});
+
+describe("stored provider ids", () => {
+    // A reply that followed reasoning, stored as the Responses API returned it.
+    const span = [
+        { role: "user", content: [{ type: "text", text: "fix it", providerOptions: { openai: { itemId: "msg_u" } } }] },
+        {
+            role: "assistant",
+            content: [
+                {
+                    type: "reasoning",
+                    text: "",
+                    providerOptions: { openai: { itemId: "rs_1", reasoningEncryptedContent: "ENC" } },
+                },
+                { type: "text", text: "Looking.", providerOptions: { openai: { itemId: "msg_1" } } },
+                {
+                    type: "tool-call",
+                    toolCallId: "c1",
+                    toolName: "read",
+                    input: { path: "a.ts" },
+                    providerOptions: { openai: { itemId: "fc_1" } },
+                },
+            ],
+        },
+        result("c1", "contents"),
+        {
+            role: "assistant",
+            content: [{ type: "text", text: "Done.", providerOptions: { openai: { itemId: "msg_2" } } }],
+        },
+    ];
+
+    test("are not carried into the summary messages", () => {
+        const out = JSON.stringify(toSummaryMessages(span));
+        expect(out).not.toContain("providerOptions");
+        expect(out).toContain("Looking.");
+        expect(out).toContain('"toolCallId":"c1"');
+    });
+
+    // Azure refuses an item_reference whose reasoning item is not in the
+    // request, and the summary drops reasoning: the request must carry the
+    // replies themselves.
+    test("so the Responses API request sends text, not item references", async () => {
+        let body = "";
+        const openai = createOpenAI({
+            apiKey: "test",
+            fetch: (async (_url: unknown, init?: RequestInit) => {
+                body = String(init?.body);
+                return new Response("upstream not needed", { status: 500 });
+            }) as unknown as typeof fetch,
+        });
+        const messages = [...toSummaryMessages(span), { role: "user", content: "Summarize." } as ModelMessage];
+        const result = streamText({
+            model: openai("gpt-test"),
+            messages,
+            tools: toolStubs(messages),
+            toolChoice: "none",
+            maxRetries: 0,
+            onError: () => {},
+        });
+        for await (const _ of result.fullStream) {
+        }
+        expect(body).toContain("Looking.");
+        expect(body).toContain("Done.");
+        expect(body).not.toContain("item_reference");
     });
 });
 

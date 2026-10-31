@@ -12,6 +12,14 @@
  * dropped (providers return signed blobs larger than what they summarize),
  * tool results keep their first 2,000 characters, and media is named rather
  * than sent.
+ *
+ * Every kept part is rebuilt from its content alone, without the provider
+ * metadata it was stored with. The summary is a new request, and a stored id
+ * is a pointer into the provider's own history: the OpenAI Responses API
+ * turns a text part's itemId into an item_reference, and Azure refuses one
+ * whose reasoning item is not in the request ("Item 'msg_…' of type
+ * 'message' was provided without its required 'reasoning' item") — which,
+ * with reasoning dropped, is every reply that followed some thinking.
  */
 import type { ModelMessage } from "ai";
 import { clipMiddle, TOOL_RESULT_MAX_CHARS, toolOutputText, truncateForSummary } from "./summarize";
@@ -23,19 +31,31 @@ function mediaNote(part: Part): Part {
     return { type: "text", text: `[${String(part.type ?? "media")}]` };
 }
 
+function textPart(part: Part): Part | undefined {
+    return part.text ? { type: "text", text: part.text } : undefined;
+}
+
+function toolCallPart(part: Part): Part {
+    return { type: "tool-call", toolCallId: part.toolCallId, toolName: part.toolName, input: part.input };
+}
+
 function userMessage(content: unknown): ModelMessage | undefined {
     if (typeof content === "string") return content.trim() ? { role: "user", content } : undefined;
     if (!Array.isArray(content)) return undefined;
     const parts = (content as Part[])
-        .map((p) => (p.type === "text" ? p : p.type === "image" || p.type === "file" ? mediaNote(p) : undefined))
-        .filter((p): p is Part => p !== undefined && (p.type !== "text" || Boolean(p.text)));
+        .map((p) =>
+            p.type === "text" ? textPart(p) : p.type === "image" || p.type === "file" ? mediaNote(p) : undefined,
+        )
+        .filter((p): p is Part => p !== undefined);
     return parts.length ? ({ role: "user", content: parts } as unknown as ModelMessage) : undefined;
 }
 
 function assistantMessage(content: unknown): ModelMessage | undefined {
     if (typeof content === "string") return content.trim() ? { role: "assistant", content } : undefined;
     if (!Array.isArray(content)) return undefined;
-    const parts = (content as Part[]).filter((p) => (p.type === "text" && Boolean(p.text)) || p.type === "tool-call");
+    const parts = (content as Part[])
+        .map((p) => (p.type === "text" ? textPart(p) : p.type === "tool-call" ? toolCallPart(p) : undefined))
+        .filter((p): p is Part => p !== undefined);
     return parts.length ? ({ role: "assistant", content: parts } as unknown as ModelMessage) : undefined;
 }
 
