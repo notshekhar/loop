@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.21.32] - 2026-10-31
+
+### Added
+
+- **An app on loop's engine can keep live lines under the welcome masthead.** `AppProfile.welcomePanel` supplies the lines and says when they change, and the chat screen repaints them in place — [fx](https://github.com/notshekhar/fx) uses it for a live summary of every source it watches. The panel never gets shorter, so it cannot strand rows once the masthead is in the scrollback. loop's themed text colours are exported as `@notshekhar/loop/ui` for such an app to match the active theme. Nothing changes for loop itself.
+
 ## [0.21.31] - 2026-10-31
 
 ### Added
