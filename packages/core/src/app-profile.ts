@@ -18,6 +18,17 @@ import type { SlashCommand } from "./commands";
 import type { AppSettings } from "./settings";
 import type { ToolContext } from "./tools";
 
+/**
+ * Live lines the app keeps under the welcome masthead, such as a summary of
+ * what it is connected to. The app styles them; the TUI repaints on change.
+ */
+export interface WelcomePanel {
+    /** The lines as they are now, for this width. */
+    lines(width: number): string[];
+    /** Called back whenever the lines change; returns the unsubscribe. */
+    subscribe(onChange: () => void): () => void;
+}
+
 export interface AppProfile {
     /** Name the app calls itself in titles and prompts. */
     name: string;
@@ -48,6 +59,8 @@ export interface AppProfile {
     agents?: boolean;
     /** Whether installed and builtin extensions load. */
     extensions?: boolean;
+    /** Kept up to date under the welcome masthead, above the startup lines. */
+    welcomePanel?: WelcomePanel;
 }
 
 const LOOP: AppProfile = {

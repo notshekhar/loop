@@ -29,6 +29,9 @@
     "exports": {
         "./interactive": {
             "import": "./src/interactive/app.ts"
+        },
+        "./ui": {
+            "import": "./src/interactive/ui/text.ts"
         }
     },
     "bin": {

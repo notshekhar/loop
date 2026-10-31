@@ -4,13 +4,16 @@
  */
 import { execFileSync } from "node:child_process";
 import os from "node:os";
-import { DEFAULT_AGENT_NAME } from "@notshekhar/loop-core";
+import { DEFAULT_AGENT_NAME, getAppProfile } from "@notshekhar/loop-core";
 import { WelcomeBanner } from "./components/welcome-banner";
+import { WelcomePanelView } from "./components/welcome-panel";
 import type { ChatHistory } from "./components/chat-history";
 import type { AppDeps } from "./deps";
 import type { AppState } from "./state";
 
 let activeBanner: WelcomeBanner | null = null;
+/** The app's live panel under the banner on screen; replaced along with the banner. */
+let activePanel: WelcomePanelView | null = null;
 // Remembered so a banner recreated on /new or /clear keeps the notice, and so a
 // notice that arrives (network) before the banner exists still lands on it.
 let updateNotice: string | undefined;
@@ -111,6 +114,10 @@ export function showWelcomeBanner(history: ChatHistory, state: AppState, deps: A
     activeBanner = banner;
     if (updateNotice) banner.setUpdateNotice(updateNotice);
     history.addChild(banner);
+    activePanel?.dispose();
+    const panel = getAppProfile().welcomePanel;
+    activePanel = panel ? new WelcomePanelView(deps.tui, panel) : null;
+    if (activePanel) history.addChild(activePanel);
     // Directly under the masthead, and kept open: this is where every startup
     // status line goes, including the ones that only arrive once the trust
     // prompt is answered or an MCP server finishes connecting.
