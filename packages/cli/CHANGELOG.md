@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.21.33] - 2026-10-31
+
+### Changed
+
+- **Todos show as circles instead of brackets.** The pinned todo panel marks an item `○` to do, `◌` in progress, `✓` done and `·` cancelled, in place of `[ ]` `[>]` `[x]` `[-]` — the same marks [fx](https://github.com/notshekhar/fx)'s `/status` uses. Only the tick is coloured; a finished item's text dims and a cancelled one is struck through.
+
 ## [0.21.32] - 2026-10-31
 
 ### Added
