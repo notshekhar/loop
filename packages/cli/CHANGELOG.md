@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.21.30] - 2026-10-31
+
+### Added
+
+- **`/anatomy` — explain an idea as a real, working object.** A new built-in extension brings Ryan's [anatomy](https://github.com/wheresryan22/anatomy) skill: `/anatomy <idea>` builds a crafted, interactive isometric figure (SVG, WebGL or 3D) that explains it. It runs only when you type the command — nothing is added to the system prompt — so it is on by default. The first use downloads the skill's kit (about 27 MB) once.
+
 ## [0.21.29] - 2026-10-31
 
 ### Fixed
