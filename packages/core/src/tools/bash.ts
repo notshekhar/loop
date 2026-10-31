@@ -79,6 +79,13 @@ export interface BashToolContext {
      * Plan mode (see utils/plan-mode.ts) forces the same path live.
      */
     readOnlyFs?: boolean;
+    /**
+     * Fail-closed sandbox whose only writable place is `cwd`, regardless of
+     * user sandbox settings — for an app whose bash may write to a scratch
+     * directory and nowhere else. Refused, like readOnlyFs, when it can't hold.
+     * `denyRead`/`allowRead` narrow what it may read, as in the sandbox setting.
+     */
+    confineToCwd?: { network: SandboxConfig["network"]; denyRead?: string[]; allowRead?: string[] };
 }
 
 interface SpawnOptions {
@@ -204,6 +211,42 @@ function execBash(
     });
 }
 
+const NO_EXTRA_PATHS: SandboxConfig["filesystem"] = { allowWrite: [], denyWrite: [], denyRead: [], allowRead: [] };
+const READ_ONLY: SandboxConfig = { filesystem: { ...NO_EXTRA_PATHS, readOnly: true }, network: "deny" };
+
+/**
+ * Wrap a command in a sandbox that MUST hold: when it can't be applied the
+ * command is refused, never run unsandboxed. `what` completes "<what>, which
+ * isn't available…", so the model learns why bash is gone.
+ */
+async function enforceSandbox(
+    command: string,
+    ctx: BashToolContext,
+    what: string,
+    config: SandboxConfig,
+): Promise<string[]> {
+    if (!sandbox.isSupported()) {
+        throw new Error(
+            `${what}, which isn't available on this platform — bash is disabled here. Investigate with read/ls/grep/find instead.`,
+        );
+    }
+    const deps = sandbox.checkDependencies();
+    if (deps.errors.length > 0) {
+        throw new Error(
+            `${what}, but it's unavailable (${deps.errors.join(", ")}). Refusing to run bash unsandboxed. Use read/ls/grep/find, or install the missing dependency.`,
+        );
+    }
+    const { shell } = getShellConfig(ctx.shellPath);
+    try {
+        const wrapped = await sandbox.wrap({ command, shell, cwd: ctx.cwd, config });
+        if (!wrapped) throw new Error("sandbox could not wrap the command");
+        return wrapped.argv;
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`The sandbox failed to start (${msg}). Refusing to run bash unsandboxed.`);
+    }
+}
+
 /**
  * Decide how to run a command under the sandbox. Returns a spawn argv when the
  * sandbox is active, or a warning when it's enabled but can't be enforced.
@@ -220,31 +263,25 @@ async function resolveSandbox(command: string, ctx: BashToolContext): Promise<{ 
     // Plan mode is checked live (not at tool creation) so the gate applies
     // the moment enter_plan_mode is approved, mid-turn.
     if (ctx.readOnlyFs || isPlanModeActive(ctx.sessionId)) {
-        const why = ctx.readOnlyFs ? "This agent runs" : "Plan mode runs";
-        if (!sandbox.isSupported()) {
-            throw new Error(
-                `${why} bash in a read-only OS sandbox, which isn't available on this platform — bash is disabled here. Investigate with read/ls/grep/find instead.`,
-            );
-        }
-        const deps = sandbox.checkDependencies();
-        if (deps.errors.length > 0) {
-            throw new Error(
-                `${why} bash in a read-only OS sandbox, but it's unavailable (${deps.errors.join(", ")}). Refusing to run bash unsandboxed. Use read/ls/grep/find, or install the missing dependency.`,
-            );
-        }
-        const { shell } = getShellConfig(ctx.shellPath);
-        const config: SandboxConfig = {
-            filesystem: { allowWrite: [], denyWrite: [], denyRead: [], allowRead: [], readOnly: true },
-            network: "deny",
+        const who = ctx.readOnlyFs ? "This agent runs" : "Plan mode runs";
+        return { argv: await enforceSandbox(command, ctx, `${who} bash in a read-only OS sandbox`, READ_ONLY) };
+    }
+    if (ctx.confineToCwd) {
+        return {
+            argv: await enforceSandbox(
+                command,
+                ctx,
+                "bash here runs in an OS sandbox that can only write to its working directory",
+                {
+                    filesystem: {
+                        ...NO_EXTRA_PATHS,
+                        denyRead: ctx.confineToCwd.denyRead ?? [],
+                        allowRead: ctx.confineToCwd.allowRead ?? [],
+                    },
+                    network: ctx.confineToCwd.network,
+                },
+            ),
         };
-        try {
-            const wrapped = await sandbox.wrap({ command, shell, cwd: ctx.cwd, config });
-            if (!wrapped) throw new Error("sandbox could not wrap the command");
-            return { argv: wrapped.argv };
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            throw new Error(`Read-only sandbox failed to start (${msg}). Refusing to run bash unsandboxed.`);
-        }
     }
 
     const s = getSetting("sandbox");

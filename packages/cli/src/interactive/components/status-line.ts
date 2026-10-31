@@ -1,4 +1,4 @@
-import { getExtensionHost, getModelSync, parseModelId } from "@notshekhar/loop-core";
+import { getAppProfile, getExtensionHost, getModelSync, parseModelId } from "@notshekhar/loop-core";
 import type { StatusLineContext, StatusSegment } from "@notshekhar/loop-core";
 import type { Component } from "@notshekhar/loop-tui";
 import { formatClock, formatCountdown } from "../time";
@@ -141,7 +141,8 @@ export class StatusLine implements Component {
             (this.agent && this.agent !== "default"
                 ? theme.fg("hookAccent", `agent ${this.agent}`)
                 : dim("agent default")) + dim(" (shift+tab)");
-        const identity = [agentStr, accent(modelLabel)];
+        // An app without named agents has nothing to cycle, so nothing to show.
+        const identity = getAppProfile().agents === false ? [accent(modelLabel)] : [agentStr, accent(modelLabel)];
         if (this.planMode) identity.push(warn("plan mode (read-only)"));
         const usage = [dim(`session ${sid}`), ok(this.cost), ctxStr];
         if (this.timerEndsAt !== null) {

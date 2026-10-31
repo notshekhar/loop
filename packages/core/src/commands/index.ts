@@ -1,4 +1,5 @@
-import { getConfigDir, PRODUCT_NAME } from "../brand";
+import { getAppDataDir, getAppProfile } from "../app-profile";
+import { PRODUCT_NAME } from "../brand";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadProjectSkills } from "../agent/skills";
@@ -625,11 +626,17 @@ export async function registerBuiltins(reg: CommandRegistry, opts: { cwd?: strin
     // /settings takes effect without rebuilding the command list or restarting.
     for (const c of cmds) reg.register(c);
 
-    // skills as /skill:name commands
+    for (const name of getAppProfile().hiddenCommands ?? []) reg.unregister(name);
+    for (const cmd of getAppProfile().commands ?? []) reg.register(cmd);
+
+    // skills as /skill:name commands (the app picks the prefix). A skill never
+    // shadows a command already registered under the same name.
     try {
         const sk = await loadProjectSkills(cwd);
+        const prefix = getAppProfile().skillCommandPrefix ?? "skill:";
         for (const skill of sk.skills) {
-            const name = `skill:${skill.name}`;
+            const name = `${prefix}${skill.name}`;
+            if (reg.has(name)) continue;
             reg.register({
                 name,
                 description: skill.description.slice(0, 100),
@@ -652,7 +659,7 @@ export async function registerBuiltins(reg: CommandRegistry, opts: { cwd?: strin
     } catch {}
 
     // user prompts as commands
-    const promptsDir = join(getConfigDir(), "agent", "prompts");
+    const promptsDir = join(getAppDataDir(), "agent", "prompts");
     if (existsSync(promptsDir)) {
         for (const file of readdirSync(promptsDir)) {
             if (!file.endsWith(".md")) continue;
@@ -669,8 +676,18 @@ export async function registerBuiltins(reg: CommandRegistry, opts: { cwd?: strin
         }
     }
 
-    // agents as commands: /<name> <message> runs one message under that agent.
-    // "default" gets no command — it's what plain messages already use.
+    if (getAppProfile().agents !== false) registerAgentCommands(reg);
+
+    // User-defined aliases go last so they can never shadow a real command —
+    // a stale alias silently loses to whatever claimed the name above.
+    for (const [name, expansion] of Object.entries(getSetting("aliases") ?? {})) {
+        if (reg.has(name)) continue;
+        registerAliasCommand(reg, name, expansion);
+    }
+}
+
+/** /<agent> for every agent but "default" (what plain messages already use), plus /data. */
+function registerAgentCommands(reg: CommandRegistry): void {
     for (const agent of listAgents()) {
         if (agent.name === "default") continue;
         registerAgentCommand(reg, agent.name);
@@ -683,13 +700,6 @@ export async function registerBuiltins(reg: CommandRegistry, opts: { cwd?: strin
             description: "Run one message with the data-analyst agent: /data <message>",
             handler: (ctx, args) => ctx.useAgent(DATA_ANALYST_AGENT_NAME, args || undefined),
         });
-    }
-
-    // User-defined aliases go last so they can never shadow a real command —
-    // a stale alias silently loses to whatever claimed the name above.
-    for (const [name, expansion] of Object.entries(getSetting("aliases") ?? {})) {
-        if (reg.has(name)) continue;
-        registerAliasCommand(reg, name, expansion);
     }
 }
 

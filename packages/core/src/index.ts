@@ -1,4 +1,5 @@
 export * from "./brand";
+export * from "./app-profile";
 export * from "./format";
 export * from "./types";
 export * from "./auth";

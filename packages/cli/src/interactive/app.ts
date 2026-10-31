@@ -62,7 +62,7 @@ import {
     onShellChange,
     getSetting,
     playCue,
-    PRODUCT_NAME,
+    getAppProfile,
     type ThinkingLevel,
     type ProviderId,
     type Session,
@@ -589,7 +589,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
                 session_id: state.session?.id,
                 transcript_path: state.session?.path,
                 message: `Waiting for input: ${e.label ?? "prompt"}`,
-                title: PRODUCT_NAME,
+                title: getAppProfile().name,
             },
             state.cwd,
         ).then((n) => {
@@ -958,7 +958,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         const others = slots.all().filter((s) => !slots.isForeground(s) && s.session);
         if (others.length > 0 && process.stdout.isTTY) {
             process.stdout.write(`\nOther sessions from this run:\n`);
-            for (const s of others) process.stdout.write(`  ${PRODUCT_NAME} --session ${s.session!.id}\n`);
+            for (const s of others) process.stdout.write(`  ${getAppProfile().name} --session ${s.session!.id}\n`);
         }
         // Put the tab back to a plain name: whatever spinner frame was showing
         // would otherwise be the last thing this terminal was told.

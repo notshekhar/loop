@@ -15,6 +15,7 @@
  *     quoted strings, booleans) — multiline/folded values are not supported
  *   - .gitignore/.ignore files inside skill directories are not honored
  */
+import { getAppProfile } from "../app-profile";
 import { CONFIG_DIR_NAME, getConfigDir } from "../brand";
 import { existsSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -189,6 +190,13 @@ function loadSkillsFromDir(dir: string, includeRootFiles: boolean): LoadedSkills
     return { skills, diagnostics };
 }
 
+/** The user's skills, then the project's — or the embedding app's own dirs. */
+function skillDirs(cwd: string): readonly string[] {
+    return (
+        getAppProfile().skillDirs ?? [join(getConfigDir(), "agent", "skills"), resolve(cwd, CONFIG_DIR_NAME, "skills")]
+    );
+}
+
 export async function loadProjectSkills(cwd: string): Promise<LoadedSkills & { promptBlock: string }> {
     const skillMap = new Map<string, Skill>();
     const diagnostics: SkillDiagnostic[] = [];
@@ -211,8 +219,7 @@ export async function loadProjectSkills(cwd: string): Promise<LoadedSkills & { p
         }
     };
 
-    addSkills(loadSkillsFromDir(join(getConfigDir(), "agent", "skills"), true));
-    addSkills(loadSkillsFromDir(resolve(cwd, CONFIG_DIR_NAME, "skills"), true));
+    for (const dir of skillDirs(cwd)) addSkills(loadSkillsFromDir(dir, true));
     // Extension-contributed skill directories (api.skills.addDir). None when no
     // extensions are loaded, so discovery is unchanged in a clean install.
     for (const dir of getExtensionHost().getSkillDirs()) addSkills(loadSkillsFromDir(dir, true));

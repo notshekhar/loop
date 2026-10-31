@@ -7,7 +7,7 @@
  * resume is already sitting in your scrollback the moment you want it, which
  * is exactly when you have just closed the thing you needed.
  */
-import { PRODUCT_NAME } from "@notshekhar/loop-core";
+import { getAppProfile } from "@notshekhar/loop-core";
 
 /**
  * Write the resume command to stdout. Call AFTER the TUI has stopped — the
@@ -21,5 +21,5 @@ import { PRODUCT_NAME } from "@notshekhar/loop-core";
  */
 export function printResumeHint(sessionId: string | undefined, out: NodeJS.WriteStream = process.stdout): void {
     if (!sessionId || !out.isTTY) return;
-    out.write(`\nResume this session with:\n  ${PRODUCT_NAME} --session ${sessionId}\n`);
+    out.write(`\nResume this session with:\n  ${getAppProfile().name} --session ${sessionId}\n`);
 }

@@ -9,6 +9,7 @@
  * extension's TypeScript entry on import (verified to work inside a
  * `bun --compile` binary), and resolves the extension's own node_modules deps.
  */
+import { getAppProfile } from "../app-profile";
 import { EXTENSION_MANIFEST_KEYS, getConfigDir, PRODUCT_NAME } from "../brand";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -297,6 +298,9 @@ export class ExtensionHost {
         if (this.initialized) return;
         this.initialized = true;
         this.warnings.clear();
+        // An embedding app that turned extensions off gets none, not even
+        // the bundled ones: they are written for loop's own tools and UI.
+        if (getAppProfile().extensions === false) return;
         // Built-in (bundled) extensions first, so an external install can still
         // override/extend afterwards. Each is opt-in (default disabled).
         for (const b of BUILTIN_EXTENSIONS) {

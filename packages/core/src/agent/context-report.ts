@@ -13,8 +13,8 @@ import { getExtensionHost } from "../extensions";
 import { parseModelId } from "../providers";
 import {
     createAskTool,
+    createBaseTools,
     createSkillTool,
-    createTools,
     SHELLS_TOOL_NAME,
     createWebsearchTool,
     isAskUserAvailable,
@@ -111,7 +111,7 @@ export async function buildContextReport(opts: {
     const allowedTools = opts.agent ? getAgentTools(opts.agent) : undefined;
 
     // Builtin + extension tools (what runTurn calls "system tools").
-    const fullToolSet = createTools({ cwd, sessionId: session?.id ?? "context-report" });
+    const fullToolSet = createBaseTools({ cwd, sessionId: session?.id ?? "context-report" });
     const toolSet: Record<string, unknown> = allowedTools?.length
         ? Object.fromEntries(Object.entries(fullToolSet).filter(([name]) => allowedTools.includes(name)))
         : { ...fullToolSet };

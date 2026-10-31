@@ -1,4 +1,4 @@
-import { PRODUCT_NAME } from "@notshekhar/loop-core";
+import { getAppProfile } from "@notshekhar/loop-core";
 import { type Component, truncateToWidth, type TUI, visibleWidth } from "@notshekhar/loop-tui";
 import { mix } from "../ui/palette";
 import { isLightTheme, theme, verticalRule } from "../ui/theme";
@@ -117,7 +117,7 @@ export class WelcomeBanner implements Component {
 
         // Everything that sits beside the gradient rule, in order.
         const beside: string[] = [
-            theme.fg("text", theme.bold(PRODUCT_NAME)),
+            theme.fg("text", theme.bold(getAppProfile().name)),
             theme.fg("muted", `Welcome back, ${this.info.name}`),
             "",
             ...rows.map(([label, value]) => theme.fg("dim", label.padEnd(labelWidth)) + LABEL_GAP + value),
@@ -144,7 +144,8 @@ export class WelcomeBanner implements Component {
         lines.push(
             ` ${theme.fg("dim", "type ")}${theme.fg("text", theme.bold("/help"))}${theme.fg("dim", " for slash commands")}`,
         );
-        lines.push(` ${theme.fg("dim", "ctrl+e navigates transcript · shift+tab agents · ctrl+c twice to quit")}`);
+        const agentHint = getAppProfile().agents === false ? "" : " · shift+tab agents";
+        lines.push(` ${theme.fg("dim", `ctrl+e navigates transcript${agentHint} · ctrl+c twice to quit`)}`);
         lines.push("");
 
         // Truncate then pad each line to full width so the differential

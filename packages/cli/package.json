@@ -26,6 +26,11 @@
         "openrouter",
         "loop"
     ],
+    "exports": {
+        "./interactive": {
+            "import": "./src/interactive/app.ts"
+        }
+    },
     "bin": {
         "loop": "./dist/cli.js",
         "lp": "./dist/cli.js",

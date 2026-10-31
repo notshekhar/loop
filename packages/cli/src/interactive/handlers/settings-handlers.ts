@@ -16,6 +16,7 @@ import {
     getMcpManager,
     getExtensionHost,
     getProjectBashAllow,
+    isSettingOffered,
     playCue,
     PRODUCT_NAME,
     refreshConfigStores,
@@ -145,7 +146,7 @@ export function createSettingsHandlers(state: AppState, deps: AppDeps): Settings
             // instead of snapping back to the top.
             let lastIndex = 0;
             while (true) {
-                const items: SelectItem[] = [
+                const rows: SelectItem[] = [
                     // The ACTIVE theme's name — what is rendering right now,
                     // not a settings-key reconstruction (which is how the row
                     // label went wrong last time).
@@ -310,6 +311,8 @@ export function createSettingsHandlers(state: AppState, deps: AppDeps): Settings
                             "set up remote chat control — each gateway runs as its own daemon; a paired chat controls this machine",
                     },
                 ];
+                // An embedding app's pinned settings would be toggles that do nothing.
+                const items = rows.filter((row) => isSettingOffered(row.value));
                 const pick = await searchOnce(items, "Settings (type to filter, Esc to close)", {
                     initialIndex: lastIndex,
                 });

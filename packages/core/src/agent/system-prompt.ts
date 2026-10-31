@@ -1,3 +1,5 @@
+import { getAppProfile } from "../app-profile";
+
 /** Built-in persona + guidelines. Custom agents replace only this part —
  * the environment block below is always appended so any agent keeps
  * functioning as a coding agent (knows cwd and tools). */
@@ -87,7 +89,7 @@ export function buildSystemPrompt(opts: {
     /** Tool names actually available this turn (per-agent subsets). */
     tools?: string[];
 }): string {
-    const base = opts.basePrompt?.trim() || DEFAULT_BASE_PROMPT;
+    const base = opts.basePrompt?.trim() || getAppProfile().basePrompt?.().trim() || DEFAULT_BASE_PROMPT;
     const toolList = opts.tools?.length ? opts.tools.join(", ") : "read, write, edit, bash, ls, grep, find";
     const env = `Working directory: ${opts.cwd}
 

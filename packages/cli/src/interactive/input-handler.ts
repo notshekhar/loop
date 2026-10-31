@@ -37,6 +37,7 @@ import { pickImageFile, readClipboardImageToFile } from "./clipboard-image";
 import { ClipboardImageTip } from "./clipboard-tip";
 import {
     agentExists,
+    getAppProfile,
     extractImagesFromInput,
     filterAttachmentsByModalities,
     getModelSync,
@@ -297,7 +298,7 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
         // we never consume it here; it falls through to the focused editor,
         // which triggers/applies the completion. Cycle = active custom agent (if
         // selected via /agents) plus all built-ins.
-        const wantsAgentCycle = isShiftTab(data);
+        const wantsAgentCycle = isShiftTab(data) && getAppProfile().agents !== false;
         if (wantsAgentCycle && editorFocused) {
             // Cycle = visible built-ins, plus the one extra agent the user has
             // opted into (a custom agent or a revealed hidden built-in like

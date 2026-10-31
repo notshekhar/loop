@@ -13,13 +13,13 @@ import {
     ARTIFACT_TOOL_NAME,
     createArtifactTool,
     createAskTool,
+    createBaseTools,
     createEnterPlanModeTool,
     createExitPlanModeTool,
     createPlanTool,
     createSkillTool,
     createTodoNudger,
     createTodoTool,
-    createTools,
     createWebsearchTool,
     ENTER_PLAN_MODE_TOOL_NAME,
     EXIT_PLAN_MODE_TOOL_NAME,
@@ -290,7 +290,7 @@ async function assembleTurnTools(
     // An agent allowed bash but NOT write/edit (e.g. plan) gets bash forced into
     // a fail-closed read-only sandbox, so the kernel guarantees no mutation.
     const readOnlyFs = isReadOnlyBashAgent(allowedTools);
-    const fullToolSet = createTools({ cwd, abortSignal, readOnlyFs, sessionId: session.id });
+    const fullToolSet = createBaseTools({ cwd, abortSignal, readOnlyFs, sessionId: session.id });
     const toolSet = (
         allowedTools?.length
             ? Object.fromEntries(Object.entries(fullToolSet).filter(([name]) => allowedTools.includes(name)))

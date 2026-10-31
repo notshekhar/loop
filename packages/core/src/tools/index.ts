@@ -1,3 +1,4 @@
+import { getAppProfile } from "../app-profile";
 import { createBashTool } from "./bash";
 import { createEditTool } from "./edit";
 import { createFindTool } from "./find";
@@ -53,6 +54,19 @@ export function createTools(ctx: ToolContext) {
 
 export type ToolSet = ReturnType<typeof createTools>;
 
+/**
+ * The toolset a turn starts from: the embedding app's when it brings its own
+ * (app-profile.ts), loop's file tools otherwise.
+ *
+ * Typed as loop's set because the turn is: past this point it only adds,
+ * removes and filters entries by name, which holds for any map of AI-SDK
+ * tools.
+ */
+export function createBaseTools(ctx: ToolContext): ToolSet {
+    const custom = getAppProfile().createTools;
+    return (custom ? custom(ctx) : createTools(ctx)) as ToolSet;
+}
+
 /** Stable tool name list — agents reference these for per-agent tool selection. */
 export const TOOL_NAMES = ["read", "write", "edit", "bash", "ls", "grep", "find", "sql", "shells"] as const;
 export { createMcpResourceTool, MCP_RESOURCE_TOOL_NAME, type McpResourceToolContext } from "./mcp-resource";
@@ -64,6 +78,8 @@ export {
     type McpToolsToolContext,
 } from "./mcp-tools";
 export { clearReadRegistry } from "./utils/read-registry";
+// Output caps the tools share, for an embedding app's own tools to match them.
+export { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateHead, type TruncationResult } from "./utils/truncate";
 // Background shells (bash run_in_background): the registry is the surfaces'
 // window onto them — the CLI's panel, /shells, and the turn's exit notices.
 export {

@@ -1,4 +1,4 @@
-import { getConfigDir } from "../brand";
+import { getAppDataDir } from "../app-profile";
 import { basename, join } from "node:path";
 import { ulid } from "ulid";
 import { debugLog } from "../debug";
@@ -19,7 +19,7 @@ export function slugCwd(cwd: string): string {
  * session's public name, kept in the historical JSONL shape.
  */
 function transcriptPath(cwd: string, id: string): string {
-    return join(getConfigDir(), "agent", "sessions", slugCwd(cwd), `${id}.jsonl`);
+    return join(getAppDataDir(), "agent", "sessions", slugCwd(cwd), `${id}.jsonl`);
 }
 
 export interface SessionInfo extends SessionInfoData {

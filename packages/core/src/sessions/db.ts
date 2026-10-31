@@ -1,4 +1,5 @@
-import { getConfigDir, PRODUCT_NAME } from "../brand";
+import { getAppDataDir } from "../app-profile";
+import { PRODUCT_NAME } from "../brand";
 import { openSqlite, sleepSyncMs, type SqliteDatabase as Database } from "./sqlite";
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -9,7 +10,7 @@ import { debugLog } from "../debug";
  * (transcripts, cost ledger, per-project trust/model, reminders) lives in this
  * single WAL SQLite file; nothing else in the codebase touches `new Database`.
  *
- * The path must come from getConfigDir(): inside a compiled binary
+ * The path must come from getAppDataDir(): inside a compiled binary
  * `import.meta.dir` is the read-only /$bunfs bundle and opening a DB there
  * fails with SQLITE_CANTOPEN.
  *
@@ -178,7 +179,7 @@ let overridePath: string | null = null;
 export const DB_FILE_NAME = "agent.db";
 
 function defaultDbPath(): string {
-    return join(getConfigDir(), DB_FILE_NAME);
+    return join(getAppDataDir(), DB_FILE_NAME);
 }
 
 /**
