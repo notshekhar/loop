@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.21.31] - 2026-10-31
+
+### Added
+
+- **Another app can run on loop's engine.** `setAppProfile()` lets a product embed loop's agent and chat screen (`@notshekhar/loop/interactive`) with its own tools, prompt, skills, slash commands and home directory, while sharing loop's providers, logins and models. Settings it pins stay out of `/settings`, and bash can be confined to a single writable directory with no network. [fx](https://github.com/notshekhar/fx), a read-only debugging agent, is the first app built this way. Nothing changes for loop itself.
+
 ## [0.21.30] - 2026-10-31
 
 ### Added
