@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.21.35] - 2026-11-04
+
+### Fixed
+
+- **Shell exit notices and todo nudges are sent once.** A background shell's exit notice and the todo reminder were meant for one request, but stayed in every later step of the turn. Each now reaches the model on the next step only and is then taken back out.
+
 ## [0.21.34] - 2026-11-03
 
 ### Fixed
