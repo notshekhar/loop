@@ -13,7 +13,7 @@
  * — starts the next turn when the host calls `wakeTeamInbox` on the way out.
  */
 import { onLedgerRow } from "../sessions/cost-ledger";
-import { inboxCount, isTeamStopped, sessionTitle, takeInbox, teamOf, type TeamMessage } from "./store";
+import { inboxCount, isTeamStopped, returnToInbox, sessionTitle, takeInbox, teamOf, type TeamMessage } from "./store";
 
 /** One teammate as a turn's opening card shows them. */
 export interface TeamPeer {
@@ -175,9 +175,17 @@ export function formatMailForModel(mail: readonly TeamMailView[]): string {
     return mail
         .map((m) => {
             const tag = m.kind === "report" ? "team-report" : m.kind === "update" ? "team-update" : "team-message";
-            return `<${tag} from="${escapeAttr(m.from.title)}" id="${m.from.id}">\n${m.text.trim()}\n</${tag}>`;
+            return `<${tag} from="${escapeAttr(m.from.title)}" id="${m.from.id}">\n${escapeTeamTags(m.text.trim())}\n</${tag}>`;
         })
         .join("\n\n");
+}
+
+/**
+ * A body that writes `</team-message>` would close its own block early, and
+ * what follows would read as a second message from someone else.
+ */
+function escapeTeamTags(text: string): string {
+    return text.replace(/<(\/?)(team-)/gi, "&lt;$1$2");
 }
 
 function escapeAttr(value: string): string {
@@ -239,25 +247,70 @@ export function isWaiting(sessionId: string): boolean {
 }
 
 /**
+ * Sessions whose turn has been handed to the runtime but has not started yet.
+ * `deliver` can take a while (it may open the session first), and until the
+ * turn is running nobody else reports it busy — a second message in that gap
+ * would start a second turn beside the first.
+ */
+const delivering = new Set<string>();
+
+/** Whether a turn is running, starting or being handed over in this session, in this process. */
+export function isBusyHere(sessionId: string): boolean {
+    return delivering.has(sessionId) || activeTurns.has(sessionId) || (runtime?.isRunning(sessionId) ?? false);
+}
+
+/** The ids of the mail a team turn carries, to put back if it never runs. */
+function mailIds(team: TeamTurnMeta): number[] {
+    return (team.mail ?? []).map((m) => m.id);
+}
+
+/**
+ * Whether a team turn a host queued may still run. One queued behind a busy
+ * thread can outlive the team's stop, or the thread's own membership.
+ */
+export function mayRunTeamTurn(sessionId: string): boolean {
+    const team = teamOf(sessionId);
+    return !!team && !isTeamStopped(team.teamId);
+}
+
+/** A queued team turn will never run: its mail goes back to the inbox for whatever wakes the thread next. */
+export function dropTeamTurn(team: TeamTurnMeta): void {
+    returnToInbox(mailIds(team));
+}
+
+/**
+ * Give the runtime a turn to run in this session, counting the session busy
+ * until the runtime has it going. Rejects when there is no runtime or the
+ * runtime could not start it.
+ */
+export async function deliverTeamTurn(sessionId: string, input: string, team: TeamTurnMeta): Promise<void> {
+    const rt = runtime;
+    if (!rt) throw new Error("thread teams are not available in this process");
+    delivering.add(sessionId);
+    try {
+        await rt.deliver(sessionId, input, team);
+    } finally {
+        delivering.delete(sessionId);
+    }
+}
+
+/**
  * Hand a thread its mail if it can take it now: an idle thread gets a turn
  * with the mail as its prompt. A busy one is left alone — it reads its inbox
  * before its next step, or in wait_for_team, or here again once its turn ends
  * (every runtime calls this as a turn settles).
  */
 export function wakeTeamInbox(sessionId: string): boolean {
-    const rt = runtime;
-    if (!rt) return false;
-    const team = teamOf(sessionId);
-    if (!team || isTeamStopped(team.teamId)) return false;
-    if (rt.isRunning(sessionId) || activeTurns.has(sessionId)) {
+    if (!runtime) return false;
+    if (!mayRunTeamTurn(sessionId)) return false;
+    if (isBusyHere(sessionId)) {
         nudgeWaiters(sessionId);
         return false;
     }
     if (inboxCount(sessionId) === 0) return false;
     const mail = mailViews(takeInbox(sessionId));
     if (mail.length === 0) return false;
-    void Promise.resolve(
-        rt.deliver(sessionId, formatMailForModel(mail), { kind: "mail", teamId: team.teamId, mail }),
-    ).catch(() => {});
+    const team: TeamTurnMeta = { kind: "mail", teamId: teamOf(sessionId)!.teamId, mail };
+    void deliverTeamTurn(sessionId, formatMailForModel(mail), team).catch(() => dropTeamTurn(team));
     return true;
 }

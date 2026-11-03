@@ -7,11 +7,15 @@
  *   runtime.ts  who runs a member's turns, delivery, change notices
  *   tools.ts    spawn_threads, send_message, team_board, wait_for_team, report
  *   prompts.ts  what the model is told
+ *   budget.ts   the spend cap that stops a team
  */
 import { getSetting } from "../settings";
 import { onLedgerRow } from "../sessions/cost-ledger";
-import { getTeamRuntime, isTurnActive } from "./runtime";
+import { isTeamOverBudget, teamBudgetUsd } from "./budget";
+import { emitTeamChange, getTeamRuntime, isTurnActive, nudgeWaiters } from "./runtime";
 import {
+    effectiveState,
+    forgetTeamSession,
     isTeamStopped,
     listTeam,
     markTeamStopped,
@@ -27,6 +31,7 @@ import { moveMember } from "./tools";
 export * from "./store";
 export * from "./runtime";
 export * from "./prompts";
+export * from "./budget";
 export { createTeamTools, maxTeamThreads, moveMember, DEFAULT_MAX_THREADS, type TeamToolContext } from "./tools";
 
 /** The `threadTeams` setting. Off unless turned on. */
@@ -65,10 +70,6 @@ export interface TeamSnapshot {
     };
 }
 
-const BUSY_STATES: ReadonlySet<MemberState> = new Set(["running", "starting", "waiting"]);
-/** How long a busy row may sit unchanged, with nothing here running it, before it reads idle. */
-const STALE_MS = 10 * 60_000;
-
 export function teamSnapshot(teamId: string): TeamSnapshot | null {
     const roster = listTeam(teamId);
     const leadRow = roster.find((m) => m.role === "lead");
@@ -78,16 +79,15 @@ export function teamSnapshot(teamId: string): TeamSnapshot | null {
     const view = (m: (typeof roster)[number]): TeamSnapshotMember => {
         const share = cost.bySession.get(m.sessionId);
         const running = (runtime?.isRunning(m.sessionId) ?? false) || isTurnActive(m.sessionId);
-        // A process that quit mid-team leaves its threads "running" on disk
-        // for good. Nothing here runs it and it has not moved in a while: it
-        // stopped, whatever the row says. (Another process may be running a
-        // long tool call — it reads idle until its next move.)
-        const stale = !running && BUSY_STATES.has(m.state) && Date.now() - m.updatedAt > STALE_MS;
+        // A turn here keeps its row alive with a heartbeat, so only a row
+        // nothing anywhere is running goes stale.
+        const state = running ? m.state : effectiveState(m);
+        const stale = state !== m.state;
         return {
             id: m.sessionId,
             title: m.role === "lead" ? sessionTitle(m.sessionId) : m.title,
             role: m.role,
-            state: stale ? "idle" : m.state,
+            state,
             ...(m.activity && !stale ? { activity: m.activity } : {}),
             running,
             usd: share?.usd ?? 0,
@@ -123,24 +123,39 @@ export function teamSnapshotForSession(sessionId: string): TeamSnapshot | null {
 }
 
 /**
- * Stop a whole team: every running turn in it is cancelled, the members are
- * marked stopped, and no mail starts a new turn until the lead spawns again.
+ * Stop a whole team: the members are marked stopped, every running turn in it
+ * is cancelled, and no mail starts a new turn until the lead spawns again.
+ * Marked first, so a cancelled turn ending finds "stopped" and leaves it — not
+ * "idle", which would read as a thread that could still be woken.
  */
 export function stopTeam(teamId: string): void {
     markTeamStopped(teamId, true);
+    const roster = listTeam(teamId);
+    for (const m of roster) if (m.role === "member") moveMember(m.sessionId, "stopped", null);
     const runtime = getTeamRuntime();
-    for (const m of listTeam(teamId)) {
-        if (runtime?.isRunning(m.sessionId)) runtime.cancel(m.sessionId);
-        if (m.role === "member") moveMember(m.sessionId, "stopped", null);
-    }
+    for (const m of roster) if (runtime?.isRunning(m.sessionId)) runtime.cancel(m.sessionId);
+    // A lead inside wait_for_team returns now, with the stop, instead of at its timeout.
+    nudgeWaiters();
 }
 
-// The budget (threadTeamsBudgetUsd): checked on every bill to a team member,
-// so a team stops within one step of crossing it.
+/**
+ * A session is being deleted: it leaves its team. A lead's team goes with it,
+ * so its threads are stopped first — nobody would be left to read their reports.
+ */
+export function leaveTeam(sessionId: string): void {
+    const team = teamOf(sessionId);
+    if (!team) return;
+    if (team.role === "lead") stopTeam(team.teamId);
+    forgetTeamSession(sessionId);
+    emitTeamChange({ teamId: team.teamId, kind: "members", sessionId });
+    nudgeWaiters();
+}
+
+// The budget: checked on every bill to a team member, so a team stops within
+// one step of crossing it.
 onLedgerRow((sessionPub) => {
-    const budget = getSetting("threadTeamsBudgetUsd");
-    if (typeof budget !== "number" || budget <= 0) return;
+    if (teamBudgetUsd() === null) return;
     const team = teamOf(sessionPub);
     if (!team || isTeamStopped(team.teamId)) return;
-    if (teamCost(team.teamId).usd >= budget) stopTeam(team.teamId);
+    if (isTeamOverBudget(team.teamId)) stopTeam(team.teamId);
 });

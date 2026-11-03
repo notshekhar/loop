@@ -114,7 +114,10 @@ import {
 import type { ProviderId } from "../types";
 import {
     claimTeamRuntime,
-    forgetTeamSession,
+    dropTeamTurn,
+    leaveTeam,
+    mayRunTeamTurn,
+    memberRunConfig,
     onTeamChange,
     releaseTeamRuntime,
     stopTeam,
@@ -435,6 +438,12 @@ function transcriptOf(session: Session, running: boolean): Transcript {
 
 export class RpcServer {
     private sessions = new Map<string, ActiveSession>();
+    /**
+     * Sessions being loaded, so two callers that touch one at once (a team
+     * delivery and a client's subscribe) share one context instead of each
+     * building its own — two would each run turns against their own copy.
+     */
+    private opening = new Map<string, Promise<ActiveSession>>();
     /** Every connected client, for host-wide notices (`announce`). */
     private transports = new Set<Transport>();
     private readonly live: LiveSessionProvider | null;
@@ -1194,7 +1203,7 @@ export class RpcServer {
                 // or killed again by anyone.
                 killSessionShells(id);
                 const deleted = this.manager.delete(id);
-                if (deleted) forgetTeamSession(id);
+                if (deleted) leaveTeam(id);
                 if (deleted) this.announce({ sessionId: id, change: "deleted" });
                 return { ok: deleted, sessionId: id };
             },
@@ -1285,7 +1294,27 @@ export class RpcServer {
             (ctx.pendingTeam ??= []).push({ input, team });
             return;
         }
-        this.startTurn(sessionId, ctx, input, { modelId: ctx.modelId, team, ...(team.agent ? { agent: team.agent } : {}) });
+        this.runTeamTurn(sessionId, ctx, input, team);
+    }
+
+    /**
+     * A team turn, run the way the lead started this thread — its agent and
+     * thinking level, not whatever the last client chose. One whose team has
+     * stopped since it was queued is turned down, its mail back in the inbox.
+     */
+    private runTeamTurn(id: string, ctx: ActiveSession, input: string, team: TeamTurnMeta): void {
+        if (!mayRunTeamTurn(id)) {
+            dropTeamTurn(team);
+            return;
+        }
+        const run = memberRunConfig(id);
+        const agent = run?.agent ?? team.agent;
+        this.startTurn(id, ctx, input, {
+            modelId: ctx.modelId,
+            team,
+            ...(run?.thinkingLevel ? { thinking: run.thinkingLevel } : {}),
+            ...(agent ? { agent } : {}),
+        });
     }
 
     /**
@@ -1324,10 +1353,10 @@ export class RpcServer {
                 })
                 .finally(() => {
                     this.setRunning(id, ctx, false);
-                    const next = ctx.pendingTeam?.shift();
-                    if (next) {
-                        this.startTurn(id, ctx, next.input, { modelId: ctx.modelId, team: next.team });
-                        return;
+                    // A queued turn turned down (its team stopped) makes way for the next.
+                    for (let next = ctx.pendingTeam?.shift(); next; next = ctx.pendingTeam?.shift()) {
+                        this.runTeamTurn(id, ctx, next.input, next.team);
+                        if (ctx.running) return;
                     }
                     wakeTeamInbox(id);
                 }),
@@ -1954,6 +1983,15 @@ export class RpcServer {
             await this.refreshIfBehind(id, existing);
             return existing;
         }
+        const pending = this.opening.get(id);
+        if (pending) return pending;
+        const opened = this.openCtx(id).finally(() => this.opening.delete(id));
+        this.opening.set(id, opened);
+        return opened;
+    }
+
+    /** Load a session from the store into a fresh live context (ensureCtx's slow path). */
+    private async openCtx(id: string): Promise<ActiveSession> {
         const session = await this.manager.open(id);
         // Seeded, not empty. `cost.session` reads this tracker, so an unseeded
         // one reports $0 for a conversation that has cost real money — the

@@ -13,7 +13,6 @@ import {
     type CommandContext,
     type LiveStatus,
     type SessionManager,
-    type TeamTurnMeta,
     type UsageBlock,
 } from "@notshekhar/loop-core";
 import type { Editor, SelectItem, TUI } from "@notshekhar/loop-tui";
@@ -23,7 +22,7 @@ import type { StatusLine } from "./components/status-line";
 import type { AppDeps } from "./deps";
 import type { AppState } from "./state";
 import { makeStateView, type SessionSlot, type SharedState, type SlotManager } from "./slots";
-import { createTurnRunner } from "./turn-runner";
+import { createTurnRunner, type SubmitOptions } from "./turn-runner";
 import { defaultTabName, setTabName } from "./session-title";
 import { showWelcomeBanner } from "./welcome";
 import { showWorkspaceBanners } from "./startup";
@@ -142,11 +141,8 @@ export interface SessionRoster {
     setRemoteRunner(factory: (slot: SessionSlot) => (raw: string) => Promise<void>): void;
 }
 
-/**
- * What a slot's input goes through; `chatOnly` marks a remote client's
- * message, `team` a turn the thread team started (core teams/).
- */
-export type SlotRunner = (raw: string, opts?: { chatOnly?: boolean; team?: TeamTurnMeta }) => Promise<void>;
+/** What a slot's input goes through (see SubmitOptions). */
+export type SlotRunner = (raw: string, opts?: SubmitOptions) => Promise<void>;
 
 export function createSessionRoster(host: SessionRosterHost): SessionRoster {
     const { slots, shared, deps, tui, editor, statusLine, manager, indicator } = host;
@@ -268,7 +264,7 @@ export function createSessionRoster(host: SessionRosterHost): SessionRoster {
             // only forwards what is typed and renders what comes back.
             const runner =
                 slot.remote && remoteRunner ? remoteRunner(slot) : createTurnRunner(viewOf(slot), depsFor(slot), host.ctx);
-            run = (raw: string, opts?: { chatOnly?: boolean; team?: TeamTurnMeta }) => {
+            run = (raw: string, opts?: SubmitOptions) => {
                 const text = raw.trim();
                 if (!slot.firstPrompt && text && !text.startsWith("/") && !text.startsWith("!")) {
                     slot.firstPrompt = text.split("\n")[0].slice(0, 120);

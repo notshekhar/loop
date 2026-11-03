@@ -118,10 +118,13 @@ import {
     maxTeamThreads,
     moveMember,
     REPORT_TOOL,
+    SEND_MESSAGE_TOOL,
     setMemberActivity,
     SPAWN_THREADS_TOOL,
     takeInbox,
     teamOf,
+    touchMember,
+    HEARTBEAT_MS,
     WAIT_FOR_TEAM_TOOL,
     type TeamTurnMeta,
 } from "../teams";
@@ -425,7 +428,16 @@ async function assembleTurnTools(
     // Native agents (Claude Code, Cursor) run their own loop with their own
     // tools; loop's never reach them, so they are not told about these either.
     if (isThreadTeamsEnabled() && !allowedTools?.length && !isNativeAgentProvider(extra.provider)) {
-        Object.assign(toolsForTurn, createTeamTools({ session, modelId, cwd, abortSignal }));
+        Object.assign(
+            toolsForTurn,
+            createTeamTools({
+                session,
+                modelId,
+                cwd,
+                abortSignal,
+                ...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
+            }),
+        );
     }
     // Ask tool: opt-in `askUser` setting (default off) AND a live interactive
     // UI bridge (registered by the CLI at startup; absent in print mode, so
@@ -547,6 +559,7 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
     // call owns the active flag (teams/runtime.ts markTurnActive).
     const outermost = (opts.hookDepth ?? 0) === 0;
     if (outermost) markTurnActive(id, true);
+    const stopHeartbeat = outermost ? startTeamHeartbeat(id) : () => {};
     let failed = false;
     try {
         // A session in no team runs exactly as it always did.
@@ -556,6 +569,7 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
         failed = true;
         throw err;
     } finally {
+        stopHeartbeat();
         if (outermost) markTurnActive(id, false);
         // How the turn ended, for the team panels. Also reached by a lead
         // whose team was created mid-turn (it spawned its first threads).
@@ -567,6 +581,18 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
             setMemberActivity(id, null);
         }
     }
+}
+
+/**
+ * Keep this session's team row fresh while its turn runs, so a long tool call
+ * or wait_for_team never reads as a thread left behind by a dead process
+ * (teams/store.ts STALE_MS). Checked on every beat, not once: a lead's team
+ * can start mid-turn. A no-op for a session in no team.
+ */
+function startTeamHeartbeat(sessionId: string): () => void {
+    const timer = setInterval(() => touchMember(sessionId), HEARTBEAT_MS);
+    (timer as { unref?: () => void }).unref?.();
+    return () => clearInterval(timer);
 }
 
 /**
@@ -1035,59 +1061,44 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
     const shellNotices =
         SHELLS_TOOL_NAME in toolsForTurn ? () => formatShellNotices(takeShellNotices(session.id)) : null;
     // Team mail (teams/) reaches a thread mid-turn here, before its next
-    // step. Unlike the two notices below it is NOT ephemeral: it is saved as
-    // its own entry — through persistChain, so it lands after the step that
-    // preceded it — and spliced back in at the same place on every later
-    // step of this attempt, so the model keeps seeing it and the cached
-    // prefix never moves. A rebuilt attempt reads it from the session.
-    const teamInjections: Array<{ at: number; message: ModelMessage }> = [];
-    const takeTeamMail = teamOf(session.id)
-        ? (at: number): void => {
-              // wait_for_team takes the mail itself and returns it as its result.
-              if (isWaiting(session.id)) return;
-              const team = teamOf(session.id);
-              if (!team) return;
-              const mail = mailViews(takeInbox(session.id));
-              if (mail.length === 0) return;
-              const text = formatMailForModel(mail);
-              teamInjections.push({ at, message: { role: "user", content: text } });
-              const meta: TeamTurnMeta = { kind: "mail", teamId: team.teamId, mail, midTurn: true };
-              persistChain = persistChain
-                  .then(async () => {
-                      const entry: Entry = {
-                          type: "message",
-                          ts: Date.now(),
-                          role: "user",
-                          content: text,
-                          team: meta,
-                      };
-                      await session.append(entry);
-                      emitter.emit("team-message", { id: entry.id ?? "", team: meta, ts: entry.ts });
-                  })
-                  .catch((err) => debugLog("persist", `team mail persistence failed for session ${session.id}:`, err));
-          }
-        : null;
-    const withTeamMail = (messages: ModelMessage[]): ModelMessage[] => {
-        if (teamInjections.length === 0) return messages;
-        const out: ModelMessage[] = [];
-        let k = 0;
-        for (let i = 0; i <= messages.length; i++) {
-            while (k < teamInjections.length && teamInjections[k]!.at === i) out.push(teamInjections[k++]!.message);
-            if (i < messages.length) out.push(messages[i]!);
-        }
-        // An injection past the end (a shorter rebuilt list) still goes in, last.
-        while (k < teamInjections.length) out.push(teamInjections[k++]!.message);
-        return out;
+    // step — added ONCE, at the end of the step it arrives on. What prepareStep
+    // returns is the next step's starting list (AI SDK v7), so it stays where
+    // it went in on every later step and the cached prefix never moves; adding
+    // it again each step would send it twice, three times, and so on. Unlike
+    // the two notices below it is saved as its own entry — through
+    // persistChain, so it lands after the step that preceded it — and a
+    // rebuilt attempt reads it from the session. Checked every step, not once:
+    // a lead's team can start mid-turn.
+    const takeTeamMail = (): ModelMessage | null => {
+        // wait_for_team takes the mail itself and returns it as its result.
+        if (isWaiting(session.id)) return null;
+        const team = teamOf(session.id);
+        if (!team) return null;
+        const mail = mailViews(takeInbox(session.id));
+        if (mail.length === 0) return null;
+        const text = formatMailForModel(mail);
+        const meta: TeamTurnMeta = { kind: "mail", teamId: team.teamId, mail, midTurn: true };
+        persistChain = persistChain
+            .then(async () => {
+                const entry: Entry = { type: "message", ts: Date.now(), role: "user", content: text, team: meta };
+                await session.append(entry);
+                emitter.emit("team-message", { id: entry.id ?? "", team: meta, ts: entry.ts });
+            })
+            .catch((err) => debugLog("persist", `team mail persistence failed for session ${session.id}:`, err));
+        return { role: "user", content: text };
     };
+    // Whether this turn can get team mail at all: the team tools are its
+    // only way into a team, and a member is in one already.
+    const mayGetTeamMail = SEND_MESSAGE_TOOL in toolsForTurn || teamOf(session.id) !== null;
     const basePrepareStep = call.prepareStep;
     const prepareStep =
-        todoNudger || shellNotices || basePrepareStep || takeTeamMail
+        todoNudger || shellNotices || basePrepareStep || mayGetTeamMail
             ? (opts: {
                   messages: ModelMessage[];
                   steps?: ReadonlyArray<{ toolCalls?: ReadonlyArray<{ toolName?: string }> }>;
               }) => {
-                  takeTeamMail?.(opts.messages.length);
-                  const withMail = withTeamMail(opts.messages);
+                  const mail = mayGetTeamMail ? takeTeamMail() : null;
+                  const withMail = mail ? [...opts.messages, mail] : opts.messages;
                   let stepMessages = basePrepareStep ? basePrepareStep({ messages: withMail }).messages : withMail;
                   if (shellNotices) {
                       const notice = shellNotices();
@@ -1520,7 +1531,6 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
             if (outcome === "compacted") {
                 streamError = undefined;
                 pendingFinish = undefined;
-                teamInjections.length = 0;
                 attemptMessages = buildMessages();
                 continue streamAttempts;
             }
@@ -1542,7 +1552,6 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
                 const outcome = await compactOverThreshold(used, modelInfo.contextWindow, "mid-turn");
                 if (outcome === "aborted") break streamAttempts;
                 if (outcome === "declined") midTurnCompaction = false;
-                teamInjections.length = 0;
                 attemptMessages = buildMessages();
                 continue streamAttempts;
             }
@@ -1595,7 +1604,6 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
         await abortableDelay(resumeDelayMs(resumes - 1), abortSignal);
         timing.retryWaited(Date.now() - waitFrom);
         if (abortSignal?.aborted) break streamAttempts;
-        teamInjections.length = 0;
         attemptMessages = buildMessages();
     }
 

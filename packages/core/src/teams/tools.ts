@@ -8,6 +8,8 @@
  */
 import { tool } from "ai";
 import { z } from "zod";
+import { agentExists, getAgentTools } from "../agent/agents";
+import type { ThinkingLevel } from "../agent/thinking";
 import { getSetting } from "../settings";
 import { parseModelId } from "../providers";
 import { SessionManager, type Session } from "../sessions";
@@ -20,8 +22,10 @@ import {
     WAIT_FOR_TEAM_TOOL,
     memberOpeningMessage,
 } from "./prompts";
+import { isTeamOverBudget } from "./budget";
 import {
     addWaiter,
+    deliverTeamTurn,
     emitTeamChange,
     formatMailForModel,
     getTeamRuntime,
@@ -35,13 +39,17 @@ import {
     FINISHED_STATES,
     addTeamMember,
     createTeam,
+    effectiveState,
+    forgetTeamSession,
     isTeamStopped,
     listTeam,
     markTeamStopped,
     postBoardNote,
     postTeamMessages,
     readBoard,
+    removeTeam,
     sessionTitle,
+    setMemberRunConfig,
     setMemberState,
     takeInbox,
     teamOf,
@@ -65,6 +73,8 @@ export interface TeamToolContext {
     session: Session;
     modelId: string;
     cwd: string;
+    /** The lead's thinking level — the threads it starts run at the same one. */
+    thinkingLevel?: ThinkingLevel;
     abortSignal?: AbortSignal;
 }
 
@@ -82,7 +92,7 @@ function rosterText(roster: readonly TeamMemberRow[], selfId: string): string {
     return roster
         .map(
             (m) =>
-                `- "${m.title}" — ${m.role === "lead" ? "lead" : m.state} — id ${m.sessionId}${m.sessionId === selfId ? " (you)" : ""}`,
+                `- "${m.title}" — ${m.role === "lead" ? "lead" : effectiveState(m)} — id ${m.sessionId}${m.sessionId === selfId ? " (you)" : ""}`,
         )
         .join("\n");
 }
@@ -90,6 +100,225 @@ function rosterText(roster: readonly TeamMemberRow[], selfId: string): string {
 function clipTitle(title: string): string {
     const one = title.replace(/\s+/g, " ").trim();
     return one.length > MAX_TITLE_CHARS ? `${one.slice(0, MAX_TITLE_CHARS - 1)}…` : one;
+}
+
+/** A thread spawn_threads has checked and is about to create. */
+interface ThreadPlan {
+    readonly title: string;
+    readonly brief: string;
+    readonly model: string;
+    readonly provider: ProviderId;
+    readonly agent?: string;
+}
+
+interface CreatedThread {
+    readonly session: Session;
+    readonly title: string;
+    readonly brief: string;
+    readonly agent?: string;
+}
+
+type ThreadRequest = { title: string; brief: string; model?: string; agent?: string };
+
+/**
+ * Every thread checked before any is created — a bad model or agent on the
+ * third must not leave the first two running. Returns the plans, or why not.
+ */
+function planThreads(threads: readonly ThreadRequest[], defaultModel: string): ThreadPlan[] | string {
+    const plans: ThreadPlan[] = [];
+    for (const t of threads) {
+        if (!t.title.trim()) return "REJECTED: every thread needs a title.";
+        if (!t.brief.trim()) return `REJECTED: "${t.title}" has no brief. Resend it with what the thread should do.`;
+        const model = t.model?.trim() || defaultModel;
+        let provider: ProviderId;
+        try {
+            provider = parseModelId(model).provider as ProviderId;
+        } catch {
+            return `REJECTED: "${model}" is not a provider/model id.`;
+        }
+        const agent = t.agent?.trim() || undefined;
+        if (agent && !agentExists(agent)) return `REJECTED: there is no agent named "${agent}".`;
+        // A restricted agent gets no team tools (agent/turn.ts), so it could
+        // never report back and its lead would wait on it for good.
+        if (agent && getAgentTools(agent)?.length) {
+            return `REJECTED: the "${agent}" agent has a restricted tool set, so it cannot ${REPORT_TOOL} to you. Run that thread as an unrestricted agent.`;
+        }
+        plans.push({ title: clipTitle(t.title), brief: t.brief, model, provider, ...(agent ? { agent } : {}) });
+    }
+    return plans;
+}
+
+/** Threads WORKING right now. Finished ones stay in the team for good and never count against the cap. */
+function workingThreads(teamId: string): number {
+    return listTeam(teamId).filter((m) => m.role === "member" && !FINISHED_STATES.has(effectiveState(m))).length;
+}
+
+/**
+ * Create every planned thread in the team, or none: a failure partway deletes
+ * the ones already made (and the team, if this call made it).
+ */
+async function createThreads(
+    teamId: string,
+    teamIsNew: boolean,
+    plans: readonly ThreadPlan[],
+    ctx: TeamToolContext,
+): Promise<CreatedThread[]> {
+    const manager = new SessionManager();
+    const created: CreatedThread[] = [];
+    try {
+        for (const [index, plan] of plans.entries()) {
+            // A millisecond apart: ids made in the same one differ only in
+            // their random tail, and a model told to address threads by id
+            // confuses ids that look alike. Apart, they still sort in the
+            // order the lead started them.
+            if (index > 0) await new Promise((resolve) => setTimeout(resolve, 2));
+            const session = await manager.create({ cwd: ctx.cwd, provider: plan.provider, model: plan.model });
+            created.push({
+                session,
+                title: plan.title,
+                brief: plan.brief,
+                ...(plan.agent ? { agent: plan.agent } : {}),
+            });
+            // Named by the lead, so the member never spends a model call
+            // titling itself (session-title.ts leaves a set name alone).
+            await session.setName(plan.title);
+            addTeamMember(teamId, session.id, "starting");
+            // Every later turn runs as this one does, whichever host picks it up.
+            setMemberRunConfig(session.id, {
+                ...(plan.agent ? { agent: plan.agent } : {}),
+                ...(ctx.thinkingLevel ? { thinkingLevel: ctx.thinkingLevel } : {}),
+            });
+        }
+    } catch (err) {
+        for (const c of created) {
+            forgetTeamSession(c.session.id);
+            manager.delete(c.session.id);
+        }
+        if (teamIsNew) removeTeam(teamId);
+        throw err;
+    }
+    return created;
+}
+
+/**
+ * Every earlier member hears who joined — the roster is not in the system
+ * prompt (see prompts.ts), so this mail is how they learn. Only those still
+ * at work are woken for it: a new turn just to read the news would cost a
+ * finished one a model call, so theirs waits in the inbox and arrives with
+ * whatever wakes them next. Returns the earlier members.
+ */
+function announceNewcomers(teamId: string, leadId: string, created: readonly CreatedThread[]): TeamMemberRow[] {
+    const earlier = listTeam(teamId).filter(
+        (m) => m.role === "member" && !created.some((c) => c.session.id === m.sessionId),
+    );
+    if (earlier.length === 0) return earlier;
+    const joined = created.map((c) => `"${c.title}" (id ${c.session.id})`).join(", ");
+    postTeamMessages({
+        teamId,
+        from: leadId,
+        to: earlier.map((m) => m.sessionId),
+        kind: "update",
+        body: `New in the team: ${joined}.`,
+    });
+    return earlier;
+}
+
+/** Hand each new thread its brief. One that will not start is marked failed, so nobody waits on it. */
+async function startThreads(teamId: string, leadId: string, created: readonly CreatedThread[]): Promise<string[]> {
+    const leadTitle = sessionTitle(leadId);
+    const roster = listTeam(teamId);
+    const failed: string[] = [];
+    for (const c of created) {
+        const opening = memberOpeningMessage({
+            leadTitle,
+            title: c.title,
+            brief: c.brief,
+            roster,
+            selfId: c.session.id,
+        });
+        try {
+            await deliverTeamTurn(c.session.id, opening, {
+                kind: "spawn",
+                teamId,
+                from: { id: leadId, title: leadTitle },
+                title: c.title,
+                ...(c.agent ? { agent: c.agent } : {}),
+            });
+        } catch {
+            moveMember(c.session.id, "failed", null);
+            failed.push(c.title);
+        }
+    }
+    return failed;
+}
+
+function spawnResult(
+    teamId: string,
+    created: readonly CreatedThread[],
+    earlier: readonly TeamMemberRow[],
+    failed: readonly string[],
+): string {
+    const alsoInTeam =
+        earlier.length > 0
+            ? `\n\nAlso in your team (finished threads keep their context; message one with ${SEND_MESSAGE_TOOL} to give it more work):\n` +
+              earlier.map((m) => `- "${m.title}" — ${effectiveState(m)} — id ${m.sessionId}`).join("\n")
+            : "";
+    const notStarted =
+        failed.length > 0
+            ? `\n\nThese could not be started and are marked failed: ${failed.map((t) => `"${t}"`).join(", ")}.`
+            : "";
+    return (
+        `Started ${created.length} thread${created.length === 1 ? "" : "s"} (team ${teamId}):\n` +
+        created.map((c) => `- "${c.title}" — id ${c.session.id}`).join("\n") +
+        alsoInTeam +
+        notStarted +
+        `\n\nThey are working in the background. Their messages and reports reach you on their own. Call ${WAIT_FOR_TEAM_TOOL} only when your next step needs their results; otherwise keep working or end your turn.`
+    );
+}
+
+/**
+ * One spawn at a time per lead. Two spawn_threads calls in one step run side
+ * by side, and both would count the same working threads against the cap.
+ */
+const spawnLocks = new Map<string, Promise<unknown>>();
+
+async function underLeadLock<T>(leadId: string, fn: () => Promise<T>): Promise<T> {
+    const run = (spawnLocks.get(leadId) ?? Promise.resolve()).then(fn, fn);
+    const settled = run.catch(() => {});
+    spawnLocks.set(leadId, settled);
+    try {
+        return await run;
+    } finally {
+        if (spawnLocks.get(leadId) === settled) spawnLocks.delete(leadId);
+    }
+}
+
+async function spawnThreads(threads: readonly ThreadRequest[], ctx: TeamToolContext, max: number): Promise<string> {
+    const self = ctx.session.id;
+    if (!getTeamRuntime()) return "REJECTED: thread teams are not available in this process.";
+    const existing = teamOf(self);
+    if (existing && existing.role === "member") {
+        return "REJECTED: you are a thread in a team; only the lead starts threads. Ask the lead with send_message if the work needs another thread.";
+    }
+    const active = existing ? workingThreads(existing.teamId) : 0;
+    if (active + threads.length > max) {
+        return `REJECTED: at most ${max} threads can work at once; ${active} are still working and you asked for ${threads.length} more. Start fewer, wait for some to finish, or give the work to a finished thread with ${SEND_MESSAGE_TOOL}.`;
+    }
+    const plans = planThreads(threads, ctx.modelId);
+    if (typeof plans === "string") return plans;
+    if (existing && isTeamStopped(existing.teamId) && isTeamOverBudget(existing.teamId)) {
+        return "REJECTED: the team was stopped because it reached its budget (threadTeamsBudgetUsd). Finish the job yourself, or ask the user to raise the budget.";
+    }
+
+    const teamId = existing?.teamId ?? createTeam(self);
+    const created = await createThreads(teamId, !existing, plans, ctx);
+    if (existing && isTeamStopped(teamId)) markTeamStopped(teamId, false);
+    emitTeamChange({ teamId, kind: "members" });
+
+    const earlier = announceNewcomers(teamId, self, created);
+    const failed = await startThreads(teamId, self, created);
+    for (const v of earlier) if (!FINISHED_STATES.has(effectiveState(v))) wakeTeamInbox(v.sessionId);
+    return spawnResult(teamId, created, earlier, failed);
 }
 
 export function createSpawnThreadsTool(ctx: TeamToolContext) {
@@ -119,108 +348,7 @@ export function createSpawnThreadsTool(ctx: TeamToolContext) {
                 .min(1)
                 .describe("The threads to start."),
         }),
-        execute: async ({ threads }) => {
-            const self = ctx.session.id;
-            const runtime = getTeamRuntime();
-            if (!runtime) return "REJECTED: thread teams are not available in this process.";
-            const existing = teamOf(self);
-            if (existing && existing.role === "member") {
-                return "REJECTED: you are a thread in a team; only the lead starts threads. Ask the lead with send_message if the work needs another thread.";
-            }
-            // The cap is on threads WORKING at once. Finished threads stay in
-            // the team for good — they keep their context and can be given more
-            // work by message — so they never count against it.
-            const active = existing
-                ? listTeam(existing.teamId).filter((m) => m.role === "member" && !FINISHED_STATES.has(m.state)).length
-                : 0;
-            if (active + threads.length > max) {
-                return `REJECTED: at most ${max} threads can work at once; ${active} are still working and you asked for ${threads.length} more. Start fewer, wait for some to finish, or give the work to a finished thread with ${SEND_MESSAGE_TOOL}.`;
-            }
-            for (const t of threads) {
-                if (!t.title.trim()) return "REJECTED: every thread needs a title.";
-                if (!t.brief.trim())
-                    return `REJECTED: "${t.title}" has no brief. Resend it with what the thread should do.`;
-            }
-
-            const teamId = existing?.teamId ?? createTeam(self);
-            if (existing && isTeamStopped(teamId)) markTeamStopped(teamId, false);
-            const manager = new SessionManager();
-            const leadTitle = sessionTitle(self);
-            const created: Array<{ session: Session; title: string; brief: string; agent?: string }> = [];
-            for (const [index, t] of threads.entries()) {
-                // A millisecond apart: ids made in the same one differ only in
-                // their random tail, and a model told to address threads by id
-                // confuses ids that look alike. Apart, they still sort in the
-                // order the lead started them.
-                if (index > 0) await new Promise((resolve) => setTimeout(resolve, 2));
-                const model = t.model?.trim() || ctx.modelId;
-                let provider: ProviderId;
-                try {
-                    provider = parseModelId(model).provider as ProviderId;
-                } catch {
-                    return `REJECTED: "${model}" is not a provider/model id.`;
-                }
-                const session = await manager.create({ cwd: ctx.cwd, provider, model });
-                const title = clipTitle(t.title);
-                // Named by the lead, so the member never spends a model call
-                // titling itself (session-title.ts leaves a set name alone).
-                await session.setName(title);
-                addTeamMember(teamId, session.id, "starting");
-                created.push({ session, title, brief: t.brief, ...(t.agent ? { agent: t.agent } : {}) });
-            }
-            emitTeamChange({ teamId, kind: "members" });
-
-            // Every earlier member hears who joined — the roster is no longer in
-            // the system prompt (see prompts.ts), so this mail is how they learn.
-            // Only those still at work are woken for it: a new turn just to read
-            // the news would cost a finished one a model call, so theirs waits in
-            // the inbox and arrives with whatever wakes them next.
-            const roster = listTeam(teamId);
-            const earlier = roster.filter(
-                (m) => m.role === "member" && !created.some((c) => c.session.id === m.sessionId),
-            );
-            const veterans = earlier.filter((m) => !FINISHED_STATES.has(m.state));
-            if (earlier.length > 0) {
-                const joined = created.map((c) => `"${c.title}" (id ${c.session.id})`).join(", ");
-                postTeamMessages({
-                    teamId,
-                    from: self,
-                    to: earlier.map((m) => m.sessionId),
-                    kind: "update",
-                    body: `New in the team: ${joined}.`,
-                });
-            }
-
-            for (const c of created) {
-                const opening = memberOpeningMessage({
-                    leadTitle,
-                    title: c.title,
-                    brief: c.brief,
-                    roster,
-                    selfId: c.session.id,
-                });
-                await runtime.deliver(c.session.id, opening, {
-                    kind: "spawn",
-                    teamId,
-                    from: { id: self, title: leadTitle },
-                    title: c.title,
-                    ...(c.agent ? { agent: c.agent } : {}),
-                });
-            }
-            for (const v of veterans) wakeTeamInbox(v.sessionId);
-
-            const alsoInTeam =
-                earlier.length > 0
-                    ? `\n\nAlso in your team (finished threads keep their context; message one with ${SEND_MESSAGE_TOOL} to give it more work):\n` +
-                      earlier.map((m) => `- "${m.title}" — ${m.state} — id ${m.sessionId}`).join("\n")
-                    : "";
-            return (
-                `Started ${created.length} thread${created.length === 1 ? "" : "s"} (team ${teamId}):\n` +
-                created.map((c) => `- "${c.title}" — id ${c.session.id}`).join("\n") +
-                alsoInTeam +
-                `\n\nThey are working in the background. Their messages and reports reach you on their own. Call ${WAIT_FOR_TEAM_TOOL} only when your next step needs their results; otherwise keep working or end your turn.`
-            );
-        },
+        execute: ({ threads }) => underLeadLock(ctx.session.id, () => spawnThreads(threads, ctx, max)),
     });
 }
 
@@ -252,9 +380,13 @@ export function createSendMessageTool(ctx: TeamToolContext) {
                 body: message,
             });
             for (const r of recipients) wakeTeamInbox(r.sessionId);
-            return target === "all"
-                ? `Sent to all ${recipients.length} threads.`
-                : `Sent to "${recipients[0]!.title}".`;
+            const sent =
+                target === "all" ? `Sent to all ${recipients.length} threads.` : `Sent to "${recipients[0]!.title}".`;
+            // Mail to a stopped team waits; without saying so the sender
+            // would wait on an answer that is not coming.
+            return isTeamStopped(team.teamId)
+                ? `${sent} The team is stopped, so nobody will read it until the lead starts threads again.`
+                : sent;
         },
     });
 }
@@ -321,7 +453,7 @@ export function createWaitForTeamTool(ctx: TeamToolContext) {
             const timeoutMs = Math.min(MAX_WAIT_SEC, Math.max(5, timeoutSec ?? DEFAULT_WAIT_SEC)) * 1000;
             const startedAt = Date.now();
             const collected: TeamMailView[] = [];
-            const startState = new Map(roster0.map((m) => [m.sessionId, m.state]));
+            const startState = new Map(roster0.map((m) => [m.sessionId, effectiveState(m)]));
 
             moveMember(self, "waiting", null);
             markWaiting(self, true);
@@ -332,18 +464,20 @@ export function createWaitForTeamTool(ctx: TeamToolContext) {
                     const roster = listTeam(team.teamId);
                     const finished = (id: string) => {
                         const m = roster.find((r) => r.sessionId === id);
-                        return !m || FINISHED_STATES.has(m.state);
+                        return !m || FINISHED_STATES.has(effectiveState(m));
                     };
                     if (mode === "any") {
-                        if (collected.length > 0) {
+                        // "Someone joined" is news, not something to answer —
+                        // it rides along with whatever does end the wait.
+                        if (collected.some((m) => m.kind !== "update")) {
                             outcome = "message";
                             break;
                         }
                         const moved = roster.some(
                             (m) =>
                                 m.sessionId !== self &&
-                                FINISHED_STATES.has(m.state) &&
-                                startState.get(m.sessionId) !== m.state,
+                                FINISHED_STATES.has(effectiveState(m)) &&
+                                startState.get(m.sessionId) !== effectiveState(m),
                         );
                         if (moved) {
                             outcome = "changed";
@@ -392,7 +526,10 @@ export function createWaitForTeamTool(ctx: TeamToolContext) {
             const roster = listTeam(team.teamId);
             const states = roster
                 .filter((m) => m.sessionId !== self && m.role === "member")
-                .map((m) => `- "${m.title}" (id ${m.sessionId}): ${m.state}${m.activity ? ` — ${m.activity}` : ""}`)
+                .map(
+                    (m) =>
+                        `- "${m.title}" (id ${m.sessionId}): ${effectiveState(m)}${m.activity ? ` — ${m.activity}` : ""}`,
+                )
                 .join("\n");
             const head =
                 outcome === "done"

@@ -58,6 +58,20 @@ export function describeTurnFailure(errors: readonly unknown[]): string {
     return rest.length === 0 ? cause : `${cause} (and ${rest.length} more)`;
 }
 
+/** How one input reaches a session's turn runner. */
+export interface SubmitOptions {
+    /** A message from a remote client — never a command here. */
+    readonly chatOnly?: boolean;
+    /** The thread team started this turn (a member's brief, mail that woke it) — drawn as a team card and passed to the turn as such. */
+    readonly team?: TeamTurnMeta;
+    /**
+     * Called instead of queueing when a turn is already running. The queue
+     * is for what the user typed; a team turn that lands there would run as
+     * typed text, so its sender takes it back instead.
+     */
+    readonly onBusy?: () => void;
+}
+
 export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandContext) {
     const {
         tui,
@@ -137,12 +151,7 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
         if (editor.onSubmit) void editor.onSubmit(next);
     };
 
-    /**
-     * `chatOnly`: a message from a remote client — never a command here.
-     * `team`: the thread team started this turn (a member's brief, mail that
-     * woke it) — drawn as a team card and passed to the turn as such.
-     */
-    const onSubmit = async (raw: string, opts?: { chatOnly?: boolean; team?: TeamTurnMeta }) => {
+    const onSubmit = async (raw: string, opts?: SubmitOptions) => {
         const text = raw.trim();
         if (!text) {
             drainNext();
@@ -161,6 +170,10 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
         // background and the other session opens beside it — so making them
         // wait for the turn would be waiting for nothing.
         if (state.busy && !leavesSession(text, commands)) {
+            if (opts?.onBusy) {
+                opts.onBusy();
+                return;
+            }
             queuedMessages.push(text);
             traceEvent("queue", `"${text}" (depth=${queuedMessages.length})`);
             renderPending();

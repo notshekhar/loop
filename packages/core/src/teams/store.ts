@@ -9,6 +9,7 @@
  * mail, never a copy of anything a session already holds.
  */
 import { ulid } from "ulid";
+import type { ThinkingLevel } from "../agent/thinking";
 import { getDb } from "../sessions/db";
 
 export type TeamRole = "lead" | "member";
@@ -27,6 +28,27 @@ export type TeamRole = "lead" | "member";
 export type MemberState = "starting" | "running" | "waiting" | "idle" | "done" | "failed" | "stopped";
 
 export const FINISHED_STATES: ReadonlySet<MemberState> = new Set(["idle", "done", "failed", "stopped"]);
+
+const BUSY_STATES: ReadonlySet<MemberState> = new Set(["running", "starting", "waiting"]);
+
+/**
+ * How often a turn in a team touches its row (agent/turn.ts). A long tool
+ * call or a wait_for_team moves nothing else, and the row must still look
+ * alive to every process reading it.
+ */
+export const HEARTBEAT_MS = 60_000;
+
+/**
+ * How long a busy row may sit untouched before it reads idle: three missed
+ * heartbeats. A process that quit mid-team leaves its threads "running" on
+ * disk for good; past this, nothing is running them, whatever the row says.
+ */
+export const STALE_MS = 3 * HEARTBEAT_MS;
+
+/** What a member is really doing: its row's state, unless that is a busy state gone stale. */
+export function effectiveState(member: Pick<TeamMembership, "state" | "updatedAt">, now = Date.now()): MemberState {
+    return BUSY_STATES.has(member.state) && now - member.updatedAt > STALE_MS ? "idle" : member.state;
+}
 
 export interface TeamMembership {
     readonly teamId: string;
@@ -127,8 +149,14 @@ function toMessage(row: MessageRow): TeamMessage {
     };
 }
 
-/** A new team led by `leadId`. The lead is its first member. */
+/**
+ * The team led by `leadId` — a new one, with the lead as its first member,
+ * unless it already leads one. Two tools in one step (a board note and a
+ * spawn) may both ask, and a second team would orphan the first.
+ */
 export function createTeam(leadId: string): string {
+    const current = teamOf(leadId);
+    if (current?.role === "lead") return current.teamId;
     const db = getDb();
     const id = `tm_${ulid()}`;
     const now = Date.now();
@@ -267,11 +295,78 @@ export function setMemberActivity(sessionId: string, activity: string | null): b
     return true;
 }
 
-/** A session was deleted: it leaves its team, and so does its unread mail. */
+/** Keep a member's row alive while its turn runs (see HEARTBEAT_MS). */
+export function touchMember(sessionId: string): void {
+    getDb().run("UPDATE team_members SET updated_at = ? WHERE session_pub = ?", [Date.now(), sessionId]);
+}
+
+/**
+ * A session was deleted. A member leaves its team, with its unread mail. A
+ * lead takes the team with it: the team is stopped, every member leaves and
+ * the unread mail goes, but the board stays — it is the record of what was
+ * agreed, and the members' own transcripts still point at it.
+ */
 export function forgetTeamSession(sessionId: string): void {
+    const team = teamOf(sessionId);
+    if (!team) return;
     const db = getDb();
-    db.run("DELETE FROM team_members WHERE session_pub = ?", [sessionId]);
-    db.run("DELETE FROM team_messages WHERE to_pub = ? AND delivered_at IS NULL", [sessionId]);
+    db.transaction(() => {
+        if (team.role === "lead") {
+            db.run("UPDATE teams SET stopped_at = ? WHERE id = ?", [Date.now(), team.teamId]);
+            db.run(
+                "DELETE FROM team_member_runs WHERE session_pub IN (SELECT session_pub FROM team_members WHERE team_id = ?)",
+                [team.teamId],
+            );
+            db.run("DELETE FROM team_members WHERE team_id = ?", [team.teamId]);
+            db.run("DELETE FROM team_messages WHERE team_id = ? AND kind != 'board' AND delivered_at IS NULL", [
+                team.teamId,
+            ]);
+            return;
+        }
+        db.run("DELETE FROM team_member_runs WHERE session_pub = ?", [sessionId]);
+        db.run("DELETE FROM team_members WHERE session_pub = ?", [sessionId]);
+        db.run("DELETE FROM team_messages WHERE to_pub = ? AND delivered_at IS NULL", [sessionId]);
+    })();
+}
+
+/** Undo a team that never got going: its rows and its mail, board included. */
+export function removeTeam(teamId: string): void {
+    const db = getDb();
+    db.transaction(() => {
+        db.run(
+            "DELETE FROM team_member_runs WHERE session_pub IN (SELECT session_pub FROM team_members WHERE team_id = ?)",
+            [teamId],
+        );
+        db.run("DELETE FROM team_members WHERE team_id = ?", [teamId]);
+        db.run("DELETE FROM team_messages WHERE team_id = ?", [teamId]);
+        db.run("DELETE FROM teams WHERE id = ?", [teamId]);
+    })();
+}
+
+/** How a thread runs its turns, as the lead started it — whichever process runs them. */
+export interface MemberRunConfig {
+    readonly agent?: string;
+    readonly thinkingLevel?: ThinkingLevel;
+}
+
+export function setMemberRunConfig(sessionId: string, config: MemberRunConfig): void {
+    getDb().run(
+        "INSERT OR REPLACE INTO team_member_runs (session_pub, agent, thinking, created_at) VALUES (?, ?, ?, ?)",
+        [sessionId, config.agent ?? null, config.thinkingLevel ?? null, Date.now()],
+    );
+}
+
+export function memberRunConfig(sessionId: string): MemberRunConfig | null {
+    const row = getDb()
+        .query<{ agent: string | null; thinking: string | null }, [string]>(
+            "SELECT agent, thinking FROM team_member_runs WHERE session_pub = ?",
+        )
+        .get(sessionId);
+    if (!row) return null;
+    return {
+        ...(row.agent ? { agent: row.agent } : {}),
+        ...(row.thinking ? { thinkingLevel: row.thinking as ThinkingLevel } : {}),
+    };
 }
 
 /**
@@ -327,6 +422,14 @@ export function takeInbox(sessionId: string): TeamMessage[] {
         taken = rows.map((row) => ({ ...toMessage(row), deliveredAt: now }));
     })();
     return taken;
+}
+
+/** Mark taken mail unread again — a turn that was meant to read it never ran. */
+export function returnToInbox(messageIds: readonly number[]): void {
+    if (messageIds.length === 0) return;
+    getDb().run(`UPDATE team_messages SET delivered_at = NULL WHERE id IN (${messageIds.map(() => "?").join(",")})`, [
+        ...messageIds,
+    ]);
 }
 
 export function inboxCount(sessionId: string): number {
