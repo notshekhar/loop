@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.21.34] - 2026-11-03
+
+### Fixed
+
+- **Team mail is sent to the model once.** Mail that reached a thread mid-turn was added again on every later step, so the model saw it two, three, four times and the prompt cache broke. It now goes in once, on the step it arrives.
+- **Threads no longer get two turns at once.** A second message that arrived while the first was still starting a turn used to start another beside it; mail whose delivery fails goes back to the inbox instead of being lost.
+- **Stale threads read idle sooner.** A running turn keeps its thread's row alive every minute, so a thread left "running" by a loop that quit reads idle after 3 minutes instead of 10.
+- **Stops and budgets hold.** Stopping a team marks every thread stopped before cancelling it and wakes a lead waiting on it; turns queued before the stop don't run, and a team stopped by its budget can't be restarted by another spawn.
+- **spawn_threads checks everything first.** An unknown model or agent, or an agent that can't report back, is turned down before any thread is created; a spawn that fails partway cleans up, and two spawns in one step can't go over the thread limit.
+- **Threads keep their own agent and thinking level** for every turn, in the TUI and the desktop app, instead of borrowing the tab in front.
+- **Deleting a lead dissolves its team** and stops its threads; the board notes stay.
+
 ## [0.21.33] - 2026-10-31
 
 ### Changed
