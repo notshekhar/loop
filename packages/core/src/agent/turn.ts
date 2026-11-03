@@ -1048,14 +1048,27 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
     // No-op when no extensions are loaded.
     providerOptions = applyProviderOptions(providerOptions, turnContext) as typeof providerOptions;
 
-    // Todo staleness nudge (prepareStep seam): when the checklist has gone
-    // unmaintained for many tool calls, append an ephemeral system-reminder to
-    // the next request only — never persisted, so the prompt-cache prefix and
-    // the transcript stay clean. Layered AFTER the caching prepareStep so the
-    // cache breakpoint lands on stable history, with the nudge as uncached tail.
+    // One-step notices: a shell exit or a todo nudge goes on the end of ONE
+    // request and is never saved. What prepareStep returns is the next step's
+    // starting list (AI SDK v7), so each is taken back out on the step after —
+    // otherwise it would sit in every later step of the turn while a rebuilt
+    // attempt or the next turn never had it. Appended AFTER the caching
+    // prepareStep, so the cache breakpoint stays on history that lasts and
+    // taking a notice out never moves the cached prefix. The SDK carries the
+    // same objects forward, so they are recognised by identity.
+    const oneStepNotices = new WeakSet<ModelMessage>();
+    const oneStepNotice = (content: string): ModelMessage => {
+        const message: ModelMessage = { role: "user", content };
+        oneStepNotices.add(message);
+        return message;
+    };
+    const withoutOneStepNotices = (messages: ModelMessage[]): ModelMessage[] =>
+        messages.some((m) => oneStepNotices.has(m)) ? messages.filter((m) => !oneStepNotices.has(m)) : messages;
+    // Todo staleness nudge: when the checklist has gone unmaintained for many
+    // tool calls, a system-reminder rides the next request as a one-step notice.
     const todoNudger = TODO_TOOL_NAME in toolsForTurn ? createTodoNudger(() => getSessionTodos(session.id)) : null;
-    // Background shells announce their own exits on the same seam: a shell
-    // that finished between steps is reported once, then cleared. Without it
+    // Background shells announce their own exits the same way: a shell that
+    // finished between steps is reported once, on one request, then cleared. Without it
     // "you will be told when it exits" is a promise the tool cannot keep, and
     // the model falls back to sleeping and polling.
     const shellNotices =
@@ -1065,7 +1078,7 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
     // returns is the next step's starting list (AI SDK v7), so it stays where
     // it went in on every later step and the cached prefix never moves; adding
     // it again each step would send it twice, three times, and so on. Unlike
-    // the two notices below it is saved as its own entry — through
+    // the one-step notices above it is saved as its own entry — through
     // persistChain, so it lands after the step that preceded it — and a
     // rebuilt attempt reads it from the session. Checked every step, not once:
     // a lead's team can start mid-turn.
@@ -1097,14 +1110,15 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
                   messages: ModelMessage[];
                   steps?: ReadonlyArray<{ toolCalls?: ReadonlyArray<{ toolName?: string }> }>;
               }) => {
+                  const carried = withoutOneStepNotices(opts.messages);
                   const mail = mayGetTeamMail ? takeTeamMail() : null;
-                  const withMail = mail ? [...opts.messages, mail] : opts.messages;
+                  const withMail = mail ? [...carried, mail] : carried;
                   let stepMessages = basePrepareStep ? basePrepareStep({ messages: withMail }).messages : withMail;
                   if (shellNotices) {
                       const notice = shellNotices();
                       if (notice) {
                           debugLog("shells", `exit notice injected (session ${session.id})`);
-                          stepMessages = [...stepMessages, { role: "user", content: notice }];
+                          stepMessages = [...stepMessages, oneStepNotice(notice)];
                       }
                   }
                   if (todoNudger) {
@@ -1115,7 +1129,7 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
                       const nudge = todoNudger(calls);
                       if (nudge) {
                           debugLog("todo", `nudge injected after ${calls.length} tool calls (session ${session.id})`);
-                          stepMessages = [...stepMessages, { role: "user", content: nudge }];
+                          stepMessages = [...stepMessages, oneStepNotice(nudge)];
                       }
                   }
                   return { messages: stepMessages };
