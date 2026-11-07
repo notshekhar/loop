@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.21.37] - 2026-11-07
+
+### Added
+
+- **Session notes.** `/note <text>` keeps a note in the current session, and `/notes` opens them: Enter on a note offers **submit** (sent as your next message, then taken off the list) or **delete**, and the list can add a note or remove them all. Both work mid-turn, while a reply is still streaming; a submitted note queues behind the running turn like anything you type. Notes belong to one session only, and deleting the session deletes them.
+
 ## [0.21.36] - 2026-11-07
 
 ### Fixed
