@@ -73,7 +73,7 @@ describe("welcome banner rule", () => {
     const banner = () =>
         new WelcomeBanner(tui, {
             name: "x",
-            model: "p/m",
+            model: () => "p/m",
             session: "unsaved",
             agent: null,
             branch: "main",

@@ -13,15 +13,19 @@ import { isLightTheme, theme, verticalRule } from "../ui/theme";
  * whichever UI mode and light/dark theme is in play rather than pinning the
  * dark palette's hexes.
  *
- * Static by design — it renders once and never animates, so it costs nothing
- * after it scrolls up into the terminal's scrollback.
+ * Never animates; it repaints only when the model it reports changes, so it
+ * costs nothing after it scrolls up into the terminal's scrollback.
  */
 
 export interface WelcomeBannerInfo {
     /** Greeting name (OS username). */
     name: string;
-    /** "provider/model" id, or empty when no model is selected. */
-    model: string;
+    /**
+     * The live "provider/model" id, or empty when no model is selected. Read
+     * on every render rather than copied once: /model, /provider and Ctrl+P
+     * change it after the banner is on screen, and a copy goes stale.
+     */
+    model: () => string;
     /** Session id or "unsaved". */
     session: string;
     /** Non-default agent name, or null. */
@@ -68,6 +72,7 @@ function barColors(rows: number): Array<string | null> {
 
 export class WelcomeBanner implements Component {
     private cachedWidth?: number;
+    private cachedModel?: string;
     private cachedLines?: string[];
     /** Optional "update available" line, set asynchronously after the network check. */
     private updateNotice?: string;
@@ -90,13 +95,13 @@ export class WelcomeBanner implements Component {
     }
 
     /** The label/value rows, in display order. */
-    private rows(): Array<readonly [string, string]> {
+    private rows(model: string): Array<readonly [string, string]> {
         const rows: Array<readonly [string, string]> = [];
         if (this.info.version) rows.push(["version", theme.fg("text", this.info.version)]);
         rows.push([
             "model",
-            this.info.model
-                ? theme.fg("text", this.info.model)
+            model
+                ? theme.fg("text", model)
                 : theme.fg("warning", "no model — run /login or /provider"),
         ]);
         if (this.info.branch) rows.push(["branch", theme.fg("text", this.info.branch)]);
@@ -110,9 +115,10 @@ export class WelcomeBanner implements Component {
     }
 
     render(width: number): string[] {
-        if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
+        const model = this.info.model();
+        if (this.cachedLines && this.cachedWidth === width && this.cachedModel === model) return this.cachedLines;
 
-        const rows = this.rows();
+        const rows = this.rows(model);
         const labelWidth = Math.max(...rows.map(([label]) => label.length));
 
         // Everything that sits beside the gradient rule, in order.
@@ -160,6 +166,7 @@ export class WelcomeBanner implements Component {
 
         this.cachedLines = padded;
         this.cachedWidth = width;
+        this.cachedModel = model;
         return padded;
     }
 }

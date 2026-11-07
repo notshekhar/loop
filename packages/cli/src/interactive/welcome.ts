@@ -104,7 +104,7 @@ function gitBranch(cwd: string): string | null {
 export function showWelcomeBanner(history: ChatHistory, state: AppState, deps: AppDeps): void {
     const banner = new WelcomeBanner(deps.tui, {
         name: username(),
-        model: state.modelId,
+        model: () => state.modelId,
         session: state.session?.id ?? "unsaved",
         agent: state.agent !== DEFAULT_AGENT_NAME ? state.agent : null,
         branch: gitBranch(state.cwd),

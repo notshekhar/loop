@@ -139,6 +139,26 @@ async function testBoot(): Promise<void> {
     });
 }
 
+/** The masthead's model row follows a model switched after it is on screen. */
+async function testBannerFollowsModel(): Promise<void> {
+    const provider = { name: "fake", sdk: "anthropic", baseURL: "http://127.0.0.1:1", apiKey: "k" };
+    const auth = {
+        active: "custom:fake",
+        customProviders: {
+            fake: { ...provider, models: [{ id: "first", name: "First" }, { id: "second", name: "Second" }] },
+        },
+    };
+    await withSession({ settings: '{"defaultModel": "custom:fake/first"}' }, async (s) => {
+        s.writeHome(".loop/auth.json", JSON.stringify(auth));
+        await s.pump(5);
+        const modelRow = () => s.screenRows().find((r) => /\bmodel\s+custom:/.test(r)) ?? "";
+        check(modelRow().includes("custom:fake/first"), "the masthead shows the starting model", s.screenRows());
+
+        await s.send("/model custom:fake/second\r", 1.5);
+        check(modelRow().includes("custom:fake/second"), "the masthead shows the switched model", s.screenRows());
+    });
+}
+
 /** A conversation past the fold is printed once, in order. */
 async function testNoDuplicatesWhileGrowing(): Promise<void> {
     await withSession({ settings: NOIR }, async (s) => {
@@ -1560,6 +1580,7 @@ const SCENARIOS: Record<string, () => Promise<void>> = {
     wheel: testWheelScrollsTheDocument,
     pinned: testPinnedInput,
     new: testNewSession,
+    "banner-model": testBannerFollowsModel,
     clear: testClearScreen,
     resize: testResize,
     "alt-screen": testAltScreenKeepsScrollbackClean,
