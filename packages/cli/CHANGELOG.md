@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.21.36] - 2026-11-07
+
+### Fixed
+
+- **The masthead shows the model you switched to.** /model, /provider and Ctrl+P changed the model and the status line, but the banner at the top kept the one loop started with.
+- **A lead hears how its threads ended.** A thread that stops or fails without reporting now tells its lead, which used to wait for a report that never came. Stopping a team leaves the lead running and kills its threads' shells, and /team and /lead skip the busy queue so a stop lands during wait_for_team.
+- **Background shells stay with their session.** A shell started before the first message joins the session it creates, /new and /resume open beside a running shell instead of replacing it, and a shell that has exited can still be killed by id or session.
+- **Shell logs stop growing.** A log is capped at 32 MB, keeping the newest 8 MB, and a session's logs are cleared seven days after their last write.
+
 ## [0.21.35] - 2026-11-04
 
 ### Fixed
