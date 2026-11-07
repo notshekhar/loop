@@ -323,7 +323,11 @@ export function attachCmuxReporter(bus: AgentStatusBus | null, opts: CmuxReporte
                   ? "Working"
                   : "Idle";
         const priority = style.priority ? ` --priority=${style.priority}` : "";
-        v1(`set_status ${STATUS_KEY} ${label} --icon=${style.icon} --color=${style.color}${priority} ${paneTarget}`);
+        // --pid ties the pane to a running `loop` agent, which is what puts
+        // loop's mark on the cmux tab. clear_status drops it again on exit.
+        v1(
+            `set_status ${STATUS_KEY} ${label} --icon=${style.icon} --color=${style.color}${priority} --pid=${process.pid} ${paneTarget}`,
+        );
     }
 
     /**

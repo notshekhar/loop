@@ -29,13 +29,18 @@
  * read comes back empty and the output looks lost. Writing through the fd
  * keeps the byte counter and the file exactly equal at all times, which is
  * what makes an offset read trustworthy.
+ *
+ * Offsets count every byte the shell ever printed, while the file holds only
+ * its recent part (shell-logs.ts): `logStart` is the offset of the file's first
+ * byte. A read is capped well below what the file keeps, so it never reaches
+ * for a byte that has been dropped.
  */
 import { closeSync, mkdirSync, openSync, readSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
-import { getConfigDir } from "../../brand";
 import { debugLog } from "../../debug";
 import { killProcessTree, killTrackedDetachedChildren, sanitizeBinaryOutput, untrackDetachedChildPid } from "./shell";
+import { MAX_LOG_BYTES, compactLog, pruneShellLogs, shellLogRoot } from "./shell-logs";
 
 /** Live shells per session. Beyond this, starting another is refused — the cap
  * replaces the timeout as the thing that stops a runaway from accumulating. */
@@ -75,6 +80,14 @@ interface ShellRecord extends ShellInfo {
     child: ChildProcess;
     /** Open fd for the log, or undefined when it could not be written. */
     fd: number | undefined;
+    /** Offset of the log file's first byte in the shell's whole output. */
+    logStart: number;
+    /**
+     * The shell's pipes are still open. They outlive it when it leaves a
+     * process behind (`server &`), which is why its process group can only be
+     * trusted to exist, and be killed, until they close.
+     */
+    outputOpen: boolean;
     /** Exit not yet reported to the model (see takeShellNotices). */
     noticePending: boolean;
     /** Set by killShell, so the exit handler can tell a kill from a crash. */
@@ -112,7 +125,7 @@ function slug(sessionId: string | undefined): string {
 }
 
 function logDir(sessionId: string | undefined): string {
-    return join(getConfigDir(), "shells", slug(sessionId));
+    return join(shellLogRoot(), slug(sessionId));
 }
 
 /**
@@ -148,7 +161,16 @@ function emit(rec: ShellRecord): void {
 }
 
 function toInfo(rec: ShellRecord): ShellInfo {
-    const { child: _child, fd: _fd, noticePending: _n, killRequested: _k, lastEmitAt: _e, ...info } = rec;
+    const {
+        child: _child,
+        fd: _fd,
+        logStart: _l,
+        outputOpen: _o,
+        noticePending: _n,
+        killRequested: _k,
+        lastEmitAt: _e,
+        ...info
+    } = rec;
     return { ...info, preview: [...rec.preview] };
 }
 
@@ -176,6 +198,7 @@ export interface StartShellOptions {
 
 /** Register a spawned child as a background shell and start logging it. */
 export function registerShell(opts: StartShellOptions): ShellInfo {
+    pruneShellLogs();
     const b = bucket(opts.sessionId);
     const id = `bash_${++b.counter}`;
     const dir = logDir(opts.sessionId);
@@ -210,6 +233,8 @@ export function registerShell(opts: StartShellOptions): ShellInfo {
         promoted: opts.promoted === true,
         child: opts.child,
         fd,
+        logStart: 0,
+        outputOpen: true,
         noticePending: false,
         killRequested: false,
         lastEmitAt: 0,
@@ -226,8 +251,6 @@ export function registerShell(opts: StartShellOptions): ShellInfo {
         rec.exitCode = code;
         rec.endedAt = Date.now();
         rec.noticePending = true;
-        closeLog(rec);
-        if (rec.pid) untrackDetachedChildPid(rec.pid);
         emit(rec);
     };
     opts.child.on("exit", (code, signal) => {
@@ -238,7 +261,10 @@ export function registerShell(opts: StartShellOptions): ShellInfo {
     opts.child.on("error", (err) => {
         debugLog("shells", `${id} failed:`, err);
         settle("failed", null);
+        releaseOutput(rec);
     });
+    // Not on exit: whatever the shell left behind is still writing, and still ours to kill.
+    opts.child.on("close", () => releaseOutput(rec));
 
     emit(rec);
     return toInfo(rec);
@@ -262,19 +288,33 @@ function closeLog(rec: ShellRecord): void {
     rec.fd = undefined;
 }
 
+/** Nothing more can arrive: the log closes, and the pid stops being ours. */
+function releaseOutput(rec: ShellRecord): void {
+    rec.outputOpen = false;
+    closeLog(rec);
+    if (rec.pid) untrackDetachedChildPid(rec.pid);
+}
+
+function appendToLog(rec: ShellRecord, data: Buffer): void {
+    if (rec.fd === undefined) return;
+    try {
+        // Counted only once the bytes are actually on disk, so a read can never
+        // be pointed at output that is not there yet.
+        rec.bytes += writeSync(rec.fd, data);
+        if (rec.bytes - rec.logStart > MAX_LOG_BYTES) {
+            const compacted = compactLog(rec.logPath, rec.fd, rec.bytes - rec.logStart);
+            rec.fd = compacted.fd;
+            rec.logStart = rec.bytes - compacted.kept;
+        }
+    } catch (err) {
+        debugLog("shells", `log write failed for ${rec.id}:`, err as Error);
+        closeLog(rec);
+    }
+}
+
 function write(rec: ShellRecord, data: Buffer): void {
     pushPreview(rec, data.toString("utf-8"));
-    if (rec.fd !== undefined) {
-        try {
-            writeSync(rec.fd, data);
-        } catch (err) {
-            debugLog("shells", `log write failed for ${rec.id}:`, err as Error);
-            closeLog(rec);
-        }
-    }
-    // Counted only once the bytes are actually on disk, so a read can never
-    // be pointed at output that is not there yet.
-    rec.bytes += data.length;
+    appendToLog(rec, data);
     const now = Date.now();
     if (now - rec.lastEmitAt >= PREVIEW_EMIT_MS) {
         rec.lastEmitAt = now;
@@ -331,7 +371,7 @@ export function readShell(
             const rfd = openSync(rec.logPath, "r");
             try {
                 const buf = Buffer.alloc(end - start);
-                const read = readSync(rfd, buf, 0, end - start, start);
+                const read = readSync(rfd, buf, 0, end - start, start - rec.logStart);
                 text = sanitizeBinaryOutput(buf.subarray(0, read).toString("utf-8"));
             } finally {
                 closeSync(rfd);
@@ -364,15 +404,16 @@ export function readShell(
 export function killShell(sessionId: string | undefined, id: string): ShellInfo | undefined {
     const rec = bucket(sessionId).byId.get(id);
     if (!rec) return undefined;
+    // An exited shell can still have left processes behind: the tree goes either way.
+    if (rec.outputOpen && rec.pid) killProcessTree(rec.pid);
     if (rec.status === "running") {
         rec.killRequested = true;
-        if (rec.pid) killProcessTree(rec.pid);
         // The exit handler settles status; if the child is already gone and no
         // exit fires, mark it here so the entry can't sit "running" forever.
         if (rec.child.exitCode !== null || rec.child.signalCode) {
             rec.status = "killed";
             rec.endedAt = Date.now();
-            closeLog(rec);
+            releaseOutput(rec);
             emit(rec);
         }
     }
@@ -396,17 +437,34 @@ export function takeShellNotices(sessionId: string | undefined): ShellInfo[] {
     return out;
 }
 
-/** Kill every shell in one session (session end, /new). */
+/** Kill every shell in one session, and what any of them left behind. Returns how many were running. */
 export function killSessionShells(sessionId: string | undefined): number {
     const b = bucket(sessionId);
     let killed = 0;
     for (const rec of b.byId.values()) {
-        if (rec.status === "running") {
-            killShell(sessionId, rec.id);
-            killed++;
-        }
+        if (rec.status === "running") killed++;
+        if (rec.status === "running" || rec.outputOpen) killShell(sessionId, rec.id);
     }
     return killed;
+}
+
+/**
+ * A session now exists where there was none: it takes the shells started
+ * before it did (`/shells run` ahead of the first message), or they would sit
+ * in the shared slate where neither `/shells` nor the agent looks any more.
+ * The shared counter is left alone: an adopted shell keeps its log, and a new
+ * shell there must not reuse that file.
+ */
+export function adoptSharedShells(sessionId: string): void {
+    const shared = sessions.get(SHARED);
+    if (!shared) return;
+    const b = bucket(sessionId);
+    for (const rec of shared.byId.values()) {
+        rec.id = `bash_${++b.counter}`;
+        b.byId.set(rec.id, rec);
+        emit(rec);
+    }
+    shared.byId.clear();
 }
 
 /** Kill everything, everywhere — the process is going away. */

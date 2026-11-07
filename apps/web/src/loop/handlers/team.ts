@@ -53,6 +53,7 @@ export function teamSnapshotOf(raw: unknown): TeamSnapshot | null {
   return {
     teamId: raw.teamId,
     stopped: raw.stopped === true,
+    overBudget: raw.overBudget === true,
     lead,
     members: (Array.isArray(raw.members) ? raw.members : [])
       .map(memberOf)

@@ -267,6 +267,75 @@ async function testClearScreen(): Promise<void> {
     });
 }
 
+/** A local stand-in for a provider, so a screen test can send a real first message. */
+function fakeModelServer(port: number, reply: string): { stop(): void } {
+    const event = (e: { type: string }) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`;
+    const usage = { input_tokens: 5, output_tokens: 1 };
+    const message = { id: "m", type: "message", role: "assistant", model: "fake-1", content: [], usage };
+    const body = [
+        { type: "message_start", message: { ...message, stop_reason: null } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: reply } },
+        { type: "content_block_stop", index: 0 },
+        { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } },
+        { type: "message_stop" },
+    ]
+        .map(event)
+        .join("");
+    const server = Bun.serve({
+        port,
+        hostname: "127.0.0.1",
+        fetch: () => new Response(body, { headers: { "content-type": "text/event-stream" } }),
+    });
+    return { stop: () => server.stop(true) };
+}
+
+/**
+ * Shells follow the session they belong to. One started before the first
+ * message joins the session that message creates; a session with one running
+ * is not replaced by /new, and the panel never shows another session's rows.
+ */
+async function testShellsFollowTheSession(): Promise<void> {
+    const port = 47394;
+    const server = fakeModelServer(port, "fake-reply");
+    const provider = { name: "fake", sdk: "anthropic", baseURL: `http://127.0.0.1:${port}`, apiKey: "k" };
+    const auth = {
+        active: "custom:fake",
+        customProviders: { fake: { ...provider, models: [{ id: "fake-1", name: "Fake" }] } },
+    };
+    try {
+        await withSession({ settings: '{"defaultModel": "custom:fake/fake-1"}' }, async (s) => {
+            s.writeHome(".loop/auth.json", JSON.stringify(auth));
+            await s.pump(5);
+            const onScreen = (text: string) => s.screenRows().some((r) => r.includes(text));
+
+            await s.send("/shells run sleep 7601\r", 1.5);
+            await s.send("hello\r", 3);
+            check(onScreen("fake-reply"), "the first message was answered", s.screenRows().slice(-12));
+            await s.send("/shells\r", 1.5);
+            check(
+                onScreen("bash_1  running"),
+                "/shells still lists the shell started before it",
+                s.screenRows().slice(-12),
+            );
+
+            await s.send("/new\r", 2.5);
+            check(onScreen("keeps running in the background"), "/new keeps a session with a shell running");
+            check(!onScreen("sleep 7601"), "the new session's panel has no row of the old one's", s.screenRows());
+
+            await s.send("\x13", 1);
+            // Past "+ New session" and this session, to the one with the shell.
+            await s.send("\x1b[B", 0.5);
+            await s.send("\x1b[B", 0.5);
+            await s.send("\r", 2);
+            check(onScreen("[~] bash_1"), "going back shows the shell in the panel again", s.screenRows().slice(-12));
+            await s.send("/shells kill all\r", 1.5);
+        });
+    } finally {
+        server.stop();
+    }
+}
+
 /**
  * A background shell appears in the pinned panel without disturbing the
  * conversation above it — and killing it does not strand a band.
@@ -1496,6 +1565,7 @@ const SCENARIOS: Record<string, () => Promise<void>> = {
     "alt-screen": testAltScreenKeepsScrollbackClean,
     shells: testShellsPanel,
     "shells-esc": testShellsSurviveEsc,
+    "shells-sessions": testShellsFollowTheSession,
     "mcp-surfaces": testMcpSurfaces,
     "mcp-panel": testMcpPanel,
     nav: testNavigationIsFocusOnly,

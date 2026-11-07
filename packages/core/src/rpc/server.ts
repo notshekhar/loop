@@ -427,7 +427,7 @@ export interface SessionStatusNotice {
     readonly running?: boolean;
     /** change "team": which team, and what moved in it (teams/runtime.ts TeamChange). */
     readonly teamId?: string;
-    readonly teamChange?: "members" | "activity" | "cost" | "board";
+    readonly teamChange?: "members" | "activity" | "cost" | "board" | "budget";
 }
 
 /** A session's saved branch as loop's transcript, its checklist with it. */
@@ -1273,9 +1273,9 @@ export class RpcServer {
                           : undefined;
                 if (!teamId) throw new Error("team.stop needs a teamId or a sessionId in a team");
                 stopTeam(teamId);
-                // A turn in a TUI-run session is the TUI's to stop.
-                const snapshot = teamSnapshot(teamId);
-                for (const member of snapshot ? [snapshot.lead, ...snapshot.members] : []) {
+                // A turn in a TUI-run session is the TUI's to stop. The lead's
+                // keeps going, as it does in stopTeam.
+                for (const member of teamSnapshot(teamId)?.members ?? []) {
                     this.live?.get(member.id)?.cancel();
                 }
                 return { ok: true, teamId };

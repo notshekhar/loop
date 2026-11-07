@@ -15,6 +15,7 @@ import {
     dropTeamTurn,
     mayRunTeamTurn,
     memberRunConfig,
+    onTeamChange,
     parseModelId,
     releaseTeamRuntime,
     sessionTitle,
@@ -210,6 +211,12 @@ export function createTeamSessions(host: TeamSessionsHost): TeamSessions {
     };
 
     const offChange = slots.onChange(drainPending);
+    // Nothing else says why every thread just stopped, and the lead may be out of sight.
+    const offBudget = onTeamChange((change) => {
+        if (change.kind !== "budget") return;
+        const lead = teamSnapshot(change.teamId)?.lead.title ?? "the team";
+        say(warn("team stopped") + dim(` — “${lead}” reached its budget, so every thread was cancelled`));
+    });
 
     claimTeamRuntime(owner, {
         deliver: async (sessionId, input, team) => {
@@ -268,7 +275,7 @@ export function createTeamSessions(host: TeamSessionsHost): TeamSessions {
         }
         if (sub === "stop") {
             stopTeam(team.teamId);
-            say(warn("team stopped") + dim(" — every running thread was cancelled; the lead can start new ones"));
+            say(warn("team stopped") + dim(" — every thread and its shells were stopped; the lead can start new ones"));
             return;
         }
         const snapshot = teamSnapshot(team.teamId);
@@ -284,7 +291,7 @@ export function createTeamSessions(host: TeamSessionsHost): TeamSessions {
         const working = snapshot.members.filter((m) => m.state === "running" || m.state === "starting").length;
         const pick = await deps.selectOnce(
             items,
-            `Team · ${snapshot.members.length} thread${snapshot.members.length === 1 ? "" : "s"}${working ? ` · ${working} working` : ""} · ${usd(snapshot.cost.usd)}`,
+            `Team · ${snapshot.members.length} thread${snapshot.members.length === 1 ? "" : "s"}${working ? ` · ${working} working` : ""}${snapshot.overBudget ? " · stopped at its budget" : ""} · ${usd(snapshot.cost.usd)}`,
         );
         if (!pick) return;
         if (pick.value === STOP) return manageTeam("stop");
@@ -306,6 +313,7 @@ export function createTeamSessions(host: TeamSessionsHost): TeamSessions {
         teamLabel,
         dispose: () => {
             offChange();
+            offBudget();
             releaseTeamRuntime(owner);
         },
     };

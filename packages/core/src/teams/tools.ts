@@ -13,6 +13,7 @@ import type { ThinkingLevel } from "../agent/thinking";
 import { getSetting } from "../settings";
 import { parseModelId } from "../providers";
 import { SessionManager, type Session } from "../sessions";
+import { isPlanModeActive } from "../tools/utils/plan-mode";
 import type { ProviderId } from "../types";
 import {
     REPORT_TOOL,
@@ -29,6 +30,7 @@ import {
     emitTeamChange,
     formatMailForModel,
     getTeamRuntime,
+    isBusyHere,
     mailViews,
     markWaiting,
     nudgeWaiters,
@@ -48,6 +50,7 @@ import {
     postTeamMessages,
     readBoard,
     removeTeam,
+    returnToInbox,
     sessionTitle,
     setMemberRunConfig,
     setMemberState,
@@ -61,6 +64,15 @@ export const DEFAULT_MAX_THREADS = 5;
 const MAX_TITLE_CHARS = 48;
 const DEFAULT_WAIT_SEC = 600;
 const MAX_WAIT_SEC = 3600;
+
+/**
+ * Plan mode gates the session it is on, and a thread is another session: it
+ * would write freely. So a planning session may not start one or hand one work.
+ * Refused when called, like edit and write: the toolset is fixed for a turn, and
+ * plan mode can flip in the middle of one.
+ */
+const PLAN_MODE_REFUSAL =
+    "REJECTED: plan mode is active, and threads are not bound by it. Keep investigating yourself; start or message threads once the plan is approved.";
 
 export function maxTeamThreads(): number {
     const configured = getSetting("threadTeamsMaxThreads");
@@ -295,6 +307,7 @@ async function underLeadLock<T>(leadId: string, fn: () => Promise<T>): Promise<T
 
 async function spawnThreads(threads: readonly ThreadRequest[], ctx: TeamToolContext, max: number): Promise<string> {
     const self = ctx.session.id;
+    if (isPlanModeActive(self)) return PLAN_MODE_REFUSAL;
     if (!getTeamRuntime()) return "REJECTED: thread teams are not available in this process.";
     const existing = teamOf(self);
     if (existing && existing.role === "member") {
@@ -362,6 +375,7 @@ export function createSendMessageTool(ctx: TeamToolContext) {
         }),
         execute: async ({ to, message }) => {
             const self = ctx.session.id;
+            if (isPlanModeActive(self)) return PLAN_MODE_REFUSAL;
             const team = teamOf(self);
             if (!team) return `REJECTED: there is no team yet — start one with ${SPAWN_THREADS_TOOL}.`;
             if (!message.trim()) return "REJECTED: the message is empty.";
@@ -425,11 +439,42 @@ export function createTeamBoardTool(ctx: TeamToolContext) {
     });
 }
 
+/** A stopped thread stays stopped, whatever a wait it was in would otherwise leave behind. */
+function isStoppedThread(sessionId: string): boolean {
+    return teamOf(sessionId)?.state === "stopped";
+}
+
+/** Whether a thread finished since the wait began. The lead's turns ending says nothing about the threads. */
+function aThreadFinished(
+    roster: readonly TeamMemberRow[],
+    self: string,
+    startState: ReadonlyMap<string, MemberState>,
+): boolean {
+    return roster.some(
+        (m) =>
+            m.role === "member" &&
+            m.sessionId !== self &&
+            FINISHED_STATES.has(effectiveState(m)) &&
+            startState.get(m.sessionId) !== effectiveState(m),
+    );
+}
+
+/**
+ * Whether anyone is left who could still write to `self`, the lead included: a
+ * thread waiting on an answer is waiting on it. A teammate its own mail just
+ * woke counts, though its row has not moved yet.
+ */
+function someoneIsWorking(roster: readonly TeamMemberRow[], self: string): boolean {
+    return roster.some(
+        (m) => m.sessionId !== self && (!FINISHED_STATES.has(effectiveState(m)) || isBusyHere(m.sessionId)),
+    );
+}
+
 export function createWaitForTeamTool(ctx: TeamToolContext) {
     return tool({
         description:
             "Pause your turn, at no cost, until the team has something for you, then return what happened. Use it only when your next step needs the threads' results.\n\n" +
-            'until: "all" (default) returns once every thread has finished — or earlier if a thread sends you a message, so you can answer it; reports are collected along the way. "any" returns at the next message, report or finished thread. A list of thread ids returns once those have finished. Returns at timeoutSec (default 600) with each thread\'s state either way.',
+            'until: "all" (default) returns once every thread has finished — or earlier if a thread sends you a message, so you can answer it; reports are collected along the way. "any" returns at the next message, report or finished thread, or at once if nobody is working. A list of thread ids returns once those have finished. Returns at timeoutSec (default 600) with each thread\'s state either way.',
         inputSchema: z.object({
             until: z
                 .union([z.enum(["all", "any"]), z.array(z.string())])
@@ -455,9 +500,9 @@ export function createWaitForTeamTool(ctx: TeamToolContext) {
             const collected: TeamMailView[] = [];
             const startState = new Map(roster0.map((m) => [m.sessionId, effectiveState(m)]));
 
-            moveMember(self, "waiting", null);
+            if (!isStoppedThread(self)) moveMember(self, "waiting", null);
             markWaiting(self, true);
-            let outcome: "done" | "message" | "changed" | "timeout" | "aborted" = "timeout";
+            let outcome: "done" | "message" | "changed" | "quiet" | "timeout" | "aborted" = "timeout";
             try {
                 for (;;) {
                     collected.push(...mailViews(takeInbox(self)));
@@ -473,14 +518,12 @@ export function createWaitForTeamTool(ctx: TeamToolContext) {
                             outcome = "message";
                             break;
                         }
-                        const moved = roster.some(
-                            (m) =>
-                                m.sessionId !== self &&
-                                FINISHED_STATES.has(effectiveState(m)) &&
-                                startState.get(m.sessionId) !== effectiveState(m),
-                        );
-                        if (moved) {
+                        if (aThreadFinished(roster, self, startState)) {
                             outcome = "changed";
+                            break;
+                        }
+                        if (!someoneIsWorking(roster, self)) {
+                            outcome = "quiet";
                             break;
                         }
                     } else {
@@ -520,7 +563,14 @@ export function createWaitForTeamTool(ctx: TeamToolContext) {
                 }
             } finally {
                 markWaiting(self, false);
-                moveMember(self, ctx.abortSignal?.aborted ? "idle" : "running", null);
+                if (!isStoppedThread(self)) moveMember(self, ctx.abortSignal?.aborted ? "idle" : "running", null);
+            }
+
+            // A cancelled turn drops this result, so the mail goes back to the
+            // inbox for the next one instead of going with it.
+            if (ctx.abortSignal?.aborted) {
+                outcome = "aborted";
+                returnToInbox(collected.splice(0).map((m) => m.id));
             }
 
             const roster = listTeam(team.teamId);
@@ -538,9 +588,11 @@ export function createWaitForTeamTool(ctx: TeamToolContext) {
                       ? "A teammate sent you a message."
                       : outcome === "changed"
                         ? "A thread finished."
-                        : outcome === "aborted"
-                          ? "Stopped waiting: the turn was cancelled."
-                          : `Stopped waiting after ${Math.round((Date.now() - startedAt) / 1000)}s; the team is still working.`;
+                        : outcome === "quiet"
+                          ? "Nobody in the team is working, so nothing more is coming."
+                          : outcome === "aborted"
+                            ? "Stopped waiting: the turn was cancelled."
+                            : `Stopped waiting after ${Math.round((Date.now() - startedAt) / 1000)}s; the team is still working.`;
             return `${head}\n\nThreads:\n${states || "(none)"}${collected.length > 0 ? `\n\n${formatMailForModel(collected)}` : ""}`;
         },
     });
@@ -577,15 +629,22 @@ export function createReportTool(ctx: TeamToolContext) {
     });
 }
 
-/** The tools a session gets for this turn: everything for a lead, all but spawn_threads for a member. */
+/**
+ * The tools a session gets for this turn: everything for a lead, all but
+ * spawn_threads for a member. With no runtime (`loop run`) nothing here can run
+ * a thread, so a session in no team gets none, and one already in a team keeps
+ * what still works: its mail and its board.
+ */
 export function createTeamTools(ctx: TeamToolContext): Record<string, unknown> {
     const team = teamOf(ctx.session.id);
+    const canRunThreads = getTeamRuntime() !== null;
+    if (!team && !canRunThreads) return {};
     const isMember = team?.role === "member";
     // A lead gets the whole set from the start, team or not: the toolset is
     // fixed for a turn, and the turn that spawns the threads is the one most
     // likely to post the contract and wait for them.
     return {
-        ...(isMember ? {} : { [SPAWN_THREADS_TOOL]: createSpawnThreadsTool(ctx) }),
+        ...(isMember || !canRunThreads ? {} : { [SPAWN_THREADS_TOOL]: createSpawnThreadsTool(ctx) }),
         [SEND_MESSAGE_TOOL]: createSendMessageTool(ctx),
         [TEAM_BOARD_TOOL]: createTeamBoardTool(ctx),
         [WAIT_FOR_TEAM_TOOL]: createWaitForTeamTool(ctx),

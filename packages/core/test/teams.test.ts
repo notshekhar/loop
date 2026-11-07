@@ -216,6 +216,10 @@ describe("team snapshot", () => {
 
 describe("team tools", () => {
     test("a lead's board note before its first spawn starts the team instead of bouncing", async () => {
+        const restore = teams.setTeamRuntimeForTests(
+            {},
+            { deliver: () => {}, isRunning: () => false, cancel: () => {} },
+        );
         const lead = await new SessionManager().create({ cwd: "/tmp", provider: "xai", model: MODEL });
         const tools = teams.createTeamTools({ session: lead, modelId: MODEL, cwd: "/tmp" }) as Record<
             string,
@@ -226,6 +230,7 @@ describe("team tools", () => {
         const team = teams.teamOf(lead.id);
         expect(team?.role).toBe("lead");
         expect(teams.readBoard(team!.teamId).map((n) => n.key)).toEqual(["contract"]);
+        restore();
     });
 });
 

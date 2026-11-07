@@ -8,9 +8,10 @@ const EXIT_STDIO_GRACE_MS = 100;
  * On Windows, daemonized descendants can inherit the child's stdout/stderr pipe
  * handles. The child emits `exit`, but `close` can hang forever even though the
  * original process is already gone. We wait briefly for stdio to end, then
- * forcibly stop tracking the inherited handles.
+ * forcibly stop tracking the inherited handles — unless `keepStdio` says someone
+ * else now owns them.
  */
-export function waitForChildProcess(child: ChildProcess): Promise<number | null> {
+export function waitForChildProcess(child: ChildProcess, keepStdio?: () => boolean): Promise<number | null> {
     return new Promise((resolve, reject) => {
         let settled = false;
         let exited = false;
@@ -35,8 +36,10 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
             if (settled) return;
             settled = true;
             cleanup();
-            child.stdout?.destroy();
-            child.stderr?.destroy();
+            if (!keepStdio?.()) {
+                child.stdout?.destroy();
+                child.stderr?.destroy();
+            }
             resolve(code);
         };
 

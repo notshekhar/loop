@@ -217,13 +217,13 @@ describe("cmux reporter", () => {
         // Launch announce, then working, then blocked (floated to the top of
         // the sidebar), then idle once the settle window passes.
         expect(v1[0]).toBe(
-            "set_status loop Idle --icon=pause.circle.fill --color=#8E8E93 --tab=workspace-1 --panel=surface-1",
+            `set_status loop Idle --icon=pause.circle.fill --color=#8E8E93 --pid=${process.pid} --tab=workspace-1 --panel=surface-1`,
         );
         expect(v1).toContain(
-            "set_status loop Working --icon=bolt.fill --color=#4C8DFF --tab=workspace-1 --panel=surface-1",
+            `set_status loop Working --icon=bolt.fill --color=#4C8DFF --pid=${process.pid} --tab=workspace-1 --panel=surface-1`,
         );
         expect(v1).toContain(
-            "set_status loop bash approval --icon=bell.fill --color=#4C8DFF --priority=100 --tab=workspace-1 --panel=surface-1",
+            `set_status loop bash approval --icon=bell.fill --color=#4C8DFF --priority=100 --pid=${process.pid} --tab=workspace-1 --panel=surface-1`,
         );
         // A prompt the agent is stuck on also rings, in cmux's own category so
         // the user's notification settings govern it.

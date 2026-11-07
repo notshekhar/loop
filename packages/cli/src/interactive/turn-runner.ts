@@ -38,13 +38,18 @@ function commandExists(commands: { has(name: string): boolean }, input: string):
     return commands.has(name);
 }
 
-/** Commands that move the screen to another session instead of acting on this one. */
-const LEAVING_COMMANDS = new Set(["new", "clear", "resume", "sessions"]);
+/**
+ * Commands that leave the running turn alone, so they need not wait for it: the
+ * ones that move the screen to another session, and the team's. A lead sits in
+ * wait_for_team for as long as its threads work, which is exactly when `/team
+ * stop` is wanted.
+ */
+const UNQUEUED_COMMANDS = new Set(["new", "clear", "resume", "sessions", "team", "lead"]);
 
-function leavesSession(input: string, commands: { has(name: string): boolean }): boolean {
+function skipsTheQueue(input: string, commands: { has(name: string): boolean }): boolean {
     if (!input.startsWith("/") || !commandExists(commands, input)) return false;
     const space = input.indexOf(" ");
-    return LEAVING_COMMANDS.has((space < 0 ? input.slice(1) : input.slice(1, space)).trim());
+    return UNQUEUED_COMMANDS.has((space < 0 ? input.slice(1) : input.slice(1, space)).trim());
 }
 
 /**
@@ -165,11 +170,11 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
         // rather than preempting. The queue drains after each item via
         // drainNext(), whatever its type.
         //
-        // Except the commands that LEAVE this session: /new, /clear and
-        // /resume never touch the running turn — it carries on in the
-        // background and the other session opens beside it — so making them
+        // Except the commands that never touch the running turn: after /new,
+        // /clear or /resume it carries on in the background and the other
+        // session opens beside it, and /team acts on the threads. Making them
         // wait for the turn would be waiting for nothing.
-        if (state.busy && !leavesSession(text, commands)) {
+        if (state.busy && !skipsTheQueue(text, commands)) {
             if (opts?.onBusy) {
                 opts.onBusy();
                 return;

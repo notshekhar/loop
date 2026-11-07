@@ -183,7 +183,7 @@ function execBash(
             if (opts.signal.aborted) onAbort();
             else opts.signal.addEventListener("abort", onAbort, { once: true });
         }
-        waitForChildProcess(child)
+        waitForChildProcess(child, () => promotedTo !== undefined)
             .then((code) => {
                 // Promoted: the registry owns this child's exit now, and the
                 // promise above has already settled.

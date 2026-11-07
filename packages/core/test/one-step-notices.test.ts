@@ -13,8 +13,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { MockLanguageModelV3 } from "ai/test";
 import { useTempSessionDb } from "./helpers/temp-db";
+import { useTempShellLogs } from "./helpers/temp-shell-logs";
 
 useTempSessionDb();
+useTempShellLogs();
 
 // Delegating mocks: bun module mocks leak across files, so each falls through
 // to the real module unless this file's tests set something.
@@ -92,13 +94,9 @@ const stepsWith = (prompts: readonly string[], needle: string) =>
     prompts.flatMap((p, i) => (p.includes(needle) ? [i + 1] : []));
 
 let dir: string;
-let prevHome: string | undefined;
 
 beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "loop-notices-"));
-    // The shell registry writes its logs under the config dir.
-    prevHome = process.env.HOME;
-    process.env.HOME = dir;
     resetShellRegistry();
 });
 
@@ -106,8 +104,6 @@ afterEach(() => {
     currentModel = null;
     for (const key of Object.keys(settings)) delete settings[key];
     resetShellRegistry();
-    if (prevHome === undefined) delete process.env.HOME;
-    else process.env.HOME = prevHome;
     rmSync(dir, { recursive: true, force: true });
 });
 

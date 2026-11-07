@@ -120,6 +120,7 @@ import {
     REPORT_TOOL,
     SEND_MESSAGE_TOOL,
     setMemberActivity,
+    settleTeamTurn,
     SPAWN_THREADS_TOOL,
     takeInbox,
     teamOf,
@@ -560,25 +561,28 @@ export async function runTurn(opts: RunTurnOptions): Promise<void> {
     const outermost = (opts.hookDepth ?? 0) === 0;
     if (outermost) markTurnActive(id, true);
     const stopHeartbeat = outermost ? startTeamHeartbeat(id) : () => {};
-    let failed = false;
+    const startedAt = Date.now();
+    let failure: string | null = null;
     try {
         // A session in no team runs exactly as it always did.
         if (!teamOf(id)) await runTurnInner(opts);
-        else await runTeamTurn(opts, () => (failed = true));
+        else await runTeamTurn(opts, (message) => (failure = message));
     } catch (err) {
-        failed = true;
+        failure = String(err);
         throw err;
     } finally {
         stopHeartbeat();
         if (outermost) markTurnActive(id, false);
-        // How the turn ended, for the team panels. Also reached by a lead
-        // whose team was created mid-turn (it spawned its first threads).
-        // A report already said "done"; a stopped team stays stopped.
+        // Also reached by a lead whose team was created mid-turn (it spawned
+        // its first threads).
         const now = outermost ? teamOf(id) : null;
-        if (now && now.state !== "done" && now.state !== "stopped") {
-            moveMember(id, opts.abortSignal?.aborted ? "idle" : failed ? "failed" : "idle", null);
-        } else if (now?.activity) {
-            setMemberActivity(id, null);
+        if (now) {
+            settleTeamTurn(now, {
+                startedAt,
+                aborted: opts.abortSignal?.aborted === true,
+                failure,
+                ...(opts.team ? { team: opts.team } : {}),
+            });
         }
     }
 }
@@ -600,7 +604,7 @@ function startTeamHeartbeat(sessionId: string): () => void {
  * team panels read — the member is "running" while it goes, and what it is
  * doing follows its tool calls.
  */
-async function runTeamTurn(opts: RunTurnOptions, onError: () => void): Promise<void> {
+async function runTeamTurn(opts: RunTurnOptions, onError: (message: string) => void): Promise<void> {
     const id = opts.session.id;
     moveMember(id, "running", null);
     const inner = opts.emitter;
@@ -609,7 +613,7 @@ async function runTeamTurn(opts: RunTurnOptions, onError: () => void): Promise<v
         get(target, prop) {
             if (prop === "emit") {
                 return (event: string, ...args: unknown[]) => {
-                    if (event === "error") onError();
+                    if (event === "error") onError(String(args[0]));
                     else if (event === "tool-call") {
                         const call = args[0] as { toolName?: string; input?: unknown } | undefined;
                         if (call?.toolName && call.toolName !== WAIT_FOR_TEAM_TOOL) {

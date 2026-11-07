@@ -6,9 +6,6 @@
  * it, which is the entire point of the feature.
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 const mem: Record<string, unknown> = {};
 mock.module("../src/settings", () => ({
@@ -29,12 +26,12 @@ const {
     MAX_BACKGROUND_SHELLS,
 } = await import("../src/tools/utils/shell-registry");
 const { useTempSessionDb } = await import("./helpers/temp-db");
+const { useTempShellLogs } = await import("./helpers/temp-shell-logs");
 
 useTempSessionDb();
+useTempShellLogs();
 
 const SESSION = "bg-test";
-let home: string;
-let prevHome: string | undefined;
 
 function bash(ctx: Record<string, unknown> = {}) {
     return createBashTool({ cwd: process.cwd(), sessionId: SESSION, ...ctx });
@@ -57,9 +54,6 @@ async function settled(id: string, timeoutMs = 8000) {
 
 beforeEach(() => {
     for (const k of Object.keys(mem)) delete mem[k];
-    home = mkdtempSync(join(tmpdir(), "loop-bg-"));
-    prevHome = process.env.HOME;
-    process.env.HOME = home;
     resetShellRegistry();
     setShellPanelPresent(false);
     // Background shells are opt-in, and beforeEach just cleared the store — so
@@ -72,9 +66,6 @@ afterEach(() => {
     for (const s of listShells(SESSION)) if (s.status === "running") killShell(SESSION, s.id);
     resetShellRegistry();
     setShellPanelPresent(false);
-    if (prevHome === undefined) delete process.env.HOME;
-    else process.env.HOME = prevHome;
-    rmSync(home, { recursive: true, force: true });
 });
 
 describe("run_in_background", () => {

@@ -945,6 +945,7 @@ export type TeamMember = typeof TeamMember.Type;
 export const TeamSnapshot = Schema.Struct({
   teamId: Schema.String,
   stopped: Schema.Boolean,
+  overBudget: Schema.Boolean,
   lead: TeamMember,
   members: Schema.Array(TeamMember),
   board: Schema.Array(

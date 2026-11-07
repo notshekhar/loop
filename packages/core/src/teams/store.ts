@@ -73,7 +73,7 @@ export interface TeamMemberRow extends TeamMembership {
  *
  *   message  send_message — to one thread, or one row per thread for "all"
  *   report   a member's report to its lead
- *   update   loop's own note to the team (a member joined)
+ *   update   loop's own note: a member joined, a thread ended without a report, the team stopped
  *   board    a team_board note; `to` is null and `boardKey` names it
  */
 export type TeamMessageKind = "message" | "report" | "update" | "board";
@@ -430,6 +430,16 @@ export function returnToInbox(messageIds: readonly number[]): void {
     getDb().run(`UPDATE team_messages SET delivered_at = NULL WHERE id IN (${messageIds.map(() => "?").join(",")})`, [
         ...messageIds,
     ]);
+}
+
+/** Whether `from` has written to `to` since `since` — read or not. */
+export function hasMailedSince(from: string, to: string, since: number): boolean {
+    const row = getDb()
+        .query<{ n: number }, [string, string, number]>(
+            "SELECT COUNT(*) AS n FROM team_messages WHERE from_pub = ? AND to_pub = ? AND ts >= ?",
+        )
+        .get(from, to, since);
+    return (row?.n ?? 0) > 0;
 }
 
 export function inboxCount(sessionId: string): number {

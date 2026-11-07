@@ -6,12 +6,14 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+    MAX_READ_BYTES,
+    adoptSharedShells,
     formatDuration,
     killAllBashChildren,
+    killSessionShells,
     killShell,
     listShells,
     readShell,
@@ -22,18 +24,43 @@ import {
     type ShellInfo,
 } from "../src/tools/utils/shell-registry";
 import { formatShellNotices } from "../src/tools/shells";
+import {
+    KEPT_LOG_BYTES,
+    LOG_RETENTION_MS,
+    MAX_LOG_BYTES,
+    pruneShellLogs,
+    setShellLogRootForTests,
+    shellLogRoot,
+} from "../src/tools/utils/shell-logs";
+import { useTempShellLogs } from "./helpers/temp-shell-logs";
+
+useTempShellLogs();
 
 const SESSION = "test-session";
-let home: string;
-let prevHome: string | undefined;
 
-function start(command: string, session = SESSION): ShellInfo {
+function startIn(session: string | undefined, command: string): ShellInfo {
     const child = spawn("/bin/bash", ["-c", command], {
         cwd: process.cwd(),
         detached: process.platform !== "win32",
         stdio: ["ignore", "pipe", "pipe"],
     });
     return registerShell({ sessionId: session, command, cwd: process.cwd(), child });
+}
+
+function start(command: string, session = SESSION): ShellInfo {
+    return startIn(session, command);
+}
+
+/** A shell with no session yet (`/shells run` ahead of the first message), run to its end. */
+async function finishedBeforeSession(command: string): Promise<ShellInfo> {
+    const s = startIn(undefined, command);
+    await until(
+        () =>
+            listShells(undefined).find((x) => x.id === s.id)?.status === "exited" &&
+            readShell(undefined, s.id, { advance: false })?.text !== "",
+        "the unsaved shell finished",
+    );
+    return s;
 }
 
 /** Poll until the shell leaves "running", or fail loudly. */
@@ -48,19 +75,132 @@ async function settled(id: string, session = SESSION, timeoutMs = 5000): Promise
 }
 
 beforeEach(() => {
-    // The registry writes logs under the config dir; give each run its own.
-    home = mkdtempSync(join(tmpdir(), "loop-shells-"));
-    prevHome = process.env.HOME;
-    process.env.HOME = home;
     resetShellRegistry();
 });
 
 afterEach(() => {
     for (const s of listShells(SESSION)) if (s.status === "running") killShell(SESSION, s.id);
     resetShellRegistry();
-    if (prevHome === undefined) delete process.env.HOME;
-    else process.env.HOME = prevHome;
-    rmSync(home, { recursive: true, force: true });
+});
+
+/** Poll until `check` holds, or fail loudly. */
+async function until(check: () => boolean, what: string, timeoutMs = 5000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (check()) return;
+        await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error(`never: ${what}`);
+}
+
+function isAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+describe("a shell that exits and leaves a process behind", () => {
+    /** Exits at once; the printed pid outlives it. */
+    async function leaveSleeper(session = SESSION): Promise<{ shell: ShellInfo; leftover: number }> {
+        const shell = start("sleep 30 & echo $!; exit 0", session);
+        await settled(shell.id, session);
+        await until(() => readFileSync(shell.logPath, "utf8").trim() !== "", "the leftover pid in the log");
+        return { shell, leftover: Number(readFileSync(shell.logPath, "utf8").trim()) };
+    }
+
+    test("what it prints later reaches the log, and the count matches the file", async () => {
+        const s = start("echo early; (sleep 0.3; echo late) &");
+        await settled(s.id);
+        await until(() => listShells(SESSION)[0]!.bytes === "early\nlate\n".length, "the late line counted");
+        expect(readFileSync(s.logPath, "utf8")).toBe("early\nlate\n");
+        expect(statSync(s.logPath).size).toBe(listShells(SESSION)[0]!.bytes);
+        expect(readShell(SESSION, s.id)?.text).toContain("late");
+    });
+
+    test("killAllBashChildren takes the leftover down too", async () => {
+        const { leftover } = await leaveSleeper();
+        expect(isAlive(leftover)).toBe(true);
+        killAllBashChildren();
+        await until(() => !isAlive(leftover), "the leftover killed");
+    });
+
+    test("killing the exited shell by id, or its session, does too", async () => {
+        const byId = await leaveSleeper();
+        killShell(SESSION, byId.shell.id);
+        await until(() => !isAlive(byId.leftover), "the leftover killed by id");
+
+        const bySession = await leaveSleeper("whole-session");
+        expect(killSessionShells("whole-session")).toBe(0); // nothing was running…
+        await until(() => !isAlive(bySession.leftover), "the leftover killed with its session"); // …but it goes
+    });
+});
+
+describe("shells started before the session existed", () => {
+    test("join the session, keeping their id, log and output", async () => {
+        const s = await finishedBeforeSession("echo hello");
+        adoptSharedShells(SESSION);
+        expect(listShells(undefined)).toEqual([]);
+        expect(listShells(SESSION).map((x) => x.id)).toEqual([s.id]);
+        expect(readShell(SESSION, s.id)?.text).toContain("hello");
+    });
+
+    test("number after the session's own, and a later one never reuses their log", async () => {
+        start("true");
+        const early = await finishedBeforeSession("echo first");
+        adoptSharedShells(SESSION);
+        expect(listShells(SESSION).map((x) => x.id)).toEqual(["bash_1", "bash_2"]);
+        const next = startIn(undefined, "true");
+        expect(next.logPath).not.toBe(early.logPath);
+        expect(readShell(SESSION, "bash_2")?.text).toContain("first");
+    });
+});
+
+describe("logs on disk", () => {
+    test("a log that reaches the cap keeps its newest output, and reads stay right", async () => {
+        const size = MAX_LOG_BYTES + 1024 * 1024;
+        const s = start(`head -c ${size} /dev/zero | tr '\\0' x; echo; echo the-end`);
+        await settled(s.id, SESSION, 20_000);
+        await until(() => listShells(SESSION)[0]!.bytes === size + "\nthe-end\n".length, "all output counted", 20_000);
+        const disk = statSync(s.logPath).size;
+        expect(disk).toBeLessThanOrEqual(MAX_LOG_BYTES);
+        expect(disk).toBeGreaterThanOrEqual(KEPT_LOG_BYTES);
+
+        const read = readShell(SESSION, s.id)!;
+        expect(read.text.endsWith("the-end\n")).toBe(true);
+        expect(read.text.length).toBe(MAX_READ_BYTES);
+        expect(read.skippedBytes).toBe(size + "\nthe-end\n".length - MAX_READ_BYTES);
+    }, 30_000);
+
+    test("a shell with no log counts nothing, so no read points at bytes that are not there", async () => {
+        setShellLogRootForTests("/dev/null/not-a-folder");
+        const s = start("echo hi");
+        await settled(s.id);
+        await new Promise((r) => setTimeout(r, 100));
+        const info = listShells(SESSION)[0]!;
+        expect(info.logPath).toBe("");
+        expect(info.bytes).toBe(0);
+        expect(info.preview.join("")).toContain("hi");
+    });
+
+    test("old sessions' logs go, recent ones stay", () => {
+        const dirFor = (name: string, ageMs: number) => {
+            const dir = join(shellLogRoot(), name);
+            mkdirSync(dir);
+            writeFileSync(join(dir, "bash_1.log"), "x");
+            const at = new Date(Date.now() - ageMs);
+            utimesSync(join(dir, "bash_1.log"), at, at);
+            utimesSync(dir, at, at);
+            return dir;
+        };
+        const old = dirFor("old", LOG_RETENTION_MS + 60_000);
+        const recent = dirFor("recent", LOG_RETENTION_MS - 60_000);
+        pruneShellLogs();
+        expect(existsSync(old)).toBe(false);
+        expect(existsSync(recent)).toBe(true);
+    });
 });
 
 describe("registry", () => {

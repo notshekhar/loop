@@ -108,7 +108,13 @@ export const TeamPanel = memo(function TeamPanel({
           <div className="truncate font-medium text-[13px] text-foreground">{team.lead.title}</div>
           <div className="text-[11.5px] text-muted-foreground">
             {team.members.length} thread{team.members.length === 1 ? "" : "s"}
-            {working > 0 ? ` · ${working} working` : team.stopped ? " · stopped" : ""}
+            {working > 0
+              ? ` · ${working} working`
+              : team.overBudget
+                ? " · stopped at its budget"
+                : team.stopped
+                  ? " · stopped"
+                  : ""}
             {team.cost.usd > 0 ? (
               <>
                 {" · "}

@@ -7,6 +7,7 @@
 import {
     contextTokensFromUsage,
     countLiveStatuses,
+    adoptSharedShells,
     CostTracker,
     currentSessionId,
     sortLiveRows,
@@ -174,6 +175,7 @@ export function createSessionRoster(host: SessionRosterHost): SessionRoster {
     const ensureSessionFor = async (slot: SessionSlot) => {
         if (slot.session) return slot.session;
         slot.session = await manager.create({ cwd: slot.cwd, provider: slot.provider, model: slot.modelId });
+        adoptSharedShells(slot.session.id);
         if (slots.isForeground(slot)) statusLine.setSession(slot.session.id);
         return slot.session;
     };

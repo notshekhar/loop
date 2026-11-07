@@ -87,6 +87,7 @@ export {
     isShellPanelPresent,
     killAllBashChildren,
     killAllShells,
+    adoptSharedShells,
     killSessionShells,
     killShell,
     listShells,

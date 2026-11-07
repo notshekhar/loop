@@ -106,11 +106,12 @@ export function getTeamRuntime(): TeamRuntime | null {
 /**
  * Something about a team changed. `kind` says what, so a listener can pick:
  * `members` (someone joined or moved state — redraw the panel and the list),
- * `activity` (what a member is doing), `cost` (a member spent money).
+ * `activity` (what a member is doing), `cost` (a member spent money),
+ * `budget` (the team was stopped for reaching its budget).
  */
 export interface TeamChange {
     readonly teamId: string;
-    readonly kind: "members" | "activity" | "cost" | "board";
+    readonly kind: "members" | "activity" | "cost" | "board" | "budget";
     readonly sessionId?: string;
 }
 
@@ -127,7 +128,7 @@ const chattyTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const chattyPending = new Map<string, TeamChange>();
 
 export function emitTeamChange(change: TeamChange): void {
-    if (change.kind === "members" || change.kind === "board") {
+    if (change.kind !== "activity" && change.kind !== "cost") {
         for (const listener of changeListeners) listener(change);
         return;
     }

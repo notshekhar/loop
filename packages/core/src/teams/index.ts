@@ -8,9 +8,11 @@
  *   tools.ts    spawn_threads, send_message, team_board, wait_for_team, report
  *   prompts.ts  what the model is told
  *   budget.ts   the spend cap that stops a team
+ *   turn-end.ts how a turn's end reaches the panels and the lead
  */
 import { getSetting } from "../settings";
 import { onLedgerRow } from "../sessions/cost-ledger";
+import { killSessionShells } from "../tools/utils/shell-registry";
 import { isTeamOverBudget, teamBudgetUsd } from "./budget";
 import { emitTeamChange, getTeamRuntime, isTurnActive, nudgeWaiters } from "./runtime";
 import {
@@ -19,6 +21,7 @@ import {
     isTeamStopped,
     listTeam,
     markTeamStopped,
+    postTeamMessages,
     readBoard,
     sessionTitle,
     teamCost,
@@ -32,6 +35,7 @@ export * from "./store";
 export * from "./runtime";
 export * from "./prompts";
 export * from "./budget";
+export * from "./turn-end";
 export { createTeamTools, maxTeamThreads, moveMember, DEFAULT_MAX_THREADS, type TeamToolContext } from "./tools";
 
 /** The `threadTeams` setting. Off unless turned on. */
@@ -59,6 +63,8 @@ export interface TeamSnapshotMember {
 export interface TeamSnapshot {
     readonly teamId: string;
     readonly stopped: boolean;
+    /** Stopped, and over its budget: why it stopped, for the panels to say. */
+    readonly overBudget: boolean;
     readonly lead: TeamSnapshotMember;
     readonly members: readonly TeamSnapshotMember[];
     readonly board: ReadonlyArray<{ key: string; body: string; from: { id: string; title: string }; ts: number }>;
@@ -96,9 +102,11 @@ export function teamSnapshot(teamId: string): TeamSnapshot | null {
             outputTokens: share?.outputTokens ?? 0,
         };
     };
+    const stopped = isTeamStopped(teamId);
     return {
         teamId,
-        stopped: isTeamStopped(teamId),
+        stopped,
+        overBudget: stopped && isTeamOverBudget(teamId),
         lead: view(leadRow),
         members: roster.filter((m) => m.role === "member").map(view),
         board: readBoard(teamId).map((n) => ({
@@ -123,19 +131,53 @@ export function teamSnapshotForSession(sessionId: string): TeamSnapshot | null {
 }
 
 /**
- * Stop a whole team: the members are marked stopped, every running turn in it
- * is cancelled, and no mail starts a new turn until the lead spawns again.
- * Marked first, so a cancelled turn ending finds "stopped" and leaves it — not
- * "idle", which would read as a thread that could still be woken.
+ * Stop every thread: each is marked stopped, its turn cancelled and its
+ * background shells killed, and no mail starts a new turn until the lead spawns
+ * again. Marked first, so a cancelled turn ending finds "stopped" and leaves it
+ * — not "idle", which would read as a thread that could still be woken.
+ *
+ * The lead is not a thread: its turn carries on. It is the one left to finish
+ * the job, and what the user is talking to.
  */
-export function stopTeam(teamId: string): void {
+function haltThreads(teamId: string): void {
     markTeamStopped(teamId, true);
-    const roster = listTeam(teamId);
-    for (const m of roster) if (m.role === "member") moveMember(m.sessionId, "stopped", null);
+    const threads = listTeam(teamId).filter((m) => m.role === "member");
+    for (const m of threads) moveMember(m.sessionId, "stopped", null);
     const runtime = getTeamRuntime();
-    for (const m of roster) if (runtime?.isRunning(m.sessionId)) runtime.cancel(m.sessionId);
+    for (const m of threads) {
+        if (runtime?.isRunning(m.sessionId)) runtime.cancel(m.sessionId);
+        killSessionShells(m.sessionId);
+    }
     // A lead inside wait_for_team returns now, with the stop, instead of at its timeout.
     nudgeWaiters();
+}
+
+export type TeamStopReason = "user" | "budget";
+
+const STOP_NOTICES: Record<TeamStopReason, string> = {
+    user: "The user stopped the team: every thread was cancelled. Do not restart them unless the user asks.",
+    budget: "The team reached its budget (threadTeamsBudgetUsd) and was stopped: every thread was cancelled. Finish the job yourself, or ask the user to raise the budget.",
+};
+
+/**
+ * Stop a whole team and tell its lead why. The note waits in the lead's inbox:
+ * a running lead reads it before its next step, an idle one on its next turn —
+ * a stop never starts a turn of its own.
+ */
+export function stopTeam(teamId: string, reason: TeamStopReason = "user"): void {
+    const alreadyStopped = isTeamStopped(teamId);
+    const lead = listTeam(teamId).find((m) => m.role === "lead");
+    if (lead && !alreadyStopped) {
+        postTeamMessages({
+            teamId,
+            from: lead.sessionId,
+            to: [lead.sessionId],
+            kind: "update",
+            body: STOP_NOTICES[reason],
+        });
+    }
+    haltThreads(teamId);
+    if (reason === "budget") emitTeamChange({ teamId, kind: "budget" });
 }
 
 /**
@@ -145,7 +187,7 @@ export function stopTeam(teamId: string): void {
 export function leaveTeam(sessionId: string): void {
     const team = teamOf(sessionId);
     if (!team) return;
-    if (team.role === "lead") stopTeam(team.teamId);
+    if (team.role === "lead") haltThreads(team.teamId);
     forgetTeamSession(sessionId);
     emitTeamChange({ teamId: team.teamId, kind: "members", sessionId });
     nudgeWaiters();
@@ -157,5 +199,5 @@ onLedgerRow((sessionPub) => {
     if (teamBudgetUsd() === null) return;
     const team = teamOf(sessionPub);
     if (!team || isTeamStopped(team.teamId)) return;
-    if (isTeamOverBudget(team.teamId)) stopTeam(team.teamId);
+    if (isTeamOverBudget(team.teamId)) stopTeam(team.teamId, "budget");
 });

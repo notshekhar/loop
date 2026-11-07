@@ -11,7 +11,9 @@ import {
     cancelIdleCompact,
     CompactAbortedError,
     clearReadRegistry,
+    listShells,
     runCompact,
+    runningShellCount,
     runHooks,
     sessionToJsonl,
     sessionToMarkdown,
@@ -59,9 +61,9 @@ export async function resumeSessionById(state: AppState, deps: AppDeps, idOrPath
         deps.sessions.switchTo(live);
         return;
     }
-    // Never replace a session mid-turn: it keeps running, and the resumed
-    // one opens beside it.
-    if (state.busy) await deps.sessions.openNew();
+    // Never replace a session that is still doing something: it keeps running,
+    // and the resumed one opens beside it.
+    if (mustStayOpen(state)) await deps.sessions.openNew();
     const { tui, history, statusLine, tracker, manager, refreshStatusLine } = deps;
     try {
         // The `/rc` server may already hold this session — a phone opened it,
@@ -99,12 +101,18 @@ export async function resumeSessionById(state: AppState, deps: AppDeps, idOrPath
             history.addSystem(`resumed session ${state.session.id}`);
         }
         renderSessionBranch(state.session, history, state.modelId, deps.todoPanel);
+        deps.shellsPanel.setShells(listShells(state.session.id));
         // Mid-turn on the server: the rest of that reply streams in here.
         deps.remote?.followServerTurn(state.session.id);
     } catch (err) {
         history.addError(`open failed: ${(err as Error).message}`);
     }
     tui.requestRender();
+}
+
+/** A session with a turn or a background shell going has to stay reachable, so nothing may replace it in place. */
+function mustStayOpen(state: AppState): boolean {
+    return state.busy || (state.session !== null && runningShellCount(state.session.id) > 0);
 }
 
 /** Sessions per page in /resume. */
@@ -152,10 +160,11 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
 
     return {
         async newSession() {
-            // A turn in flight is not thrown away: it carries on in the
-            // background (Ctrl+S to go back) and the new session opens beside
-            // it. Only an idle session is replaced in place, as before.
-            if (state.busy) {
+            // A turn in flight or a shell still running is not thrown away: it
+            // carries on in the background (Ctrl+S to go back) and the new
+            // session opens beside it. Only an idle session is replaced in
+            // place, as before.
+            if (mustStayOpen(state)) {
                 await deps.sessions.openNew();
                 history.addSystem(dim("previous session keeps running in the background · ctrl+s to switch"));
                 tui.requestRender();
@@ -165,6 +174,7 @@ export function createSessionHandlers(state: AppState, deps: AppDeps): SessionHa
             // by session; no id would clear them all).
             if (state.session) clearReadRegistry(state.session.id);
             state.session = null;
+            deps.shellsPanel.setShells(listShells(undefined));
             statusLine.setSession("unsaved");
             // The tab named the session that just went away. Hand it back its
             // standing name — otherwise a fresh session sits under the last
