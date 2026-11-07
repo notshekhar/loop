@@ -36,6 +36,8 @@ Prints the final response to stdout and exits. No UI, pipeable, safe in scripts.
 | `/compact [focus]`     | Summarize the conversation to reclaim context     |
 | `/context`             | What's currently loaded and how much room is left |
 | `/shells`              | Background shells: run, read, kill                |
+| `/notes`               | This session's notes: submit, delete, remove all  |
+| `/note <text>`         | Add a note to this session                        |
 
 From the shell, `loop sessions` lists sessions in the current directory with ids, models, and timestamps.
 

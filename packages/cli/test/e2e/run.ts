@@ -1003,6 +1003,79 @@ async function withFixtureModel(
 }
 
 /**
+ * Notes belong to the session and work mid-turn: /note adds one while a reply
+ * is still streaming, /notes opens over it, and a submitted note queues behind
+ * the running turn like typed input, then leaves the list. Delete and remove
+ * all take notes off without sending them.
+ */
+async function testNotes(): Promise<void> {
+    const SLOW_MS = 6_000;
+    const lastUserText = (body: { messages?: { role: string; content: unknown }[] }): string => {
+        const last = [...(body.messages ?? [])].reverse().find((m) => m.role === "user");
+        if (!last) return "";
+        if (typeof last.content === "string") return last.content;
+        return (last.content as { text?: string }[]).map((b) => b.text ?? "").join(" ");
+    };
+    const server = Bun.serve({
+        port: 0,
+        idleTimeout: 30,
+        fetch: async (req) => {
+            const text = lastUserText((await req.json().catch(() => ({}))) as never);
+            if (text.includes("slow task")) {
+                await Bun.sleep(SLOW_MS);
+                return streamedReply("SLOW-DONE.");
+            }
+            return streamedReply(`GOT ${text.trim()}`);
+        },
+    });
+    try {
+        await withFixtureSession(server.port, async (s) => {
+            const screen = () => s.screenRows().join("\n");
+            await s.pump(7);
+
+            await s.send("slow task first\r", 1.0);
+            await s.send("/note ship the parser fix\r", 1.0);
+            check(screen().includes("note saved · 1 note"), "/note adds a note mid-turn", s.screenRows());
+            await s.send("/note second thought\r", 1.0);
+
+            await s.send("/notes\r", 1.0);
+            check(screen().includes("Notes · 2"), "/notes opens mid-turn with both notes", s.screenRows());
+            check(screen().includes("ship the parser fix") && screen().includes("second thought"), "both are listed");
+            check(!screen().includes("SLOW-DONE"), "and the turn is still running", s.screenRows());
+
+            await s.send("\r", 1.0);
+            check(screen().includes("submit") && screen().includes("delete"), "a note offers submit and delete");
+            await s.send("\r", 1.0);
+            await s.pump(SLOW_MS / 1000 + 3);
+            check(screen().includes("SLOW-DONE."), "the running turn finished first", s.screenRows());
+            check(screen().includes("GOT ship the parser fix"), "then the submitted note was sent", s.screenRows());
+
+            await s.send("/notes\r", 1.0);
+            check(screen().includes("Notes · 1"), "a submitted note leaves the list", s.screenRows());
+            check(!screen().includes("GOT second thought"), "and the other was never sent");
+            await s.send("\r", 1.0);
+            await s.send("\x1b[B", 0.5);
+            await s.send("\r", 1.0);
+            check(screen().includes("Notes · none yet"), "delete removes a note", s.screenRows());
+            await s.send("\x1b", 0.8);
+
+            await s.send("/note one\r", 0.8);
+            await s.send("/note two\r", 0.8);
+            await s.send("/notes\r", 1.0);
+            await s.send("remove all", 0.6);
+            await s.send("\r", 1.0);
+            check(screen().includes("remove all 2 notes"), "remove all asks first", s.screenRows());
+            await s.send("\r", 1.0);
+            check(screen().includes("Notes · none yet"), "remove all clears the session's notes", s.screenRows());
+            await s.send("\x1b", 0.8);
+            check(screen().includes("removed 2 notes"), "and says how many went", s.screenRows());
+        });
+    } finally {
+        server.stop(true);
+    }
+}
+
+/**
  * Two sessions in one loop, one of them mid-turn. The fixture holds any prompt
  * containing "slow" for SLOW_MS before answering, so a turn is provably still
  * running while the other session is used — and must finish where it started.
@@ -1581,6 +1654,7 @@ const SCENARIOS: Record<string, () => Promise<void>> = {
     pinned: testPinnedInput,
     new: testNewSession,
     "banner-model": testBannerFollowsModel,
+    notes: testNotes,
     clear: testClearScreen,
     resize: testResize,
     "alt-screen": testAltScreenKeepsScrollbackClean,

@@ -11,6 +11,7 @@ export { wrapSessionHookContext, matchSessionHookContext, stripSessionHookContex
 export { getDb, closeDb, setDbPathForTests } from "./db";
 export { SessionStore, getSessionStore, type SessionFolder, type SessionPage, type SessionRecord, type SessionScope } from "./sqlite-store";
 export { normalizeUsage, type NormalizedUsage } from "./usage";
+export { addNote, clearNotes, listNotes, takeNote, type SessionNote } from "./notes";
 export { sessionToMarkdown } from "./export-markdown";
 export { sessionToJsonl, materializeTranscript, resetTranscriptCache } from "./transcript-file";
 export {

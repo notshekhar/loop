@@ -40,11 +40,11 @@ function commandExists(commands: { has(name: string): boolean }, input: string):
 
 /**
  * Commands that leave the running turn alone, so they need not wait for it: the
- * ones that move the screen to another session, and the team's. A lead sits in
- * wait_for_team for as long as its threads work, which is exactly when `/team
- * stop` is wanted.
+ * ones that move the screen to another session, the team's, and notes. A lead
+ * sits in wait_for_team for as long as its threads work, which is exactly when
+ * `/team stop` is wanted; and a note is jotted down while the model works.
  */
-const UNQUEUED_COMMANDS = new Set(["new", "clear", "resume", "sessions", "team", "lead"]);
+const UNQUEUED_COMMANDS = new Set(["new", "clear", "resume", "sessions", "team", "lead", "note", "notes"]);
 
 function skipsTheQueue(input: string, commands: { has(name: string): boolean }): boolean {
     if (!input.startsWith("/") || !commandExists(commands, input)) return false;

@@ -19,6 +19,11 @@ export interface CommandContext {
     /** /context — context-window usage breakdown (grid + categories). */
     showContext(): Promise<void>;
     manageShells(args: string): void;
+    /**
+     * /notes — this session's notes: pick one to submit or delete, add one,
+     * or remove them all. `/notes <text>` (also `/note <text>`) adds a note.
+     */
+    manageNotes(args: string): Promise<void> | void;
     /** /steak — GitHub-style token-usage heatmap; arg is an optional year. */
     showSteak(args: string): void;
     showSessions(): Promise<void>;
@@ -364,6 +369,16 @@ export async function registerBuiltins(reg: CommandRegistry, opts: { cwd?: strin
             description:
                 "Background shells: /shells lists · /shells run <cmd> · /shells <id> shows output · /shells kill <id>|all",
             handler: (ctx, args) => ctx.manageShells(args ?? ""),
+        },
+        {
+            name: "notes",
+            description: "This session's notes: /notes opens them (submit or delete one, remove all) · /notes <text> adds one",
+            handler: (ctx, args) => ctx.manageNotes(args ?? ""),
+        },
+        {
+            name: "note",
+            description: "Add a note to this session: /note <text>",
+            handler: (ctx, args) => ctx.manageNotes(args ?? ""),
         },
         {
             name: "steak",

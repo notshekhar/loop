@@ -175,11 +175,13 @@ export class SessionStore {
      * Entries go with it by cascade (`PRAGMA foreign_keys = ON`, db.ts), and
      * the cost ledger deliberately does NOT: its FK is ON DELETE SET NULL and
      * it keeps `session_pub`, so deleting a conversation never rewrites what
-     * was actually spent.
+     * was actually spent. Its notes go too: they belong to no other session.
      */
     deleteSession(pubId: string): boolean {
-        const result = this.db.query("DELETE FROM sessions WHERE pub_id = ?").run(pubId);
-        return result.changes > 0;
+        return this.db.transaction(() => {
+            this.db.query("DELETE FROM session_notes WHERE session_pub = ?").run(pubId);
+            return this.db.query("DELETE FROM sessions WHERE pub_id = ?").run(pubId).changes > 0;
+        })();
     }
 
     /** Re-home a session to a new working directory (/cd). */
