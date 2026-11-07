@@ -83,7 +83,7 @@ jobs:
     # prebuilt runtime for the target). Most targets still build on a runner
     # matching their OS+arch so the --version smoke test runs natively.
     # darwin-x64 is the exception: GitHub offers no free Intel-mac runner, so it
-    # is cross-compiled on the Apple-Silicon macos-14 runner. It can't be run
+    # is cross-compiled on the Apple-Silicon macos-15 runner. It can't be run
     # there for the smoke test (Rosetta 2 SIGILLs on AVX/baseline alike), so its
     # binary is validated statically (Mach-O x86_64) instead of executed.
     build-binary:
@@ -94,9 +94,9 @@ jobs:
             matrix:
                 include:
                     - target: darwin-arm64
-                      runner: macos-14
+                      runner: macos-15
                     - target: darwin-x64
-                      runner: macos-14 # arm64 host → cross-compiled, validated statically
+                      runner: macos-15 # arm64 host → cross-compiled, validated statically
                     - target: linux-x64
                       runner: ubuntu-latest
                     - target: linux-arm64
@@ -202,10 +202,10 @@ jobs:
                 include:
                     - target: darwin-arm64
                       cli: bun-darwin-arm64
-                      runner: macos-14
+                      runner: macos-15
                     - target: darwin-x64
                       cli: bun-darwin-x64
-                      runner: macos-14 # arm64 host → cross-packaged (prebuild exists)
+                      runner: macos-15 # arm64 host → cross-packaged (prebuild exists)
                     - target: linux-x64
                       cli: bun-linux-x64
                       runner: ubuntu-latest
