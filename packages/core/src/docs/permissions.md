@@ -48,9 +48,10 @@ Chained commands are split on `&&`, `||`, `;`, `|` and newlines — with
   string. One denied segment refuses the entire command, and env-assignment /
   wrapper prefixes (`sudo`, `env`, `timeout`, …) are peeled first, so
   `FOO=1 timeout 5 git push` still hits a `Bash(git push*)` rule.
-- `allow` rules are checked against the **whole string only** —
-  `Bash(git *)` does not auto-approve `git status && rm -rf /`. Pair narrow
-  allows with denies for the patterns you never want.
+- `allow` rules must cover **every segment** — each executed command has to
+  match some allow rule, so `Bash(git *)` approves `git status && git log`
+  but not `git status && rm -rf /`. Pair narrow allows with denies for the
+  patterns you never want.
 
 **Path patterns** (Read/Edit/Grep) are globs where `*` and `?` do not cross
 `/` and `**` does; `**/` also matches zero directories (`**/.env` matches a

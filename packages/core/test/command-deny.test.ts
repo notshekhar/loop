@@ -59,6 +59,13 @@ describe("findDeniedCommand", () => {
         expect(findDeniedCommand("env FOO=1 sudo rtk rm x", deny)).toBe("rm");
     });
 
+    test("sees past a wrapper's own options and values", () => {
+        expect(findDeniedCommand("timeout 5 git commit -m x", deny)).toBe("git commit");
+        expect(findDeniedCommand("nice -n 10 git commit", deny)).toBe("git commit");
+        expect(findDeniedCommand("timeout -s KILL 5 rm x", deny)).toBe("rm");
+        expect(findDeniedCommand("sudo -u root rm x", deny)).toBe("rm");
+    });
+
     test("an empty denylist allows everything", () => {
         expect(findDeniedCommand("rm -rf /", [])).toBeNull();
     });

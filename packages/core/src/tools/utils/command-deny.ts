@@ -39,7 +39,70 @@ export const DEFAULT_BASH_DENY: BashDenyEntry[] = ["git commit", "git push"];
  * `rtk` is the user's token-proxy that rewrites every command (`rtk <cmd>`, or
  * `rtk proxy <cmd>` for raw passthrough); treat both forms as transparent.
  */
-const WRAPPERS = new Set(["sudo", "env", "command", "nohup", "time", "nice", "stdbuf", "xargs", "rtk"]);
+const WRAPPERS = new Set([
+    "sudo",
+    "env",
+    "command",
+    "nohup",
+    "time",
+    "timeout",
+    "nice",
+    "ionice",
+    "chrt",
+    "stdbuf",
+    "xargs",
+    "rtk",
+]);
+
+/**
+ * Wrapper options that take their value as the NEXT token (`nice -n 10`,
+ * `timeout -s KILL 5`), so the value is peeled with the option rather than
+ * mistaken for the real command.
+ */
+const WRAPPER_VALUE_OPTIONS: Record<string, ReadonlySet<string>> = {
+    sudo: new Set(["-u", "--user", "-g", "--group", "-C", "-D", "-h", "-p", "-r", "-t", "-U"]),
+    env: new Set(["-u", "--unset", "-C", "--chdir", "-S", "--split-string"]),
+    timeout: new Set(["-s", "--signal", "-k", "--kill-after"]),
+    nice: new Set(["-n", "--adjustment"]),
+    ionice: new Set(["-c", "--class", "-n", "--classdata", "-p", "--pid"]),
+    chrt: new Set(["-p", "--pid"]),
+    stdbuf: new Set(["-i", "-o", "-e"]),
+    xargs: new Set(["-n", "-I", "-L", "-P", "-s", "-d", "-E", "-a"]),
+};
+
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+/** A wrapper's bare numeric argument: `timeout 5`, `timeout 1.5m`, `chrt 10`. */
+const WRAPPER_NUMBER = /^\d+(\.\d+)?[smhd]?$/;
+
+/**
+ * Drop the prefix that only sets up the real command: env assignments,
+ * wrapper commands, and each wrapper's own options and numeric arguments.
+ * Either kind can come first (`env FOO=1 sudo rm`), so they interleave.
+ * Tokens are returned as written; shared with the permission rules engine,
+ * which matches the peeled text.
+ */
+export function peelWrappers(tokens: string[]): string[] {
+    let wrapper: string | null = null;
+    let i = 0;
+    for (; i < tokens.length; i++) {
+        const token = tokens[i];
+        if (ENV_ASSIGNMENT.test(token)) continue;
+        const head = normalizeToken(token);
+        if (WRAPPERS.has(head)) {
+            wrapper = head;
+            // `rtk proxy <cmd>` — the proxy subcommand is part of the wrapper.
+            if (head === "rtk" && normalizeToken(tokens[i + 1] ?? "") === "proxy") i++;
+            continue;
+        }
+        if (wrapper && token.startsWith("-")) {
+            if (WRAPPER_VALUE_OPTIONS[wrapper]?.has(token)) i++;
+            continue;
+        }
+        if (wrapper && WRAPPER_NUMBER.test(token)) continue;
+        break;
+    }
+    return tokens.slice(i);
+}
 
 /** Shell operators that separate one executed command from the next. */
 const SEGMENT_SEPARATORS = /\|\||&&|[;|&\n]/;
@@ -73,30 +136,11 @@ export function splitSegments(command: string): string[] {
 
 /**
  * Resolve one segment to its real command token plus the following tokens.
- * Leading `VAR=value` assignments and wrapper commands (sudo/env/…) are peeled
+ * The setup prefix (env assignments, wrappers and their options) is peeled
  * off so `sudo FOO=1 /bin/rm -rf` resolves to command `rm`.
  */
 export function resolveSegment(segment: string): { command: string; rest: string[] } | null {
-    let tokens = segment.split(/\s+/).filter(Boolean);
-    // Peel leading env-assignments and wrappers until the real command surfaces.
-    // Either kind can come first (`env FOO=1 sudo rm`), so loop over both.
-    for (let peeled = true; peeled && tokens.length > 0;) {
-        peeled = false;
-        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) {
-            tokens = tokens.slice(1);
-            peeled = true;
-            continue;
-        }
-        const head = normalizeToken(tokens[0]);
-        if (WRAPPERS.has(head)) {
-            tokens = tokens.slice(1);
-            // `rtk proxy <cmd>` — the proxy subcommand is part of the wrapper.
-            if (head === "rtk" && tokens.length > 0 && normalizeToken(tokens[0]) === "proxy") {
-                tokens = tokens.slice(1);
-            }
-            peeled = true;
-        }
-    }
+    const tokens = peelWrappers(segment.split(/\s+/).filter(Boolean));
     if (tokens.length === 0) return null;
     return {
         command: normalizeToken(tokens[0]),

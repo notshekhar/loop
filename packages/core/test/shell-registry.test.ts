@@ -6,7 +6,8 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
     MAX_READ_BYTES,
@@ -288,6 +289,23 @@ describe("exit notices", () => {
         expect(takeShellNotices(SESSION)).toEqual([]);
     });
 
+    test("a child that exited before it was handed over still settles, and is announced", async () => {
+        // Promotion on timeout can hand over a child whose `exit` already fired
+        // (bash waits up to 100ms for its pipes to close after exit). No exit
+        // event is coming, so the shell must settle from the child itself.
+        const child = spawn("/bin/bash", ["-c", "echo hi; exit 4"], {
+            detached: process.platform !== "win32",
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+        await new Promise((resolve) => child.once("exit", resolve));
+        const s = registerShell({ sessionId: SESSION, command: "late", cwd: process.cwd(), child, promoted: true });
+        const done = await settled(s.id, SESSION, 1000);
+        expect(done.status).toBe("exited");
+        expect(done.exitCode).toBe(4);
+        expect(runningShellCount(SESSION)).toBe(0);
+        expect(takeShellNotices(SESSION).map((n) => n.id)).toEqual([s.id]);
+    });
+
     test("a running shell produces no notice", () => {
         start("sleep 30");
         expect(takeShellNotices(SESSION)).toEqual([]);
@@ -342,5 +360,46 @@ describe("process exit", () => {
 
     test("killing nothing is not an error", () => {
         expect(killAllBashChildren()).toBe(0);
+    });
+});
+
+describe("process exit", () => {
+    // The TUI leaves on SIGHUP/SIGTERM through process.exit inside its signal
+    // handler, which skips every surface's own cleanup; the shells are in
+    // their own process groups, so only the registry's exit hook can reach
+    // them. Run in a real child process, because "exit" is the process's.
+    test("a shell does not outlive a process.exit", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "loop-exit-"));
+        try {
+            const registry = join(import.meta.dir, "..", "src", "tools", "utils", "shell-registry.ts");
+            const logs = join(import.meta.dir, "..", "src", "tools", "utils", "shell-logs.ts");
+            const script = join(dir, "child.ts");
+            writeFileSync(
+                script,
+                `import { spawn } from "node:child_process";
+import { registerShell } from ${JSON.stringify(registry)};
+import { setShellLogRootForTests } from ${JSON.stringify(logs)};
+setShellLogRootForTests(${JSON.stringify(dir)});
+const child = spawn("sleep", ["30"], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+registerShell({ sessionId: "s", command: "sleep 30", cwd: "/", child });
+console.log(child.pid);
+process.exit(143);
+`,
+            );
+            const run = Bun.spawnSync([process.execPath, script]);
+            const pid = Number(run.stdout.toString().trim());
+            expect(pid).toBeGreaterThan(0);
+            await Bun.sleep(100);
+            let alive = true;
+            try {
+                process.kill(pid, 0);
+            } catch {
+                alive = false;
+            }
+            if (alive) process.kill(-pid, "SIGKILL");
+            expect(alive).toBe(false);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

@@ -196,8 +196,29 @@ export interface StartShellOptions {
     promoted?: boolean;
 }
 
+let exitCleanupInstalled = false;
+
+/**
+ * Kill everything bash started when the process exits, however it exits.
+ *
+ * Each surface calls killAllBashChildren on its own way out, but the TUI
+ * leaves on SIGHUP/SIGTERM (closing the terminal tab) through process.exit in
+ * its signal handler, which never reaches that path — and the children are
+ * detached into their own process groups, so nothing else takes them down. A
+ * `bun run dev` started in a tab that was then closed ran on under pid 1.
+ * process.exit still fires "exit", and every kill here is synchronous.
+ */
+export function ensureExitCleanup(): void {
+    if (exitCleanupInstalled) return;
+    exitCleanupInstalled = true;
+    process.once("exit", () => {
+        killAllBashChildren();
+    });
+}
+
 /** Register a spawned child as a background shell and start logging it. */
 export function registerShell(opts: StartShellOptions): ShellInfo {
+    ensureExitCleanup();
     pruneShellLogs();
     const b = bucket(opts.sessionId);
     const id = `bash_${++b.counter}`;
@@ -267,6 +288,10 @@ export function registerShell(opts: StartShellOptions): ShellInfo {
     opts.child.on("close", () => releaseOutput(rec));
 
     emit(rec);
+    // A promoted child can be handed over after its `exit` already fired (the
+    // foreground waits a moment for its pipes to close). No exit event is
+    // coming, so settle from the child, or it reads "running" for good.
+    if (opts.child.exitCode !== null || opts.child.signalCode) settle("exited", opts.child.exitCode);
     return toInfo(rec);
 }
 

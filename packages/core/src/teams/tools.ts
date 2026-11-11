@@ -470,6 +470,19 @@ function someoneIsWorking(roster: readonly TeamMemberRow[], self: string): boole
     );
 }
 
+/**
+ * Why a list of thread ids cannot be waited on, or null. An empty list would
+ * be "finished" at once and tell the caller every thread is done; its own id
+ * is "waiting" for as long as it waits, so only the timeout could end it.
+ */
+function checkWaitTargets(targetIds: readonly string[], roster: readonly TeamMemberRow[], self: string): string | null {
+    const team = `The team:\n${rosterText(roster, self)}`;
+    if (targetIds.length === 0) return `REJECTED: until names no thread. Pass thread ids, "all" or "any". ${team}`;
+    if (targetIds.includes(self)) return `REJECTED: you cannot wait for yourself. ${team}`;
+    const unknown = targetIds.filter((id) => !roster.some((m) => m.sessionId === id));
+    return unknown.length > 0 ? `REJECTED: not in this team: ${unknown.join(", ")}. ${team}` : null;
+}
+
 export function createWaitForTeamTool(ctx: TeamToolContext) {
     return tool({
         description:
@@ -491,9 +504,9 @@ export function createWaitForTeamTool(ctx: TeamToolContext) {
             const targetIds = Array.isArray(mode)
                 ? mode.map((id) => id.trim()).filter(Boolean)
                 : roster0.filter((m) => m.role === "member" && m.sessionId !== self).map((m) => m.sessionId);
-            const unknown = targetIds.filter((id) => !roster0.some((m) => m.sessionId === id));
-            if (unknown.length > 0) {
-                return `REJECTED: not in this team: ${unknown.join(", ")}. The team:\n${rosterText(roster0, self)}`;
+            if (Array.isArray(mode)) {
+                const refusal = checkWaitTargets(targetIds, roster0, self);
+                if (refusal) return refusal;
             }
             const timeoutMs = Math.min(MAX_WAIT_SEC, Math.max(5, timeoutSec ?? DEFAULT_WAIT_SEC)) * 1000;
             const startedAt = Date.now();

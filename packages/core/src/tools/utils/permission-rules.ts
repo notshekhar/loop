@@ -31,7 +31,7 @@ import { CONFIG_DIR_NAME } from "../../brand";
 import { isTrusted } from "../../agent/trust";
 import { getSetting } from "../../settings";
 import { getBashApprovalBridge } from "../approval-bridge";
-import { resolveSegment, segmentMatchesPattern, splitSegments } from "./command-deny";
+import { peelWrappers, resolveSegment, segmentMatchesPattern, splitSegments } from "./command-deny";
 
 export type PermissionAction = "allow" | "ask" | "deny";
 
@@ -165,24 +165,11 @@ export function matchBashPattern(pattern: string, command: string): boolean {
     return GLOB_CHARS.test(p) && globToRegExp(p, false).test(cmd);
 }
 
-/** Env-assignment / wrapper peel for segment-level checks, keeping the raw
- * text: `RUST_LOG=x timeout 5 git push` → `git push`, so deny/ask rules match
- * the wrapped or the inner command. Mirrors the denylist's wrapper set. */
-const SEGMENT_WRAPPERS = new Set(["timeout", "nice", "ionice", "chrt", "stdbuf", "env", "sudo", "command", "nohup"]);
-
+/** A segment with its setup prefix peeled, keeping the raw text:
+ * `RUST_LOG=x timeout 5 git push` → `git push`, so deny/ask rules match the
+ * wrapped or the inner command. The same peel as the denylist's. */
 function peelSegment(segment: string): string {
-    const tokens = segment.split(/\s+/).filter(Boolean);
-    let i = 0;
-    for (; i < tokens.length; i++) {
-        const t = tokens[i];
-        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) continue;
-        if (SEGMENT_WRAPPERS.has(t)) continue;
-        // `timeout 5 …` / `nice -n 10 …`: numeric or flag arguments of a
-        // wrapper keep peeling; anything else is the real command.
-        if (i > 0 && (/^-/.test(t) || /^\d+[smhd]?$/.test(t)) && SEGMENT_WRAPPERS.has(tokens[i - 1])) continue;
-        break;
-    }
-    return tokens.slice(i).join(" ");
+    return peelWrappers(segment.split(/\s+/).filter(Boolean)).join(" ");
 }
 
 /** Whether a bash rule matches the command at segment level (deny/ask
@@ -212,20 +199,36 @@ export function matchPathPattern(pattern: string, path: string): boolean {
 
 /**
  * Evaluate the bash rules for a command. Deny/ask match per segment and whole
- * string; allow matches the whole string only. Severity: deny > ask > allow.
+ * string; allow must cover EVERY executed segment. Severity: deny > ask > allow.
  * Null = no rule matched (caller falls through to its existing behavior).
  */
 export function evaluateBashRules(command: string, rules: PermissionRule[]): PermissionRule | null {
     const applicable = rules.filter((r) => r.tool === "bash" || r.tool === "*");
-    const matches = (r: PermissionRule, segmentLevel: boolean): boolean => {
-        if (!r.pattern) return true;
-        return segmentLevel ? bashRuleMatchesSegments(r.pattern, command) : matchBashPattern(r.pattern, command);
-    };
     for (const action of ["deny", "ask"] as const) {
-        const hit = applicable.find((r) => r.action === action && matches(r, true));
+        const hit = applicable.find(
+            (r) => r.action === action && (!r.pattern || bashRuleMatchesSegments(r.pattern, command)),
+        );
         if (hit) return hit;
     }
-    return applicable.find((r) => r.action === "allow" && matches(r, false)) ?? null;
+    return allowRuleCovering(
+        command,
+        applicable.filter((r) => r.action === "allow"),
+    );
+}
+
+/**
+ * The allow rule approving a command, when allow rules cover every segment
+ * it runs. A bash glob's `*` crosses anything, `&&` included, so matching
+ * the whole string alone let `Bash(git *)` approve `git status && rm -rf /`.
+ */
+function allowRuleCovering(command: string, allows: PermissionRule[]): PermissionRule | null {
+    const unconditional = allows.find((r) => !r.pattern);
+    if (unconditional) return unconditional;
+    const segments = splitSegments(command);
+    if (segments.length === 0) return null;
+    const ruleFor = (segment: string) => allows.find((r) => matchBashPattern(r.pattern as string, segment));
+    const covering = segments.map(ruleFor);
+    return covering.every(Boolean) ? (covering[0] ?? null) : null;
 }
 
 /**

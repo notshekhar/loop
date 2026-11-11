@@ -101,7 +101,7 @@ IMPORTANT: when the user asks to add or change a model, custom provider, datasou
             const stat = await fsStat(absolutePath);
             if (stat.isDirectory()) {
                 throw new Error(
-                    `${path} is a directory, not a file. Use ls to list its contents, or glob to match files inside it.`,
+                    `${path} is a directory, not a file. Use ls to list its contents, or find to match files inside it.`,
                 );
             }
             const mime = detectImageMimeType(absolutePath);

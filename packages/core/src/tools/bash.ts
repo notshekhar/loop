@@ -14,6 +14,7 @@ import {
 import { OutputAccumulator } from "./utils/output-accumulator";
 import {
     MAX_BACKGROUND_SHELLS,
+    ensureExitCleanup,
     isShellPanelPresent,
     registerShell,
     runningShellCount,
@@ -122,7 +123,10 @@ function spawnBash(command: string, cwd: string, opts: SpawnOptions) {
         env: opts.env ?? getShellEnv(),
         stdio: ["ignore", "pipe", "pipe"],
     });
-    if (child.pid) trackDetachedChildPid(child.pid);
+    if (child.pid) {
+        trackDetachedChildPid(child.pid);
+        ensureExitCleanup();
+    }
     return child;
 }
 
