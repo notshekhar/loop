@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.21.38] - 2026-11-11
+
+### Fixed
+
+- **Background shells die with loop.** Closing the terminal tab or killing loop left background shells (a dev server, a watcher) running on their own for good. Every shell loop started is now stopped on the way out, however loop exits.
+- **Deny rules see through wrappers.** `bashDeny` and permission rules now check the real command behind `nice`, `timeout`, `ionice` and `chrt`, so `nice -n 10 git push` is denied like `git push`.
+- **An allow rule must cover the whole command.** `Bash(git *)` approved `git status && rm -rf /`, because only the first part was checked. Every part of a chained command must now match an allow rule.
+- **A promoted shell no longer sticks at "running".** A command moved to the background after its process had already exited now shows how it ended.
+- **wait_for_team refuses a list it can't wait on.** An empty list used to report every thread finished at once, and a list naming the caller could only end at its timeout.
+
 ## [0.21.37] - 2026-11-07
 
 ### Added
