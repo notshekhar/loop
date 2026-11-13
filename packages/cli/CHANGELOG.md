@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.21.39] - 2026-11-13
+
+### Added
+
+- **cmux brings loop back after a restart.** Quit cmux (or reboot) with loop running in a pane, and when cmux reopens that pane runs `loop --session <id>` again, on the same model and provider, the way a Claude Code pane comes back. loop tells cmux over its socket only and starts no processes. A clean `/exit` means the session is finished, so that pane stays a plain terminal. Released cmux builds still ask before running the command; manaflow-ai/cmux#42639 lets it run on its own.
+
 ## [0.21.38] - 2026-11-11
 
 ### Fixed
