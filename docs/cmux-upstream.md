@@ -25,6 +25,11 @@ socket directly, with no install step and no generated hook files:
   `result: {status: "resolved", decision: {...}}` and is applied to the prompt
   showing in the terminal. The on-screen prompt and the cmux card race — first
   answer wins, the other is withdrawn — so a Feed timeout costs nothing.
+- **Session restore.** `surface.resume.set` with `source: "agent-hook"`,
+  `auto_resume: true` and `loop --session <id>`, rewritten when the session
+  changes, plus `set_agent_pid loop.<session> <pid>` as proof the session is
+  live. A clean exit sends `surface.resume.clear`. Keeping the binding
+  automatic needs manaflow-ai/cmux#42639.
 
 ## What it cannot do, and what would fix it
 

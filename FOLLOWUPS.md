@@ -148,14 +148,14 @@ socket verbs, with nothing to install. Two things it cannot reach:
   `factory`, `qoder`, `hermes-agent` and the rest — and anything else falls
   back to `claude`. Measured by pushing one frame per candidate name and
   reading back `~/.cmuxterm/workstream.jsonl`.
-- **The per-tab agent lifecycle dot stays empty**, and with it hibernation and
-  automatic session restore. That state lives in
-  `~/.cmuxterm/<agent>-hook-sessions.json`, written only by
+- **The per-tab agent lifecycle dot stays empty**, and with it hibernation.
+  That state lives in `~/.cmuxterm/<agent>-hook-sessions.json`, written only by
   `cmux hooks <agent> <event>`, which answers `Unknown hooks target: loop`.
-  loop registers a resume command with the surface instead
-  (`cmux surface resume set --kind loop`), which cmux keeps for manual restore
-  and will auto-run once the user approves it — the public path, and by design
-  not the same thing.
+  Session restore does not need it: loop sends `surface.resume.set` with
+  `auto_resume` over the socket (`cmux-resume.ts`) plus `set_agent_pid
+  loop.<session>`. Released cmux builds still demote that binding to manual
+  within seconds, because their process scan cannot see a fresh `loop`;
+  manaflow-ai/cmux#42639 makes the scan honour the registered PID.
 
 **Why it was left.** Both are one entry in an allowlist in a closed-source Swift
 app; nothing on loop's side can fix either. The integration was built to be

@@ -45,10 +45,14 @@
  * feed `source` is a closed enum, so Feed ROWS are stored under the default
  * `claude` label even though the events stream keeps `_source: "loop"`. The
  * status chip, the notifications and the cards themselves are unaffected.
+ *
+ * Restoring the pane's session after cmux restarts is cmux-resume.ts, riding
+ * the same socket.
  */
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { attachCmuxResume } from "./cmux-resume";
 import { hookBus, type HookPayload } from "@notshekhar/loop-core";
 import type { AgentStatusBus, AgentStatusEvent } from "./agent-status";
 
@@ -142,7 +146,8 @@ export interface CmuxReporter {
     ): Promise<CmuxPermissionDecision | CmuxExitPlanDecision | null>;
     /** Ask cmux to answer the ask tool's questions; null when it doesn't. */
     requestQuestions(questions: CmuxQuestion[], signal?: AbortSignal): Promise<string[] | null>;
-    /** Clear the status chip and flush pending telemetry. Bounded-time. */
+    /** Clear the status chip and the restore binding, and flush pending
+     * telemetry. Bounded-time. Only a clean exit calls it. */
     release(): Promise<void>;
 }
 
@@ -279,15 +284,15 @@ export function attachCmuxReporter(bus: AgentStatusBus | null, opts: CmuxReporte
     }
 
     /**
-     * One V1 command: a single line on the same socket, carrying the pane
-     * capability cmux exported into this process. Fire-and-forget — the reply
-     * is "OK" or an "ERROR: …" string nobody can act on mid-turn, and a status
-     * update must never be something a turn waits for.
+     * One line on the socket, carrying the pane capability cmux exported into
+     * this process. Fire-and-forget — the reply is "OK" or an "ERROR: …"
+     * nobody can act on mid-turn, and a status update must never be something
+     * a turn waits for.
      */
     let released = false;
     const capability = env.CMUX_SOCKET_CAPABILITY;
-    function v1(command: string): void {
-        const line = capability ? `${CAPABILITY_PREFIX} ${capability} ${command}` : command;
+    function sendLine(body: string): void {
+        const line = capability ? `${CAPABILITY_PREFIX} ${capability} ${body}` : body;
         const socket = createConnection(socketPath!);
         const done = (): void => {
             socket.destroy();
@@ -298,6 +303,11 @@ export function attachCmuxReporter(bus: AgentStatusBus | null, opts: CmuxReporte
         const timer = setTimeout(done, connectTimeoutMs);
         timer.unref?.();
     }
+    /** A V1 command (`set_status …`). */
+    const v1 = sendLine;
+    /** A V2 request whose reply nothing waits for (`surface.resume.set`). */
+    const v2 = (method: string, params: Record<string, unknown>): void =>
+        sendLine(JSON.stringify({ id: `${SOURCE}-${method}-${++seq}`, method, params }));
 
     /** Which pane the command is about. cmux calls a workspace a tab here. */
     const paneTarget = `--tab=${workspaceId ?? ""}${surfaceId ? ` --panel=${surfaceId}` : ""}`;
@@ -474,8 +484,19 @@ export function attachCmuxReporter(bus: AgentStatusBus | null, opts: CmuxReporte
     const pending: HookPayload[] = [];
     const MAX_PENDING = 32;
 
+    const resume = attachCmuxResume({
+        writer: { command: v1, request: v2 },
+        workspaceId,
+        surfaceId: surfaceId!,
+        sessionId: () => opts.getSession()?.id,
+        cwd: opts.cwd,
+    });
+
     const onHookEvent = (payload: HookPayload): void => {
         try {
+            // Every event is a chance to notice the session changed (/new,
+            // /resume, a fork) — the restore binding must follow it.
+            resume.sync();
             if (sessionId() === undefined) {
                 if (pending.length < MAX_PENDING) pending.push(payload);
                 return;
@@ -492,6 +513,7 @@ export function attachCmuxReporter(bus: AgentStatusBus | null, opts: CmuxReporte
     };
 
     hookBus.on("event", onHookEvent);
+    resume.sync();
 
     // The visible half: the sidebar chip follows the same working / blocked /
     // idle bus the herdr reporter reads, and a prompt the agent is stuck on
@@ -574,8 +596,10 @@ export function attachCmuxReporter(bus: AgentStatusBus | null, opts: CmuxReporte
             if (released) return Promise.resolve();
             released = true;
             hookBus.off("event", onHookEvent);
-            // Leave no stale chip behind: the pane is a plain terminal again.
+            // Leave no stale chip behind: the pane is a plain terminal again,
+            // and the session it ran is finished, not waiting to be restored.
             v1(`clear_status ${STATUS_KEY} ${paneTarget}`);
+            resume.end();
             // Let the queue land the SessionEnd row that exit just pushed.
             return new Promise((resolve) => {
                 enqueue(async () => resolve());

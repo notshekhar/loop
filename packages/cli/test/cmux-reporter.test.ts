@@ -33,6 +33,10 @@ async function until<T>(read: () => T | undefined, deadlineMs = 5_000): Promise<
 }
 
 type Frame = { id: string; method: string; params: { event: Record<string, unknown>; wait_timeout_seconds: number } };
+/** A V2 request other than feed.push (surface.resume.set, …). */
+type Request = { id: string; method: string; params: Record<string, unknown>; capability?: string };
+
+const CAPABILITY = /^_cmux_capability_v1 (\S+) /;
 
 /**
  * Line-delimited JSON-RPC server that behaves the way cmux does: a push with
@@ -43,6 +47,7 @@ function fakeCmux(socketPath: string) {
     const frames: Frame[] = [];
     /** The line-delimited V1 commands (set_status, notify_target, …). */
     const commands: string[] = [];
+    const requests: Request[] = [];
     const parked = new Map<string, { write: (s: string) => void; id: string }>();
     const server = Bun.listen({
         unix: socketPath,
@@ -50,14 +55,23 @@ function fakeCmux(socketPath: string) {
             data(socket, data) {
                 for (const line of data.toString().split("\n")) {
                     if (!line.trim()) continue;
-                    // Two protocols share this socket: JSON feed frames, and
-                    // plain V1 command lines carrying the pane capability.
-                    if (!line.startsWith("{")) {
+                    // Two protocols share this socket: JSON-RPC requests, and
+                    // plain V1 command lines. Either may carry the pane
+                    // capability in front.
+                    const capability = CAPABILITY.exec(line)?.[1];
+                    const body = line.replace(CAPABILITY, "");
+                    if (!body.startsWith("{")) {
                         commands.push(line);
                         socket.write("OK\n");
                         continue;
                     }
-                    const frame = JSON.parse(line) as Frame;
+                    const parsed = JSON.parse(body) as Request;
+                    if (parsed.method !== "feed.push") {
+                        requests.push({ ...parsed, capability });
+                        socket.write(`${JSON.stringify({ id: parsed.id, ok: true, result: {} })}\n`);
+                        continue;
+                    }
+                    const frame = parsed as unknown as Frame;
                     frames.push(frame);
                     const requestId = frame.params.event._opencode_request_id as string | undefined;
                     if (requestId) {
@@ -72,6 +86,7 @@ function fakeCmux(socketPath: string) {
     return {
         frames,
         commands,
+        requests,
         /** V1 commands with the capability prefix stripped, for readability. */
         v1: () => commands.map((c) => c.replace(/^_cmux_capability_v1 \S+ /, "")),
         events: () => frames.map((f) => f.params.event),
@@ -216,7 +231,7 @@ describe("cmux reporter", () => {
         const v1 = server.v1();
         // Launch announce, then working, then blocked (floated to the top of
         // the sidebar), then idle once the settle window passes.
-        expect(v1[0]).toBe(
+        expect(v1.find((c) => c.startsWith("set_status"))).toBe(
             `set_status loop Idle --icon=pause.circle.fill --color=#8E8E93 --pid=${process.pid} --tab=workspace-1 --panel=surface-1`,
         );
         expect(v1).toContain(
@@ -495,5 +510,103 @@ describe("terminal title", () => {
         expect(titles.at(-1)).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Add cmux status reporting$/);
         stop();
         expect(titles.at(-1)).toBe("Add cmux status reporting");
+    });
+});
+
+describe("cmux session restore", () => {
+    let dir: string | undefined;
+    let stopServer: (() => void) | undefined;
+    let reporter: CmuxReporter | undefined;
+
+    afterEach(async () => {
+        await reporter?.release();
+        reporter = undefined;
+        stopServer?.();
+        stopServer = undefined;
+        if (dir) rmSync(dir, { recursive: true, force: true });
+        dir = undefined;
+    });
+
+    function serve(): { server: ReturnType<typeof fakeCmux>; socketPath: string } {
+        dir = mkdtempSync(join(tmpdir(), "cmux-test-"));
+        const socketPath = join(dir, "cmux.sock");
+        const server = fakeCmux(socketPath);
+        stopServer = server.stop;
+        return { server, socketPath };
+    }
+
+    const resumeSets = (server: ReturnType<typeof fakeCmux>) =>
+        server.requests.filter((r) => r.method === "surface.resume.set");
+
+    test("binds the pane to the live session, and proves it is running", async () => {
+        const { server, socketPath } = serve();
+        reporter = attachCmuxReporter(null, {
+            getSession: () => ({ id: "abc123", path: null }),
+            cwd: () => "/repo",
+            env: { ...cmuxEnv(socketPath), CMUX_SOCKET_CAPABILITY: "cap-1" },
+        });
+
+        const [set] = await until(() => (resumeSets(server).length > 0 ? resumeSets(server) : undefined));
+        expect(set.params).toMatchObject({
+            workspace_id: "workspace-1",
+            surface_id: "surface-1",
+            kind: "loop",
+            checkpoint_id: "abc123",
+            source: "agent-hook",
+            cwd: "/repo",
+            auto_resume: true,
+        });
+        expect(set.params.command as string).toContain("--session abc123");
+        // cmux authorizes the frame by the pane capability, like a V1 line.
+        expect(set.capability).toBe("cap-1");
+        // The PID key cmux's liveness check reads: <kind>.<session>.
+        const pid = await until(() => server.v1().find((c) => c.startsWith("set_agent_pid")));
+        expect(pid).toBe(`set_agent_pid loop.abc123 ${process.pid} --tab=workspace-1 --panel=surface-1`);
+    });
+
+    test("follows the session when it changes, once per change", async () => {
+        const { server, socketPath } = serve();
+        let session: CmuxSessionRef | null = null;
+        reporter = attachCmuxReporter(null, {
+            getSession: () => session,
+            cwd: () => "/repo",
+            env: cmuxEnv(socketPath),
+        });
+
+        // No session yet: nothing to restore.
+        hookBus.emit("event", hook("SessionStart"));
+        await tick(80);
+        expect(resumeSets(server)).toHaveLength(0);
+
+        session = { id: "first", path: null };
+        hookBus.emit("event", hook("UserPromptSubmit", { prompt: "go" }));
+        hookBus.emit("event", hook("Stop"));
+        session = { id: "second", path: null }; // /new
+        hookBus.emit("event", hook("UserPromptSubmit", { prompt: "again" }));
+        await until(() => (resumeSets(server).length >= 2 ? true : undefined));
+        await tick(80);
+
+        expect(resumeSets(server).map((r) => r.params.checkpoint_id)).toEqual(["first", "second"]);
+    });
+
+    test("a clean exit clears the binding: that session is finished", async () => {
+        const { server, socketPath } = serve();
+        reporter = attachCmuxReporter(null, {
+            getSession: () => ({ id: "abc123", path: null }),
+            cwd: () => "/repo",
+            env: cmuxEnv(socketPath),
+        });
+        await until(() => (resumeSets(server).length > 0 ? true : undefined));
+
+        await reporter.release();
+        reporter = undefined;
+
+        const clear = await until(() => server.requests.find((r) => r.method === "surface.resume.clear"));
+        expect(clear.params).toEqual({
+            surface_id: "surface-1",
+            source: "agent-hook",
+            checkpoint_id: "abc123",
+            agent_session_ended: true,
+        });
     });
 });
