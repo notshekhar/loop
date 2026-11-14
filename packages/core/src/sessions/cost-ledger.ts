@@ -189,12 +189,15 @@ export function sumLedgerForSession(sessionPub: string): LedgerSessionSums {
     };
 }
 
+// The three totals below read ledger_rollup — sums kept by triggers as rows are
+// billed (rollups.ts) — rather than grouping the whole ledger on every /cost.
+
 /** Real billed spend (estimated and backfilled excluded) since the ledger cutover. */
 export function ledgerLifetime(): { usd: number; byProvider: Record<string, number> } {
     const db = getDb();
     const rows = db
         .query<{ provider: string; usd: number }, []>(
-            "SELECT provider, SUM(usd) AS usd FROM cost_ledger WHERE estimated = 0 AND backfilled = 0 GROUP BY provider",
+            "SELECT provider, SUM(usd) AS usd FROM ledger_rollup GROUP BY provider",
         )
         .all();
     const byProvider: Record<string, number> = {};
@@ -211,7 +214,7 @@ export function ledgerDailyUsd(): Map<string, number> {
     const db = getDb();
     const rows = db
         .query<{ day: string; usd: number }, []>(
-            "SELECT day, SUM(usd) AS usd FROM cost_ledger WHERE estimated = 0 AND backfilled = 0 GROUP BY day",
+            "SELECT day, SUM(usd) AS usd FROM ledger_rollup GROUP BY day",
         )
         .all();
     return new Map(rows.map((r) => [r.day, r.usd]));
@@ -221,7 +224,7 @@ export function ledgerCwdUsd(cwd: string): number {
     const db = getDb();
     const row = db
         .query<{ usd: number }, [string]>(
-            "SELECT COALESCE(SUM(usd), 0) AS usd FROM cost_ledger WHERE cwd = ? AND estimated = 0 AND backfilled = 0",
+            "SELECT COALESCE(SUM(usd), 0) AS usd FROM ledger_rollup WHERE cwd = ?",
         )
         .get(cwd);
     return row?.usd ?? 0;

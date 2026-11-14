@@ -1,6 +1,7 @@
 import type { SqliteDatabase as Database } from "./sqlite";
 import type { Entry, ProviderId, SessionInfoData } from "../types";
 import { getDb } from "./db";
+import { USAGE_BUCKET_MS } from "./rollups";
 import { normalizeUsage } from "./usage";
 
 /**
@@ -244,18 +245,15 @@ export class SessionStore {
      * /steak heatmap. date(…,'localtime') matches toLocaleDateString("sv").
      */
     dailyTokens(): Map<string, number> {
+        // Read off the trigger-kept quarter-hour totals (rollups.ts), not a
+        // scan of every entry; the local day is taken here, at read time.
         const rows = this.db
             .query<{ day: string; toks: number }, []>(
-                // usage_estimated=1 rows are interrupted-turn guesses that
-                // /cost never bills — counting them in /steak was invariant
-                // 5's pre-existing inconsistency (DESIGN.md §1b).
-                `SELECT date(ts / 1000, 'unixepoch', 'localtime') AS day,
-                        SUM(COALESCE(usage_input, 0) + COALESCE(usage_output, 0)) AS toks
-                 FROM entries
-                 WHERE ((type = 'message' AND role = 'assistant') OR type = 'subagent')
-                   AND COALESCE(usage_input, 0) + COALESCE(usage_output, 0) > 0
-                   AND COALESCE(usage_estimated, 0) = 0
-                 GROUP BY day`,
+                `SELECT date(bucket * ${USAGE_BUCKET_MS / 1000}, 'unixepoch', 'localtime') AS day,
+                        SUM(tokens) AS toks
+                 FROM usage_rollup
+                 GROUP BY day
+                 HAVING toks > 0`,
             )
             .all();
         return new Map(rows.map((r) => [r.day, r.toks]));

@@ -4,6 +4,7 @@ import { openSqlite, sleepSyncMs, type SqliteDatabase as Database } from "./sqli
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { debugLog } from "../debug";
+import { ensureRollups } from "./rollups";
 
 /**
  * The one place that opens the session database. Everything session-adjacent
@@ -279,6 +280,7 @@ function openDb(path: string, recovered = false): Database {
                 }
                 candidate.run("UPDATE meta SET value = ? WHERE key = 'schema_version'", [String(SCHEMA_VERSION)]);
             }
+            ensureRollups(candidate);
             // quick_check scans the whole DB — worth it only after an unclean
             // exit. closeDb() stamps the marker '1'; here it flips to '0' for
             // the duration of the run, so a crash leaves '0' behind and the
