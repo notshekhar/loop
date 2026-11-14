@@ -14,6 +14,7 @@ import {
     teamOf,
     TURN_EVENT_NAMES,
     wakeTeamInbox,
+    type BtwMeta,
     type TeamTurnMeta,
 } from "@notshekhar/loop-core";
 import { wrapSessionHookContext } from "@notshekhar/loop-core";
@@ -44,7 +45,7 @@ function commandExists(commands: { has(name: string): boolean }, input: string):
  * sits in wait_for_team for as long as its threads work, which is exactly when
  * `/team stop` is wanted; and a note is jotted down while the model works.
  */
-const UNQUEUED_COMMANDS = new Set(["new", "clear", "resume", "sessions", "team", "lead", "note", "notes"]);
+const UNQUEUED_COMMANDS = new Set(["new", "clear", "resume", "sessions", "team", "lead", "note", "notes", "btw"]);
 
 function skipsTheQueue(input: string, commands: { has(name: string): boolean }): boolean {
     if (!input.startsWith("/") || !commandExists(commands, input)) return false;
@@ -69,6 +70,8 @@ export interface SubmitOptions {
     readonly chatOnly?: boolean;
     /** The thread team started this turn (a member's brief, mail that woke it) — drawn as a team card and passed to the turn as such. */
     readonly team?: TeamTurnMeta;
+    /** The question opening a `/btw` side thread — tagged with where it was asked, and passed to the turn as such. */
+    readonly btw?: BtwMeta;
     /**
      * Called instead of queueing when a turn is already running. The queue
      * is for what the user typed; a team turn that lands there would run as
@@ -256,12 +259,12 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
         // collapse it instead of rendering it as if the user typed it.
         // A team turn carries the team's words, not the user's: the user's own
         // pending `!` context waits for the next thing they type.
-        const finalInput = opts?.team
-            ? text
-            : state.pendingInjection
-              ? wrapSessionHookContext(state.pendingInjection, text)
-              : text;
-        if (!opts?.team) state.pendingInjection = null;
+        // A side question likewise: what was pending belongs to the chat it
+        // was asked from, not to this copy of it.
+        const ownWords = !opts?.team && !opts?.btw;
+        const finalInput =
+            ownWords && state.pendingInjection ? wrapSessionHookContext(state.pendingInjection, text) : text;
+        if (ownWords) state.pendingInjection = null;
 
         // One-shot agent (/<agent> <message>) applies to exactly this turn.
         const turnAgent = state.oneShotAgent ?? state.agent;
@@ -270,6 +273,7 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
         const activeSession = await ensureSession();
         state.busy = true;
         if (opts?.team) history.addTeamCard(opts.team, finalInput);
+        else if (opts?.btw) history.addBtwQuestion(opts.btw, finalInput);
         else history.addUser(finalInput);
         // The message just sent is the thing to look at — and this is the one
         // place a pinned transcript should move on its own.
@@ -373,6 +377,7 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
                     thinkingLevel: state.thinkingLevel,
                     agent: turnAgent,
                     ...(opts?.team ? { team: opts.team } : {}),
+                    ...(opts?.btw ? { btw: opts.btw } : {}),
                 }),
             );
         } catch (err) {

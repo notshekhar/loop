@@ -20,6 +20,9 @@ import {
   AuthOrchestrationReadScope,
   EnvironmentAuthorizationError,
   OrchestrationThread as OrchestrationThreadSchema,
+  type OrchestrationMessage,
+  type OrchestrationProposedPlan,
+  type OrchestrationThreadActivity,
   type OrchestrationThreadStreamItem,
 } from "@loop/contracts";
 import * as Effect from "effect/Effect";
@@ -44,8 +47,15 @@ import {
 } from "./liveTurn.ts";
 import { parsePartialInput } from "./streamingInput.ts";
 import { defaultLoopHost, type LoopHost } from "../transport.ts";
-import { isToolPart, type TeamPart, type Transcript } from "@loop/transcript";
+import {
+  isToolPart,
+  type TeamPart,
+  type Transcript,
+  type TranscriptMessage,
+  type TranscriptPart,
+} from "@loop/transcript";
 import { readTranscript, snapshotOf, watchTranscript, type TranscriptView } from "../transcript/store.ts";
+import { decodeRows, emptyRows, rowsOf, type DecodedRows, type FoldPosition, type Rows } from "./threadRows.ts";
 
 /** `kind` the work log turns into a thinking-toned row. */
 const THINKING_ACTIVITY_KIND = "task.progress";
@@ -134,6 +144,15 @@ class EmitOrder {
   /** The stamp last handed out, for anything that must not sort before it. */
   current(): string {
     return isoFromMicros(this.#lastMicros);
+  }
+
+  /** Where the counter stands, so a fold can skip a message it reuses. */
+  get micros(): number {
+    return this.#lastMicros;
+  }
+
+  set micros(micros: number) {
+    this.#lastMicros = micros;
   }
 }
 
@@ -251,64 +270,6 @@ function detailOf(value: unknown): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-interface Accumulator {
-  readonly messages: unknown[];
-  readonly activities: unknown[];
-  readonly plans: unknown[];
-  /**
-   * Tool call ids the transcript already holds.
-   *
-   * The live overlay retires as a whole, and only on evidence that the
-   * transcript caught up with its TEXT — so a turn whose reply was empty, or
-   * whose text differs by a trailing newline, leaves the overlay in place
-   * while history also has the same calls. Both then render: one settled row
-   * and one stuck on "running" forever. Matching per call id is exact, and
-   * loop uses the same toolCallId on both sides.
-   */
-  readonly seenToolCallIds: Set<string>;
-  /** Reasoning text the transcript already holds, for the same reason. */
-  readonly seenThinking: Set<string>;
-  /**
-   * Assistant text runs the transcript already holds.
-   *
-   * Text was the one block type with no per-item dedupe: it relied entirely on
-   * the overlay retiring as a whole, which compares the live turn's text to the
-   * LAST assistant message. That comparison only holds for a turn that wrote
-   * one uninterrupted run — and a tool call closes the run, so any turn that
-   * called a tool joined "run1run2run3" and compared it against "run3", never
-   * matched, and kept the overlay alive on top of a transcript that already had
-   * all of it. Every line of the answer then rendered twice.
-   *
-   * Keyed on the trimmed text for the same reason `seenThinking` is: the live
-   * run and the persisted one are the same string from the same stream, with
-   * only trailing-whitespace differences between them.
-   */
-  readonly seenAssistantText: Set<string>;
-  /**
-   * Recap text and compaction count the transcript already holds.
-   *
-   * Tools dedupe by call id; these had no equivalent, so once the transcript
-   * caught up while the live overlay was still in place BOTH were emitted —
-   * which is why a settled turn showed "Recap" twice and "Context compacted"
-   * twice in a row.
-   */
-  readonly seenRecaps: Set<string>;
-  seenCompactions: number;
-  /** Hands out the stamp that keeps emit order; see EmitOrder. */
-  readonly order: EmitOrder;
-  /** The turn the transcript's last prompt opened — see foldLiveTurn's turnId. */
-  lastTurnId: string | null;
-  /**
-   * The latest checklist the transcript holds, and when it was written.
-   *
-   * Current state rather than history: every `todo` write replaces the whole
-   * list, so replaying N writes as N activities would render N stale
-   * checklists. Only the last one is emitted, and a live turn's list overrides
-   * it — exactly what the CLI does (`latestTodos` seeds one pinned panel).
-   */
-  todos?: { items: readonly LoopTodo[]; ts: number };
 }
 
 /**
@@ -512,7 +473,7 @@ function teamPayloadOf(data: TeamPart["data"]): Record<string, unknown> {
   };
 }
 
-function pushTeamActivity(out: Accumulator, id: string, turnId: string | null, createdAt: string, data: TeamPart["data"]): void {
+function pushTeamActivity(out: Rows, id: string, turnId: string | null, createdAt: string, data: TeamPart["data"]): void {
   const first = data.mail?.[0];
   out.activities.push({
     id,
@@ -544,7 +505,7 @@ export interface LoopHookPayload {
 }
 
 function pushHookActivity(
-  out: Accumulator,
+  out: Rows,
   id: string,
   turnId: string | null,
   createdAt: string,
@@ -562,7 +523,7 @@ function pushHookActivity(
 }
 
 function pushCompactActivity(
-  out: Accumulator,
+  out: Rows,
   id: string,
   turnId: string | null,
   createdAt: string,
@@ -590,7 +551,7 @@ function pushCompactActivity(
 }
 
 function pushToolActivity(
-  out: Accumulator,
+  out: Rows,
   options: {
     readonly id: string;
     readonly turnId: string | null;
@@ -692,7 +653,7 @@ function todosOf(payload: unknown): readonly LoopTodo[] | null {
  * "pending" for the one step actually being worked on.
  */
 function pushTodosActivity(
-  out: Accumulator,
+  out: Rows,
   turnId: string | null,
   createdAt: string,
   items: readonly LoopTodo[],
@@ -722,7 +683,7 @@ function pushTodosActivity(
 }
 
 function pushRecapActivity(
-  out: Accumulator,
+  out: Rows,
   id: string,
   turnId: string | null,
   createdAt: string,
@@ -750,190 +711,230 @@ function pushRecapActivity(
  *
  * A draft is simply a thread with no messages yet.
  */
+/** What folding a message reads besides the message and the fold's position. */
+interface FoldScope {
+  readonly sessionId: string;
+  readonly running: boolean;
+}
+
+/** A user message's text, with the attachment sentinels split out of it. */
+function userContentOf(message: TranscriptMessage) {
+  return splitUserAttachments(message.parts.map((part) => (part.type === "text" ? part.text : "")).join(""));
+}
+
+const teamPartIn = (message: TranscriptMessage) =>
+  message.parts.find((part): part is TeamPart => part.type === "data-team");
+
+/** A tool call still waiting on its result: the only row `running` changes. */
+const isOpenToolCall = (part: TranscriptPart) =>
+  isToolPart(part) && (part.state === "input-streaming" || part.state === "input-available");
+
 /**
- * loop's transcript (packages/core/src/transcript) as the thread's rows.
+ * Everything besides the message object that its rows are built from, as a
+ * string a reuse must match — or null when the rows read state that can change
+ * under an unchanged message (a team card resolves its peers' client ids).
+ */
+function foldKeyOf(message: TranscriptMessage, scope: FoldScope, position: FoldPosition): string | null {
+  if (teamPartIn(message)) return null;
+  const outside =
+    message.role === "user"
+      ? (recentUserMessageId(scope.sessionId, userContentOf(message).text) ?? "")
+      : String(scope.running && message.parts.some(isOpenToolCall));
+  return `${scope.sessionId}\u0000${position.turnId}\u0000${position.orderMicros}\u0000${outside}`;
+}
+
+/**
+ * One transcript message as the thread's rows.
  *
- * One walk over the parts, in the order they were written — the host already
- * merged saved history with the live stream, with the terminal's rules, so
- * nothing here reconciles, deduplicates or reorders anything. Each row is
- * stamped from a strictly increasing counter, so any view that sorts by
- * `createdAt` gets exactly this order back.
+ * The walk is in the order the parts were written — the host already merged
+ * saved history with the live stream, with the terminal's rules, so nothing
+ * here reconciles, deduplicates or reorders anything. Each row is stamped from
+ * a strictly increasing counter carried from message to message, so any view
+ * that sorts by `createdAt` gets exactly this order back.
  *
  * The rows are the same objects the screens already draw (tool rows, thinking
  * blocks, plan cards, compaction and recap rows); only where their order comes
  * from changed.
  */
-function foldTranscript(transcript: Transcript, sessionId: string): Accumulator {
-  const out: Accumulator = {
-    messages: [],
-    activities: [],
-    plans: [],
-    seenToolCallIds: new Set(),
-    seenThinking: new Set(),
-    seenAssistantText: new Set(),
-    seenRecaps: new Set(),
-    seenCompactions: 0,
-    order: new EmitOrder(),
-    lastTurnId: null,
-  };
-  let turnId: string | null = null;
+function foldMessage(
+  message: TranscriptMessage,
+  scope: FoldScope,
+  position: FoldPosition,
+): { readonly rows: Rows; readonly after: FoldPosition } {
+  const out = emptyRows();
+  const order = new EmitOrder();
+  order.micros = position.orderMicros;
+  const at = message.metadata.createdAt;
+  const done = (turnId: string | null) => ({ rows: out, after: { turnId, orderMicros: order.micros } });
 
-  for (const message of transcript.messages) {
-    const at = message.metadata.createdAt;
-    if (message.role === "user") {
-      // A turn the thread team opened: a card, never a user bubble.
-      const team = message.parts.find((part): part is TeamPart => part.type === "data-team");
-      if (team) {
-        turnId = message.id;
-        out.lastTurnId = message.id;
-        // Outside the turn it opens, like the prompt it stands in for: a
-        // finished turn folds its work away, and the brief is not work.
-        pushTeamActivity(out, `${message.id}-team`, null, out.order.next(at), team.data);
-        continue;
-      }
-      const raw = message.parts.map((part) => (part.type === "text" ? part.text : "")).join("");
-      const { text, attachments } = splitUserAttachments(raw);
-      if (text.trim() === "" && attachments.length === 0) continue;
-      turnId = message.id;
-      out.lastTurnId = message.id;
-      const userAt = out.order.next(at);
-      out.messages.push({
-        // The id the client already drew this message under, or it shows twice.
-        id: recentUserMessageId(sessionId, text) ?? message.id,
-        role: "user",
-        text,
-        ...(attachments.length > 0 ? { attachments } : {}),
-        turnId: null,
-        streaming: false,
-        createdAt: userAt,
-        updatedAt: userAt,
-      });
-      continue;
+  if (message.role === "user") {
+    // A turn the thread team opened: a card, never a user bubble.
+    const team = teamPartIn(message);
+    if (team) {
+      // Outside the turn it opens, like the prompt it stands in for: a
+      // finished turn folds its work away, and the brief is not work.
+      pushTeamActivity(out, `${message.id}-team`, null, order.next(at), team.data);
+      return done(message.id);
     }
-
-    const rowTurn = message.role === "assistant" ? (turnId ?? message.id) : null;
-    for (const [index, part] of message.parts.entries()) {
-      const id = `${message.id}-${index}`;
-      const stamp = out.order.next(at);
-      if (part.type === "text") {
-        if (part.text.trim() === "") continue;
-        out.messages.push({
-          id,
-          role: "assistant",
-          text: part.text,
-          turnId: rowTurn,
-          streaming: part.state === "streaming",
-          createdAt: stamp,
-          updatedAt: stamp,
-        });
-      } else if (part.type === "reasoning") {
-        if (part.text.trim() === "" && part.state !== "streaming") continue;
-        out.activities.push({
-          id,
-          tone: "info",
-          kind: THINKING_ACTIVITY_KIND,
-          summary: "Thinking",
-          payload: {
-            detail: part.text,
-            [LOOP_THINKING_PAYLOAD_KEY]: {
-              text: part.text,
-              ...(part.durationMs === undefined ? {} : { durationMs: part.durationMs }),
-              streaming: part.state === "streaming",
-            } satisfies LoopThinkingPayload,
-          },
-          turnId: rowTurn,
-          createdAt: stamp,
-        });
-      } else if (isToolPart(part)) {
-        const fields = part.inputText === undefined ? null : parsePartialInput(part.toolName, part.inputText);
-        if (part.toolName === PLAN_TOOL) {
-          const markdown = (part.input as { plan?: unknown } | undefined)?.plan ?? fields?.plan;
-          if (typeof markdown === "string" && markdown.trim() !== "") {
-            out.plans.push({ id: part.toolCallId, turnId: rowTurn, planMarkdown: markdown, createdAt: stamp, updatedAt: stamp });
-            continue;
-          }
-        }
-        const run = part.subagent;
-        const open = part.state === "input-streaming" || part.state === "input-available";
-        const streamingContent = livePreviewTail(fields?.content ?? fields?.plan);
-        pushToolActivity(out, {
-          id,
-          turnId: rowTurn,
-          createdAt: stamp,
-          name: part.toolName,
-          // Before the call lands there are no parsed args; the partial ones
-          // stand in, which is how a streaming `write` shows its path.
-          input: part.input ?? (fields?.path === undefined ? undefined : { path: fields.path }),
-          ...(part.state === "output-available" ? { output: part.output } : {}),
-          ...(part.state === "output-error" && part.errorText !== "Interrupted" ? { error: part.errorText } : {}),
-          toolCallId: part.toolCallId,
-          isPartial: open && transcript.running,
-          ...(part.errorText === "Interrupted" ? { interrupted: true } : {}),
-          ...(streamingContent ? { streamingContent } : {}),
-          ...(run ? { agent: run.agent } : {}),
-          ...(run?.current === undefined || run.finished ? {} : { statusText: run.current }),
-          ...(run?.dropped ? { droppedActivity: run.dropped } : {}),
-          ...(run && run.steps.length > 0
-            ? {
-                activity: run.steps.map((step) =>
-                  step.type === "tool"
-                    ? typeof step.input === "string"
-                      ? { kind: "tool" as const, name: step.name, summary: step.input }
-                      : { kind: "tool" as const, name: step.name, input: step.input }
-                    : step.type === "reasoning"
-                      ? { kind: "thinking" as const, text: step.text }
-                      : { kind: "text" as const, text: step.text },
-                ),
-              }
-            : {}),
-          ...(run && (run.stepCount !== undefined || run.usd !== undefined || run.durationMs !== undefined)
-            ? {
-                stats: {
-                  ...(run.stepCount === undefined ? {} : { steps: run.stepCount }),
-                  ...(run.usd === undefined ? {} : { usd: run.usd }),
-                  ...(run.durationMs === undefined ? {} : { durationMs: run.durationMs }),
-                },
-              }
-            : {}),
-        });
-      } else if (part.type === "data-compaction") {
-        pushCompactActivity(out, id, rowTurn, stamp, {
-          running: part.data.running,
-          ...(part.data.reason === undefined ? {} : { reason: part.data.reason }),
-          ...(part.data.summary === undefined ? {} : { summary: part.data.summary }),
-          ...(part.data.tokensBefore === undefined ? {} : { tokensBefore: part.data.tokensBefore }),
-          ...(part.data.tokensAfter === undefined ? {} : { tokensAfter: part.data.tokensAfter }),
-          ...(part.data.aborted ? { aborted: true } : {}),
-          ...(part.data.error === undefined ? {} : { error: part.data.error }),
-        });
-      } else if (part.type === "data-recap") {
-        pushRecapActivity(out, id, rowTurn, stamp, part.data.text);
-      } else if (part.type === "data-hook") {
-        pushHookActivity(out, id, rowTurn, stamp, part.data.text);
-      } else if (part.type === "data-error") {
-        out.activities.push({
-          id,
-          tone: "error",
-          kind: "turn.error",
-          summary: "The turn failed",
-          payload: { detail: part.data.message },
-          turnId: rowTurn,
-          createdAt: stamp,
-        });
-      } else if (part.type === "data-branch-summary") {
-        pushRecapActivity(out, id, null, stamp, part.data.summary);
-      } else if (part.type === "data-team") {
-        pushTeamActivity(out, id, rowTurn, stamp, part.data);
-      }
-    }
+    const { text, attachments } = userContentOf(message);
+    if (text.trim() === "" && attachments.length === 0) return done(position.turnId);
+    const userAt = order.next(at);
+    out.messages.push({
+      // The id the client already drew this message under, or it shows twice.
+      id: recentUserMessageId(scope.sessionId, text) ?? message.id,
+      role: "user",
+      text,
+      ...(attachments.length > 0 ? { attachments } : {}),
+      turnId: null,
+      streaming: false,
+      createdAt: userAt,
+      updatedAt: userAt,
+    });
+    return done(message.id);
   }
 
+  const rowTurn = message.role === "assistant" ? (position.turnId ?? message.id) : null;
+  for (const [index, part] of message.parts.entries()) {
+    foldPart(out, part, `${message.id}-${index}`, rowTurn, order.next(at), scope.running);
+  }
+  return done(position.turnId);
+}
+
+/** One part of a reply (or tool/system message) as its row, if it draws one. */
+function foldPart(
+  out: Rows,
+  part: TranscriptPart,
+  id: string,
+  rowTurn: string | null,
+  stamp: string,
+  running: boolean,
+): void {
+  if (part.type === "text") {
+    if (part.text.trim() === "") return;
+    out.messages.push({
+      id,
+      role: "assistant",
+      text: part.text,
+      turnId: rowTurn,
+      streaming: part.state === "streaming",
+      createdAt: stamp,
+      updatedAt: stamp,
+    });
+  } else if (part.type === "reasoning") {
+    if (part.text.trim() === "" && part.state !== "streaming") return;
+    out.activities.push({
+      id,
+      tone: "info",
+      kind: THINKING_ACTIVITY_KIND,
+      summary: "Thinking",
+      payload: {
+        detail: part.text,
+        [LOOP_THINKING_PAYLOAD_KEY]: {
+          text: part.text,
+          ...(part.durationMs === undefined ? {} : { durationMs: part.durationMs }),
+          streaming: part.state === "streaming",
+        } satisfies LoopThinkingPayload,
+      },
+      turnId: rowTurn,
+      createdAt: stamp,
+    });
+  } else if (isToolPart(part)) {
+    const fields = part.inputText === undefined ? null : parsePartialInput(part.toolName, part.inputText);
+    if (part.toolName === PLAN_TOOL) {
+      const markdown = (part.input as { plan?: unknown } | undefined)?.plan ?? fields?.plan;
+      if (typeof markdown === "string" && markdown.trim() !== "") {
+        out.plans.push({ id: part.toolCallId, turnId: rowTurn, planMarkdown: markdown, createdAt: stamp, updatedAt: stamp });
+        return;
+      }
+    }
+    const run = part.subagent;
+    const streamingContent = livePreviewTail(fields?.content ?? fields?.plan);
+    pushToolActivity(out, {
+      id,
+      turnId: rowTurn,
+      createdAt: stamp,
+      name: part.toolName,
+      // Before the call lands there are no parsed args; the partial ones
+      // stand in, which is how a streaming `write` shows its path.
+      input: part.input ?? (fields?.path === undefined ? undefined : { path: fields.path }),
+      ...(part.state === "output-available" ? { output: part.output } : {}),
+      ...(part.state === "output-error" && part.errorText !== "Interrupted" ? { error: part.errorText } : {}),
+      toolCallId: part.toolCallId,
+      isPartial: isOpenToolCall(part) && running,
+      ...(part.errorText === "Interrupted" ? { interrupted: true } : {}),
+      ...(streamingContent ? { streamingContent } : {}),
+      ...(run ? { agent: run.agent } : {}),
+      ...(run?.current === undefined || run.finished ? {} : { statusText: run.current }),
+      ...(run?.dropped ? { droppedActivity: run.dropped } : {}),
+      ...(run && run.steps.length > 0
+        ? {
+            activity: run.steps.map((step) =>
+              step.type === "tool"
+                ? typeof step.input === "string"
+                  ? { kind: "tool" as const, name: step.name, summary: step.input }
+                  : { kind: "tool" as const, name: step.name, input: step.input }
+                : step.type === "reasoning"
+                  ? { kind: "thinking" as const, text: step.text }
+                  : { kind: "text" as const, text: step.text },
+            ),
+          }
+        : {}),
+      ...(run && (run.stepCount !== undefined || run.usd !== undefined || run.durationMs !== undefined)
+        ? {
+            stats: {
+              ...(run.stepCount === undefined ? {} : { steps: run.stepCount }),
+              ...(run.usd === undefined ? {} : { usd: run.usd }),
+              ...(run.durationMs === undefined ? {} : { durationMs: run.durationMs }),
+            },
+          }
+        : {}),
+    });
+  } else if (part.type === "data-compaction") {
+    pushCompactActivity(out, id, rowTurn, stamp, {
+      running: part.data.running,
+      ...(part.data.reason === undefined ? {} : { reason: part.data.reason }),
+      ...(part.data.summary === undefined ? {} : { summary: part.data.summary }),
+      ...(part.data.tokensBefore === undefined ? {} : { tokensBefore: part.data.tokensBefore }),
+      ...(part.data.tokensAfter === undefined ? {} : { tokensAfter: part.data.tokensAfter }),
+      ...(part.data.aborted ? { aborted: true } : {}),
+      ...(part.data.error === undefined ? {} : { error: part.data.error }),
+    });
+  } else if (part.type === "data-recap") {
+    pushRecapActivity(out, id, rowTurn, stamp, part.data.text);
+  } else if (part.type === "data-hook") {
+    pushHookActivity(out, id, rowTurn, stamp, part.data.text);
+  } else if (part.type === "data-error") {
+    out.activities.push({
+      id,
+      tone: "error",
+      kind: "turn.error",
+      summary: "The turn failed",
+      payload: { detail: part.data.message },
+      turnId: rowTurn,
+      createdAt: stamp,
+    });
+  } else if (part.type === "data-branch-summary") {
+    pushRecapActivity(out, id, null, stamp, part.data.summary);
+  } else if (part.type === "data-team") {
+    pushTeamActivity(out, id, rowTurn, stamp, part.data);
+  }
+}
+
+/**
+ * What the transcript adds after its last message: the question the agent is
+ * waiting on and the checklist. Neither is part of any message, so they are
+ * rebuilt every time — two rows at most.
+ */
+function foldTrailer(transcript: Transcript, sessionId: string, position: FoldPosition): Rows {
+  const out = emptyRows();
+  const order = new EmitOrder();
+  order.micros = position.orderMicros;
   // A question the agent is waiting on: not part of any turn's events, so it
   // still comes from the live-turn tracker.
   const ask = readLiveTurn(sessionId)?.ask;
   if (ask !== undefined && transcript.running) {
     out.activities.push({
-      id: `${turnId ?? sessionId}-ask-${ask.askId}`,
+      id: `${position.turnId ?? sessionId}-ask-${ask.askId}`,
       tone: "info",
       kind: "user-input.requested",
       summary: ask.questions[0]?.question ?? "The agent has a question",
@@ -947,16 +948,41 @@ function foldTranscript(transcript: Transcript, sessionId: string): Accumulator 
           options: question.options.map((option) => ({ label: option.label, description: option.description })),
         })),
       },
-      turnId,
-      createdAt: out.order.next(Date.now()),
+      turnId: position.turnId,
+      createdAt: order.next(Date.now()),
     });
   }
-
+  // The checklist, emitted once and last, so the sidebar never reads a stale copy.
   if (transcript.todos.length > 0) {
-    out.todos = { items: transcript.todos as readonly LoopTodo[], ts: Date.now() };
+    pushTodosActivity(out, position.turnId, order.current(), transcript.todos as readonly LoopTodo[]);
   }
   return out;
 }
+
+/**
+ * loop's transcript (packages/core/src/transcript) as the thread's rows, each
+ * message's rows reused while the message is unchanged (see threadRows.ts).
+ */
+const foldTranscript = Effect.fnUntraced(function* (transcript: Transcript, sessionId: string) {
+  const scope: FoldScope = { sessionId, running: transcript.running };
+  const messages: OrchestrationMessage[] = [];
+  const activities: OrchestrationThreadActivity[] = [];
+  const plans: OrchestrationProposedPlan[] = [];
+  const append = (rows: DecodedRows) => {
+    messages.push(...rows.messages);
+    activities.push(...rows.activities);
+    plans.push(...rows.plans);
+  };
+  let position: FoldPosition = { turnId: null, orderMicros: 0 };
+  for (const message of transcript.messages) {
+    const at = position;
+    const memo = yield* rowsOf(message, foldKeyOf(message, scope, at), () => foldMessage(message, scope, at));
+    append(memo.rows);
+    position = memo.after;
+  }
+  append(yield* decodeRows(foldTrailer(transcript, sessionId, position)));
+  return { messages, activities, plans, lastTurnId: position.turnId };
+});
 
 const emptyThread = (threadId: string, intent: { cwd: string; provider: string; model: string }) => {
   const now = new Date().toISOString();
@@ -1001,20 +1027,13 @@ export const buildThread = Effect.fnUntraced(function* (
   // asks for a snapshot.
   const { transcript, meta } =
     view?.ready === true ? view : yield* Effect.promise(() => snapshotOf(host, loopSessionId));
-  const out = foldTranscript(transcript, loopSessionId);
+  const out = yield* foldTranscript(transcript, loopSessionId);
   const running = transcript.running;
-
-  // The checklist, emitted once and last, so the sidebar never reads a stale copy.
-  if (out.todos && out.todos.items.length > 0) {
-    pushTodosActivity(out, out.lastTurnId, out.order.current(), out.todos.items);
-  }
 
   const info = meta.info ?? {};
   const provider = meta.provider || info.provider || "";
   const model = meta.model || info.model || "unknown";
-  const firstUser = out.messages.find(
-    (message) => (message as { role: string }).role === "user",
-  ) as { text: string } | undefined;
+  const firstUser = out.messages.find((message) => message.role === "user");
   const title = meta.name?.trim() || firstUser?.text.replace(/\s+/g, " ").slice(0, 80) || "Untitled";
   const lastMessage = transcript.messages[transcript.messages.length - 1];
   const updatedAt = iso(lastMessage?.metadata.createdAt ?? info.createdAt ?? Date.now());
@@ -1032,7 +1051,9 @@ export const buildThread = Effect.fnUntraced(function* (
    */
   const clientThreadId = clientThreadIdFor(loopSessionId);
 
-  return yield* decodeThread({
+  // Decoded without its rows, which arrive decoded and must stay the objects
+  // they were: a re-decode would hand the timeline all-new rows again.
+  const shell = yield* decodeThread({
     id: clientThreadId,
     projectId: info.cwd ?? "/",
     title,
@@ -1059,9 +1080,9 @@ export const buildThread = Effect.fnUntraced(function* (
     updatedAt,
     archivedAt: null,
     deletedAt: null,
-    messages: out.messages,
-    proposedPlans: out.plans,
-    activities: out.activities,
+    messages: [],
+    proposedPlans: [],
+    activities: [],
     checkpoints: [],
     session: {
       threadId: clientThreadId,
@@ -1074,6 +1095,7 @@ export const buildThread = Effect.fnUntraced(function* (
       updatedAt,
     },
   });
+  return { ...shell, messages: out.messages, proposedPlans: out.plans, activities: out.activities };
 });
 
 /** How long to gather live-turn changes before rebuilding the thread. */

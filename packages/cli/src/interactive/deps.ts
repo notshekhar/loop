@@ -94,6 +94,8 @@ export interface AppDeps {
         manageTeam(args: string): Promise<void>;
         teamLabel(sessionId: string | undefined): string;
     };
+    /** `/btw` side threads (btw-threads.ts); set once the roster exists. */
+    btw?: { askBtw(question: string): Promise<void> };
     /** App version (undefined in dev runs). */
     version?: string;
     /** Undo the console→chat bridge before handing the terminal to a child process. */

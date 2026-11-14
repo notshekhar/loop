@@ -375,6 +375,54 @@ describe("rpc: session lifecycle", () => {
         expect(JSON.stringify(original.result.entries)).toContain("the prompt");
     });
 
+    test("session.btw answers in a fresh thread while the source turn keeps running", async () => {
+        const { call, events } = harness();
+        doStreamImpl = async () => textTurn("first answer");
+        const created = await call("session.create", { cwd: CWD, provider: "anthropic", model: MODEL });
+        const sessionId = created.result.sessionId as string;
+        await call("session.send", { sessionId, input: "the main task" });
+        await until(() => events().some((p) => p.sessionId === sessionId && p.part.type === "finish"));
+
+        // A slow second turn, so the question lands while it streams.
+        const prompts: string[] = [];
+        doStreamImpl = async (options) => {
+            const prompt = JSON.stringify(options.prompt);
+            prompts.push(prompt);
+            return prompt.includes("what is this repo?") ? textTurn("side answer") : textTurn("x".repeat(200));
+        };
+        await call("session.send", { sessionId, input: "keep working" });
+        const asked = await call("session.btw", { sessionId, question: "what is this repo?" });
+        expect(asked.error).toBeUndefined();
+        const threadId = asked.result.sessionId as string;
+        expect(threadId).not.toBe(sessionId);
+        expect(asked.result.name).toBe("btw: what is this repo?");
+
+        await until(() => events().some((p) => p.sessionId === threadId && p.part.type === "finish"));
+        await until(() => events().filter((p) => p.sessionId === sessionId && p.part.type === "finish").length === 2);
+
+        // A fresh thread: the question alone, nothing of the chat it came from.
+        const side = prompts.find((p) => p.includes("what is this repo?"))!;
+        expect(side).not.toContain("the main task");
+        const thread = JSON.stringify((await call("session.history", { sessionId: threadId })).result.entries);
+        expect(thread).toContain("side answer");
+        expect(thread).toContain(`"parentId":"${sessionId}"`);
+        // The list says where it came from, so a client can offer the way back.
+        const listed = (await call("session.list", { cwd: CWD })).result as { id: string; btw?: unknown }[];
+        expect(listed.find((row) => row.id === threadId)?.btw).toEqual({ parentId: sessionId });
+        expect(listed.find((row) => row.id === sessionId)?.btw).toBeUndefined();
+        // The source never sees the question or its answer.
+        const source = JSON.stringify((await call("session.history", { sessionId })).result.entries);
+        expect(source).not.toContain("what is this repo?");
+        expect(source).not.toContain("side answer");
+    });
+
+    test("session.btw refuses an empty question", async () => {
+        const { call } = harness();
+        const created = await call("session.create", { cwd: CWD, provider: "anthropic", model: MODEL });
+        const { error } = await call("session.btw", { sessionId: created.result.sessionId, question: " " });
+        expect(String(error?.message)).toContain("question");
+    });
+
     test("session.fork before only accepts a user message", async () => {
         const { call, events } = harness();
         doStreamImpl = async () => textTurn("an answer");

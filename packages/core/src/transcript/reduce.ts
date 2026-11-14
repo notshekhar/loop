@@ -26,6 +26,7 @@ import type {
     TranscriptTodo,
 } from "./types";
 import { isToolPart } from "./types";
+import { btwOf } from "./btw";
 import { teamPartOf } from "./team";
 
 /** A subagent's log keeps its newest steps; the row says how many it dropped. */
@@ -299,6 +300,7 @@ export function applyEvent(transcript: Transcript, event: TranscriptEvent, at: n
             const text = String(record.text ?? "");
             // A turn the thread team opened draws as a team card.
             const team = teamPartOf(record.team as Parameters<typeof teamPartOf>[0], text);
+            const btw = btwOf(record.btw);
             return {
                 ...transcript,
                 running: true,
@@ -308,7 +310,7 @@ export function applyEvent(transcript: Transcript, event: TranscriptEvent, at: n
                         id,
                         role: "user",
                         parts: team ? [team] : text ? [{ type: "text", text, state: "done" }] : [],
-                        metadata: { createdAt },
+                        metadata: { createdAt, ...(btw ? { btw } : {}) },
                     },
                 ],
             };

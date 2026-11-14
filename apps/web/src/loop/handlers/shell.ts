@@ -55,6 +55,8 @@ export interface LoopSessionRow {
     readonly leadId: string;
     readonly state: string;
   };
+  /** A `/btw` side thread: the session it was asked from. */
+  readonly btw?: { readonly parentId: string };
 }
 
 /** A row of loop's `session.projects`: every folder with a session. */
@@ -277,6 +279,7 @@ export const buildShellSnapshot = Effect.fnUntraced(function* (
             state: row.team.state,
           }
         : null,
+      sideThreadOf: row.btw ? clientThreadIdFor(row.btw.parentId) : null,
     })),
     updatedAt: iso(Date.now()),
   });

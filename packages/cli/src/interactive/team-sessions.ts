@@ -10,13 +10,11 @@
  */
 import {
     claimTeamRuntime,
-    CostTracker,
     DEFAULT_AGENT_NAME,
     dropTeamTurn,
     mayRunTeamTurn,
     memberRunConfig,
     onTeamChange,
-    parseModelId,
     releaseTeamRuntime,
     sessionTitle,
     stopTeam,
@@ -24,16 +22,12 @@ import {
     teamSnapshot,
     wakeTeamInbox,
     type MemberState,
-    type ProviderId,
-    type SessionManager,
     type TeamSnapshotMember,
     type TeamTurnMeta,
 } from "@notshekhar/loop-core";
 import type { SelectItem, TUI } from "@notshekhar/loop-tui";
-import { ChatHistory } from "./components/chat-history";
-import { TodoPanel } from "./components/todo-panel";
+import type { SlotFor, SlotOpening } from "./background-slot";
 import type { AppDeps } from "./deps";
-import { renderSessionBranch } from "./replay";
 import type { SessionRoster } from "./session-roster";
 import type { SessionSlot, SlotManager } from "./slots";
 import { accent, dim, err, ok, warn } from "./ui/text";
@@ -43,7 +37,8 @@ export interface TeamSessionsHost {
     roster: SessionRoster;
     deps: AppDeps;
     tui: TUI;
-    manager: SessionManager;
+    /** The app's one slot opener (background-slot.ts). */
+    slotFor: SlotFor;
 }
 
 export interface TeamSessions {
@@ -79,7 +74,7 @@ interface QueuedTeamTurn {
 }
 
 export function createTeamSessions(host: TeamSessionsHost): TeamSessions {
-    const { slots, roster, deps, tui, manager } = host;
+    const { slots, roster, deps, tui, slotFor } = host;
     const owner = {};
     /** Team turns handed over while their thread was busy — run when it frees. */
     const pending = new Map<SessionSlot, QueuedTeamTurn[]>();
@@ -89,80 +84,35 @@ export function createTeamSessions(host: TeamSessionsHost): TeamSessions {
      * would run beside the first.
      */
     const inFlight = new Set<string>();
-    /** Threads being opened, so two deliveries at once share one slot. */
-    const opening = new Map<string, Promise<SessionSlot>>();
 
     const say = (text: string): void => {
         deps.history.addSystem(text);
         tui.requestRender();
     };
 
-    /** A background slot for a session that has none: its own model, agent and thinking level. */
-    const openSlot = async (sessionId: string): Promise<SessionSlot> => {
-        // The /rc server's copy when it has one: two Session objects for one
-        // conversation each append to their own branch.
-        const session = deps.live.feed?.openSession(sessionId) ?? (await manager.open(sessionId));
-        const model = session.lastModel() || session.info.model;
-        let provider = session.info.provider;
-        try {
-            provider = parseModelId(model).provider as ProviderId;
-        } catch {
-            // keep the recorded provider
-        }
-        const template = slots.foreground;
-        // A thread runs as its lead started it, not as whatever tab is in front.
-        const run = memberRunConfig(sessionId);
-        const history = new ChatHistory(tui, session.info.cwd);
-        const todoPanel = new TodoPanel();
-        const tracker = new CostTracker();
-        try {
-            tracker.seedFromSession(session);
-        } catch {
-            // an unseeded tracker still bills this process's turns
-        }
-        const slot = slots.add({
-            cwd: session.info.cwd,
-            modelId: model,
-            provider,
-            thinkingLevel: run?.thinkingLevel ?? template.thinkingLevel,
-            agent: run ? (run.agent ?? DEFAULT_AGENT_NAME) : template.agent,
-            oneShotAgent: null,
-            session,
-            latestContextTokens: 0,
-            busy: false,
-            abort: new AbortController(),
-            pendingInjection: null,
-            startupHooksDone: null,
-            pendingPlan: null,
-            planModeViaCycle: false,
-            history,
-            todoPanel,
-            tracker,
-        });
+    /** How a thread's slot opens: as its lead started it, not as whatever tab is in front. */
+    const memberOpening = (sessionId: string): SlotOpening => {
         const team = teamOf(sessionId);
-        if (team && team.role === "member") {
-            history.addSystem(
-                accent("⧉ ") +
-                    `${sessionTitle(sessionId)}` +
-                    dim(
-                        ` — a thread in “${sessionTitle(team.leadId)}”'s team · /lead goes back · /team lists every thread`,
-                    ),
-            );
-        }
-        renderSessionBranch(session, history, model, todoPanel);
-        return slot;
+        return {
+            choose: () => {
+                const run = memberRunConfig(sessionId);
+                return run ? { thinkingLevel: run.thinkingLevel, agent: run.agent ?? DEFAULT_AGENT_NAME } : {};
+            },
+            ...(team && team.role === "member"
+                ? {
+                      banner:
+                          accent("⧉ ") +
+                          `${sessionTitle(sessionId)}` +
+                          dim(
+                              ` — a thread in “${sessionTitle(team.leadId)}”'s team · /lead goes back · /team lists every thread`,
+                          ),
+                  }
+                : {}),
+        };
     };
 
-    /** The live slot for a session, opened in the background if it has none. */
-    const openBackground = (sessionId: string): Promise<SessionSlot> => {
-        const live = slots.bySessionId(sessionId);
-        if (live) return Promise.resolve(live);
-        const already = opening.get(sessionId);
-        if (already) return already;
-        const opened = openSlot(sessionId).finally(() => opening.delete(sessionId));
-        opening.set(sessionId, opened);
-        return opened;
-    };
+    /** The live slot for a thread, opened in the background if it has none. */
+    const openBackground = (sessionId: string): Promise<SessionSlot> => slotFor(sessionId, memberOpening(sessionId));
 
     const isBusy = (slot: SessionSlot): boolean => slot.busy || (!!slot.session && inFlight.has(slot.session.id));
 

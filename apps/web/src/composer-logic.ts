@@ -8,7 +8,7 @@ export type ComposerTriggerKind = "path" | "slash-command" | "skill";
  * the proposed-plan card. So the composer's slash commands are the two that
  * mean something here: pick a model, or manage agents.
  */
-export type ComposerSlashCommand = "model" | "agents" | "mcp" | "clear" | "reload" | "usage";
+export type ComposerSlashCommand = "model" | "agents" | "mcp" | "clear" | "reload" | "usage" | "btw";
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;

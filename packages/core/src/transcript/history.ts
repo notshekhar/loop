@@ -18,6 +18,7 @@ import type {
 } from "./types";
 import { isToolPart } from "./types";
 import { resultFailure } from "./reduce";
+import { btwOf } from "./btw";
 import { teamPartOf, type TeamEntryMeta } from "./team";
 
 /** The parts of a saved entry this reads (packages/core/src/types.ts Entry). */
@@ -51,6 +52,8 @@ interface EntryLike {
     readonly payload?: unknown;
     // a user message the thread team wrote (teams/)
     readonly team?: TeamEntryMeta;
+    // a `/btw` question: where it was asked from
+    readonly btw?: unknown;
 }
 
 
@@ -229,11 +232,12 @@ export function fromEntries(
             } else if (entry.role === "user") {
                 attachRuns();
                 reply = null;
+                const btw = btwOf(entry.btw);
                 messages.push({
                     id: entry.id ?? `entry-${position}`,
                     role: "user",
                     parts: team ? [team] : userParts(entry.content),
-                    metadata: { createdAt: at },
+                    metadata: { createdAt: at, ...(btw ? { btw } : {}) },
                 });
             } else if (entry.role === "assistant") {
                 const target = currentReply(at);

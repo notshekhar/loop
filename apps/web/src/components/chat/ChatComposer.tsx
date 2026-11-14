@@ -1030,6 +1030,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           description: "Re-read settings, agents, commands, models and MCP servers from disk",
         },
         {
+          // Inserts `/btw ` for the question; the send is routed to a side
+          // thread in loop/handlers/dispatch.ts, so it works mid-turn.
+          id: "slash:btw",
+          type: "slash-command",
+          command: "btw",
+          label: "/btw",
+          description: "Side question in its own thread — this conversation never sees it",
+        },
+        {
           // `/cost` and `/steak` are the terminal's names for the two halves
           // of the usage page. One entry, because in the app they are one
           // screen.
@@ -1667,6 +1676,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "slash-command") {
+        if (item.command === "btw") {
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "/btw ", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          });
+          if (applied) setComposerHighlightedItemId(null);
+          return;
+        }
         if (item.command === "model") {
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
             expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -2753,7 +2769,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           className={cn(
             // The Claude Code shape: one quiet bordered box for what you type;
             // every choice about the message sits in the toolbar beneath it.
-            "rounded-[14px] border border-border/80 bg-card shadow-xs/5 transition-[background-color,border-color] duration-200 focus-within:border-foreground/20",
+            // A hairline on a raised surface, no glow; the accent appears only on focus.
+            "rounded-[14px] border border-border bg-card shadow-xs/5 transition-[background-color,border-color] duration-200 focus-within:border-primary/55 dark:shadow-none",
             isDragOverComposer ? "bg-accent/45 ring-1 ring-primary/70" : null,
             projectSelectionRequired ? "opacity-75" : null,
             composerProviderState.composerSurfaceClassName,

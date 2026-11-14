@@ -38,6 +38,13 @@ export interface CommandContext {
      * surfaces without a screen to jump around on leave it out.
      */
     manageTeam?(args: string): Promise<void> | void;
+    /**
+     * `/btw <question>` asks it in a side thread (a copy of this session)
+     * while this one carries on; `/btw` alone lists the side threads asked
+     * here, and `/btw back` returns from a side thread to where it was asked. Optional, like manageTeam: it needs a host that runs sessions in
+     * the background.
+     */
+    askBtw?(question: string): Promise<void> | void;
     exit(): void;
     cwd: string;
     setCwd(p: string): void;
@@ -621,6 +628,14 @@ export async function registerBuiltins(reg: CommandRegistry, opts: { cwd?: strin
             name: "recipe",
             description: "Reusable workflows: save <name> [focus], list, show/edit/rm <name>, or <name> [inputs]",
             handler: (ctx, args) => ctx.manageRecipes(args.trim()),
+        },
+        {
+            name: "btw",
+            description: "Ask a side question in its own thread — the conversation here never sees it (/btw lists them, /btw back returns)",
+            handler: async (ctx, args) => {
+                if (ctx.askBtw) await ctx.askBtw(args.trim());
+                else ctx.stub("btw");
+            },
         },
         {
             name: "handoff",

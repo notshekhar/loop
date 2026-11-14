@@ -16,6 +16,7 @@ import type { ClientOrchestrationCommand } from "@loop/contracts";
 import * as Effect from "effect/Effect";
 
 import { forgetAddedProject, rememberAddedProject } from "./addedProjects.ts";
+import { askBtw, btwQuestionOf, type TurnChoices } from "./btw.ts";
 import { fromInstanceId } from "./ids.ts";
 import {
   abandonLiveTurn,
@@ -463,6 +464,17 @@ function attachmentPayloads(
   });
 }
 
+/** The model, thinking level and agent a composer chose, as loop's prompt methods take them. */
+function turnChoicesOf(selection: TurnStartCommand["modelSelection"]): TurnChoices {
+  const thinking = thinkingLevelOf(selection?.options);
+  const agent = agentOptionOf(selection?.options);
+  return {
+    ...(selection === undefined ? {} : { model: selection.model }),
+    ...(thinking === undefined ? {} : { thinking }),
+    ...(agent === undefined ? {} : { agent }),
+  };
+}
+
 /**
  * One turn, handed to loop.
  *
@@ -490,8 +502,6 @@ async function sendTurn(
   // `model` carries the provider (`xai/composer-2.5`) — loop has no separate
   // provider parameter, and runTurn resolves it from the id, so this is also
   // how a provider switch reaches loop.
-  const thinking = thinkingLevelOf(selection?.options);
-  const agent = agentOptionOf(selection?.options);
   // loop stores neither, so the thread would report a selection with no
   // options and the composer would reset the picker on the next render.
   // Keyed by loop's session id, not the client thread id: an app-created
@@ -504,9 +514,7 @@ async function sendTurn(
       sessionId,
       input: message.text,
       ...(images.length === 0 ? {} : { images }),
-      ...(selection === undefined ? {} : { model: selection.model }),
-      ...(thinking === undefined ? {} : { thinking }),
-      ...(agent === undefined ? {} : { agent }),
+      ...turnChoicesOf(selection),
     });
   } catch (error) {
     // Refused, so no turn started here — and whatever the speculative writes
@@ -631,6 +639,14 @@ async function run(
         });
       }
       const sessionId = await ensureSession(command.threadId, host);
+      // `/btw` in a thread with a conversation goes to a side thread instead,
+      // and never queues: asking mid-turn is what it is for. In a brand-new
+      // thread there is nothing to ask about, so it is an ordinary message.
+      const question = bootstrap ? null : btwQuestionOf(command.message.text);
+      if (question !== null) {
+        await askBtw(sessionId, question, turnChoicesOf(selection), host);
+        return { sequence: 0 };
+      }
       const send = () => sendTurn(sessionId, command.message, selection, host);
       try {
         await send();

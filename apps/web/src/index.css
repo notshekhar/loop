@@ -169,6 +169,18 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(loop-mob
   --color-foreground: var(--foreground);
   --color-background: var(--background);
   --color-surface-raised: var(--surface-raised);
+  --color-chip-blue: var(--chip-blue);
+  --color-chip-blue-foreground: var(--chip-blue-foreground);
+  --color-chip-orange: var(--chip-orange);
+  --color-chip-orange-foreground: var(--chip-orange-foreground);
+  --color-chip-red: var(--chip-red);
+  --color-chip-red-foreground: var(--chip-red-foreground);
+  --color-chip-green: var(--chip-green);
+  --color-chip-green-foreground: var(--chip-green-foreground);
+  --color-chip-violet: var(--chip-violet);
+  --color-chip-violet-foreground: var(--chip-violet-foreground);
+  --color-chip-neutral: var(--chip-neutral);
+  --color-chip-neutral-foreground: var(--chip-neutral-foreground);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
@@ -592,14 +604,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(loop-mob
   }
 
   /*
-   * The queued-messages strip, which is the context strip reflected.
+   * A strip tucked under the composer from above: the queued messages, and
+   * the `/btw` side questions. It is the context strip reflected.
    *
    * Same trick, upside down: the card is inset from the composer, pulled
    * underneath it, and its outline is masked away where the composer's 22px
    * corner curve covers it — so it reads as one surface sliding out from
    * behind the input rather than a second card floating above it.
    */
-  .chat-composer-queue-strip {
+  .chat-composer-tucked-strip {
     /* Its own copy of the shell's tokens: the strip sits OUTSIDE
        `.chat-composer-glass-shell` (see ChatView) so nothing cascades to it. */
     --chat-composer-glass-surface: var(--card);
@@ -609,7 +622,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(loop-mob
     isolation: isolate;
   }
 
-  .chat-composer-queue-strip::before {
+  .chat-composer-tucked-strip::before {
     position: absolute;
     z-index: -1;
     inset: 0;
@@ -628,13 +641,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(loop-mob
     content: "";
   }
 
-  .dark .chat-composer-queue-strip {
-    --chat-composer-glass-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
+  .dark .chat-composer-tucked-strip {
+    --chat-composer-glass-surface: var(--card);
   }
 
-  .dark .chat-composer-queue-strip::before {
-    border-color: rgb(255 255 255 / 7%);
-    box-shadow: 0 -14px 32px -18px rgb(0 0 0 / 75%);
+  .dark .chat-composer-tucked-strip::before {
+    /* The composer's own hairline, and no glow: on the near-black ground a
+       dark drop shadow only reads as a smudge. */
+    border-color: var(--border);
+    box-shadow: none;
   }
 
   .chat-composer-context-strip {
@@ -1019,37 +1034,67 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(loop-mob
   --sidebar-border: var(--border);
   --sidebar-stage-fade: var(--sidebar);
 
+  /* Tinted pills: a label or count in a hue, on a very dark (dark theme) or
+     very pale (light theme) wash of the same hue. No border — the wash is the
+     edge. `halo` is the accent's own wash, the ring behind an accent dot. */
+  --chip-blue: var(--color-blue-50);
+  --chip-blue-foreground: var(--color-blue-700);
+  --chip-orange: var(--color-orange-50);
+  --chip-orange-foreground: var(--color-orange-700);
+  --chip-red: var(--color-red-50);
+  --chip-red-foreground: var(--color-red-700);
+  --chip-green: var(--color-emerald-50);
+  --chip-green-foreground: var(--color-emerald-700);
+  --chip-violet: var(--color-violet-50);
+  --chip-violet-foreground: var(--color-violet-700);
+  --chip-neutral: var(--color-zinc-100);
+  --chip-neutral-foreground: var(--color-zinc-600);
+
   @variant dark {
     color-scheme: dark;
-    /* Neutral gray planes. Hue lives on buttons only — surfaces stay dead
-       gray so the workspace doesn't wash blue. */
-    --background: #191919;
+    /* Near-black neutral planes with no hue in them; raised surfaces sit only
+       a step above the ground, so panels separate by hairline, not by tone.
+       Text is soft gray rather than white — high contrast against the ground,
+       low glare. The one strong hue is the blue accent. */
+    --background: #141414;
     --app-chrome-background: var(--background);
     --surface-raised: var(--secondary);
-    --foreground: #e6e6e6;
-    --card: #202020;
+    --foreground: #d6d6d6;
+    --card: #1b1b1b;
     --card-foreground: var(--foreground);
-    --popover: #272727;
+    --popover: #212121;
     --popover-foreground: var(--foreground);
-    --primary: oklch(0.72 0.07 264);
+    --primary: #4f8ff7;
     --primary-foreground: var(--color-white);
-    --secondary: --alpha(var(--color-white) / 8%);
+    --secondary: --alpha(var(--color-white) / 7%);
     --secondary-foreground: var(--foreground);
-    --muted: --alpha(var(--color-white) / 6%);
-    --muted-foreground: #9b9b9b;
-    --accent: --alpha(var(--color-white) / 8%);
-    --accent-foreground: var(--color-white);
-    --destructive: #f14c4c;
-    --border: --alpha(var(--color-white) / 11%);
-    --input: --alpha(var(--color-white) / 16%);
-    --ring: oklch(0.72 0.07 264);
-    --destructive-foreground: #f14c4c;
-    --info: #8fa4c4;
-    --info-foreground: #8fa4c4;
-    --success: #89d185;
-    --success-foreground: #89d185;
-    --warning: #e5c07b;
-    --warning-foreground: #e5c07b;
+    --muted: --alpha(var(--color-white) / 5%);
+    --muted-foreground: #7c7c7c;
+    --accent: --alpha(var(--color-white) / 7%);
+    --accent-foreground: #e6e6e6;
+    --destructive: #f27474;
+    --border: --alpha(var(--color-white) / 7%);
+    --input: --alpha(var(--color-white) / 12%);
+    --ring: #4f8ff7;
+    --destructive-foreground: #f27474;
+    --info: #4f8ff7;
+    --info-foreground: #6fa3f8;
+    --success: #6cc58a;
+    --success-foreground: #6cc58a;
+    --warning: #f5a04a;
+    --warning-foreground: #f5a04a;
+    --chip-blue: #1e2a40;
+    --chip-blue-foreground: #4f8ff7;
+    --chip-orange: #33251a;
+    --chip-orange-foreground: #f5a04a;
+    --chip-red: #351c1c;
+    --chip-red-foreground: #f27474;
+    --chip-green: #1a2e22;
+    --chip-green-foreground: #6cc58a;
+    --chip-violet: #2a2140;
+    --chip-violet-foreground: #a98bf5;
+    --chip-neutral: #232323;
+    --chip-neutral-foreground: #9a9a9a;
     --sidebar: var(--card);
     --sidebar-foreground: var(--foreground);
     --sidebar-muted-foreground: var(--muted-foreground);
@@ -1090,25 +1135,26 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(loop-mob
   background-color: var(--sidebar);
 }
 
-/* Sidebar one step below the workspace (#131313 against #191919). */
+/* The sidebar shares the frame's surface (#141414) — one plane, split by the
+   frame's single divider, not by a second shade. */
 .dark [data-sidebar-version="v1"],
 .dark [data-sidebar-version="v2"] {
-  --background: #131313;
-  --foreground: #e6e6e6;
-  --card: #131313;
+  --background: #141414;
+  --foreground: #d6d6d6;
+  --card: #141414;
   --card-foreground: var(--foreground);
-  --accent: #252525;
-  --accent-foreground: var(--color-white);
-  --muted: #252525;
-  --muted-foreground: #9b9b9b;
-  --border: rgb(255 255 255 / 10%);
-  --input: rgb(255 255 255 / 18%);
+  --accent: #1f1f1f;
+  --accent-foreground: #e6e6e6;
+  --muted: #1f1f1f;
+  --muted-foreground: #7c7c7c;
+  --border: #262626;
+  --input: rgb(255 255 255 / 14%);
   --sidebar: var(--card);
   --sidebar-foreground: var(--foreground);
   --sidebar-muted-foreground: var(--muted-foreground);
   --sidebar-control-surface: var(--muted);
-  --sidebar-row-hover: color-mix(in srgb, var(--foreground) 8%, transparent);
-  --sidebar-row-active: color-mix(in srgb, var(--foreground) 11%, transparent);
+  --sidebar-row-hover: color-mix(in srgb, var(--foreground) 6%, transparent);
+  --sidebar-row-active: color-mix(in srgb, var(--foreground) 9%, transparent);
   --sidebar-row-selected: color-mix(in srgb, var(--foreground) 7%, transparent);
   --sidebar-border: var(--border);
   /* The stage-channel header art must ramp to THIS panel's surface, not the
@@ -1785,50 +1831,83 @@ label:has(> select#reasoning-effort) select {
 
 /*
  * Rail shell (after Synara's, after Codex's): a slim icon rail and the title
- * band sit on the window's ground, and the sidebar panel and the page share
- * one inset card below the band. Desktop widths only — phones keep the sheet
- * sidebar and a full-bleed page.
+ * band (route header, right-panel tabs) sit on the window's ground; everything
+ * else — sidebar, page, right panel, terminal — lives inside ONE rounded frame
+ * below the band. Desktop widths only — phones keep the sheet sidebar and a
+ * full-bleed page.
+ *
+ * The frame is drawn exactly once, by the shell (`[data-shell="rail"]::after`),
+ * as a hairline OVER the content, so no panel can paint across its edge. The
+ * content is clipped to the frame's curve instead of each panel rounding and
+ * bordering itself — two half-frames that had to meet were what left a sliver
+ * at the top-left and let things peek out under the bottom edge.
  *
  * Unlayered on purpose: these must beat the layout utilities the sidebar
  * primitives and routes set (`fixed inset-y-0`, `h-dvh`, `bg-background`).
  */
 :root {
   --app-rail-width: 3.25rem;
-  --app-shell-gap: 4px;
-  --app-shell-radius: calc(var(--radius) * 1.3);
-  /* One surface: the ground and the card share a color, and only the card's
-     hairline border separates them. */
-  --app-shell-card: var(--background);
-  --app-shell-background: var(--app-shell-card);
-  --app-shell-border: color-mix(in srgb, black 10%, transparent);
-  --app-shell-divider: color-mix(in srgb, black 7%, transparent);
+  /* The frame's gap to the window's right and bottom edges. */
+  --app-frame-inset: 4px;
+  --app-frame-radius: calc(var(--radius) * 1.3);
+  /* One surface: the ground and the frame share a color, and only the frame's
+     hairline separates them. */
+  --app-frame-background: var(--background);
+  --app-frame-border: color-mix(in srgb, black 10%, transparent);
+  /* The one line inside the frame: sidebar | page | right panel. */
+  --app-frame-divider: color-mix(in srgb, black 7%, transparent);
   --app-rail-item-hover: color-mix(in srgb, black 5%, transparent);
   --app-rail-item-active: color-mix(in srgb, black 8%, transparent);
 }
 
 .dark {
-  --app-shell-border: color-mix(in srgb, white 9%, transparent);
-  --app-shell-divider: color-mix(in srgb, white 7%, transparent);
-  --app-rail-item-hover: color-mix(in srgb, white 7%, transparent);
-  --app-rail-item-active: color-mix(in srgb, white 11%, transparent);
+  /* ≈ #262626 on the #141414 ground: a hairline, not a frame. */
+  --app-frame-border: color-mix(in srgb, white 8%, transparent);
+  --app-frame-divider: color-mix(in srgb, white 6%, transparent);
+  --app-rail-item-hover: color-mix(in srgb, white 6%, transparent);
+  --app-rail-item-active: color-mix(in srgb, white 10%, transparent);
 }
 
 @media (min-width: 768px) {
-  [data-shell="rail"] .app-rail {
-    background: var(--app-shell-background);
+  [data-shell="rail"] {
+    /* Where the frame's left edge is: past the sidebar while it is open. */
+    --app-frame-content-radius-left: 0px;
   }
 
-  /* The panel: the card's left half, starting under the band. Collapsing
+  [data-shell="rail"][data-sidebar-state="collapsed"] {
+    --app-frame-content-radius-left: var(--app-frame-radius);
+  }
+
+  [data-shell="rail"]::after {
+    content: "";
+    position: fixed;
+    top: var(--workspace-topbar-height);
+    left: var(--app-rail-width);
+    right: calc(var(--desktop-window-right-resize-inset) + var(--app-frame-inset));
+    bottom: var(--app-frame-inset);
+    /* Over the sidebar (z-10) and the page, under the rail (z-20) and every
+       popover, menu and dialog (z-50). */
+    z-index: 15;
+    pointer-events: none;
+    border: 1px solid var(--app-frame-border);
+    border-radius: var(--app-frame-radius);
+  }
+
+  [data-shell="rail"] .app-rail {
+    background: var(--app-frame-background);
+  }
+
+  /* The sidebar: the frame's left part, starting under the band. Collapsing
      slides it under the rail, which paints over it. */
   [data-shell="rail"] [data-slot="sidebar"][data-side="left"] > [data-slot="sidebar-container"] {
     top: var(--workspace-topbar-height);
-    bottom: var(--app-shell-gap);
+    bottom: var(--app-frame-inset);
     left: var(--app-rail-width);
     height: auto;
     overflow: hidden;
-    border: 1px solid var(--app-shell-border);
-    border-right-color: var(--app-shell-divider);
-    border-radius: var(--app-shell-radius) 0 0 var(--app-shell-radius);
+    border: 0;
+    border-right: 1px solid var(--app-frame-divider);
+    border-radius: var(--app-frame-radius) 0 0 var(--app-frame-radius);
   }
 
   [data-shell="rail"]
@@ -1838,7 +1917,7 @@ label:has(> select#reasoning-effort) select {
   }
 
   [data-shell="rail"] [data-slot="sidebar-inner"] {
-    background: var(--app-shell-card);
+    background: var(--app-frame-background);
   }
 
   /* The band above the panel is the drag region now; the panel header is not. */
@@ -1846,34 +1925,20 @@ label:has(> select#reasoning-effort) select {
     -webkit-app-region: no-drag;
   }
 
-  /* The page: its header stays on the band, its body is the card's right half. */
+  /* The page: its header stays on the band, its body is the frame's right
+     part — clipped to the frame's corners so nothing it paints (a panel's
+     background, the terminal drawer, a composer strip) shows past the curve. */
   [data-shell="rail"] [data-slot="sidebar-inset"] {
-    height: calc(100dvh - var(--app-shell-gap));
-    margin-right: var(--app-shell-gap);
+    height: calc(100dvh - var(--app-frame-inset));
+    margin-right: var(--app-frame-inset);
     background: transparent;
-    isolation: isolate;
-  }
-
-  [data-shell="rail"] [data-slot="sidebar-inset"]::before {
-    content: "";
-    position: absolute;
-    inset: var(--workspace-topbar-height) 0 0 0;
-    z-index: -1;
-    pointer-events: none;
-    background: var(--app-shell-card);
-    border: 1px solid var(--app-shell-border);
-    border-left-width: 0;
-    border-radius: 0 var(--app-shell-radius) var(--app-shell-radius) 0;
-    transition: border-radius 120ms ease-out;
-  }
-
-  [data-shell="rail"][data-sidebar-state="collapsed"] [data-slot="sidebar-inset"]::before {
-    border-left-width: 1px;
-    border-radius: var(--app-shell-radius);
+    clip-path: inset(
+      0 round 0 0 var(--app-frame-radius) var(--app-frame-content-radius-left)
+    );
   }
 
   /* Route surfaces paint their own `bg-background`; on the band they must let
-     the ground through, and the card underneath does the painting. */
+     the ground through. */
   [data-shell="rail"] [data-slot="sidebar-inset"] > .bg-background,
   [data-shell="rail"] [data-slot="sidebar-inset"] > div > .bg-background {
     background: transparent;
@@ -1882,6 +1947,25 @@ label:has(> select#reasoning-effort) select {
   [data-shell="rail"] [data-slot="sidebar-inset"] .workspace-topbar {
     background: transparent;
     border-bottom-color: transparent;
+  }
+
+  /* The right panel's tabs sit on the band like the page header; its divider
+     is the frame's own line and starts where the frame does, rather than
+     cutting up through the band. */
+  [data-shell="rail"] [data-preview-panel-mode="inline"] {
+    border-left-color: transparent;
+    background: transparent;
+  }
+
+  [data-shell="rail"] [data-preview-panel-mode="inline"]::before {
+    content: "";
+    position: absolute;
+    top: var(--workspace-topbar-height);
+    bottom: 0;
+    left: -1px;
+    width: 1px;
+    background: var(--app-frame-divider);
+    pointer-events: none;
   }
 }
 

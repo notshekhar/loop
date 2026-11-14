@@ -63,5 +63,6 @@ export function createCommandContext(state: AppState, deps: AppDeps): CommandCon
         manageHosts: (args: string) => deps.remote?.manageHosts(args),
         remoteControl: (args: string) => deps.remote?.remoteControl(args),
         manageTeam: (args: string) => deps.team?.manageTeam(args),
+        askBtw: (question: string) => deps.btw?.askBtw(question),
     };
 }

@@ -95,6 +95,8 @@ import { forwardTo, makeStateView, SlotManager, type SharedState } from "./slots
 import { createSessionRoster, type SessionRoster } from "./session-roster";
 import { createRemoteSessions, type RemoteSessions } from "./remote-sessions";
 import { createTeamSessions, type TeamSessions } from "./team-sessions";
+import { createBtwThreads } from "./btw-threads";
+import { createSlotOpener } from "./background-slot";
 import { createStatusLineRefresher } from "./status-line-refresh";
 import { createScrollbackFocus } from "./scrollback-focus";
 import { scrollTopFor } from "./transcript-scroll";
@@ -102,6 +104,7 @@ import { createWorkingIndicator } from "./working-indicator";
 import { createAgentStatusBus } from "./agent-status";
 import { attachSoundReporter } from "./sound-reporter";
 import { attachCmuxReporter, setCmuxReporter } from "./cmux-reporter";
+import { attachOrcaReporter } from "./orca-reporter";
 import { attachTerminalTitle, defaultTabName } from "./session-title";
 import { attachHerdrReporter } from "./herdr-reporter";
 import { attachNotchReporter } from "./notch-reporter";
@@ -569,6 +572,14 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     });
     setCmuxReporter(cmuxReporter);
 
+    // Orca integration (inert outside an Orca pane): the same hook events,
+    // posted to Orca's per-pane hook endpoint so its workspace card and phone
+    // app follow this pane, and a woken workspace resumes this session.
+    const orcaReporter = attachOrcaReporter(agentStatus, {
+        getSessionId: () => state.session?.id,
+        cwd: () => state.cwd,
+    });
+
     // Name the tab immediately. A resumed session carries its own title; a
     // fresh one says which agent this pane is until its first turn earns one —
     // either beats the stale shell command a terminal shows otherwise, which
@@ -973,10 +984,10 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
         void getExtensionHost().close();
         // Close any open datasource connection pools.
         void closeAllPools();
-        // SessionEnd hooks + herdr/cmux release: give them a moment, then exit
-        // regardless. Release hands the pane back to herdr's own detection so
-        // the sidebar doesn't keep showing a stale loop state, and clears the
-        // cmux status chip.
+        // SessionEnd hooks + herdr/cmux/Orca release: give them a moment, then
+        // exit regardless. Release hands the pane back to herdr's own detection
+        // so the sidebar doesn't keep showing a stale loop state, clears the
+        // cmux status chip, and lets Orca receive the SessionEnd row.
         void Promise.race([
             Promise.allSettled([
                 runHooks(
@@ -988,6 +999,7 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
                 herdr.release(),
                 notch.release(),
                 cmuxReporter.release(),
+                orcaReporter.release(),
                 // Synchronous; listed here so every reporter is released in
                 // one place rather than two.
                 Promise.resolve(sound.release()),
@@ -1102,8 +1114,10 @@ export async function runInteractive(opts: InteractiveOptions): Promise<void> {
     });
     deps.remote = remoteSessions;
     // Thread teams: this loop runs the threads its sessions start.
-    teamSessions = createTeamSessions({ slots, roster, deps, tui, manager });
+    const slotFor = createSlotOpener({ slots, deps, tui, manager });
+    teamSessions = createTeamSessions({ slots, roster, deps, tui, slotFor });
     deps.team = teamSessions;
+    deps.btw = createBtwThreads({ slots, roster, deps, tui, manager, slotFor });
     tui.addInputListener(createInputHandler(state, deps, ctx));
     // The editor submits to whichever session is on screen.
     editor.onSubmit = (raw) => roster.runnerFor(slots.foreground)(raw);

@@ -82,6 +82,17 @@ describe("the shell snapshot", () => {
     expect(snapshot.threads[0]?.title).toBe("Untitled");
   });
 
+  it("marks a side thread with the thread it was asked from", async () => {
+    // The header and the phone offer the way back from it.
+    const snapshot = await snapshotOf([
+      row({ id: "parent" }),
+      row({ id: "side", name: "btw: why?", btw: { parentId: "parent" } }),
+    ]);
+    const sideThreadOf = (id: string) => snapshot.threads.find((thread) => thread.id === id)?.sideThreadOf;
+    expect(sideThreadOf("side")).toBe("parent");
+    expect(sideThreadOf("parent")).toBeNull();
+  });
+
   it("reports a running session so the sidebar can count it", async () => {
     const snapshot = await snapshotOf([row({ id: "a", running: true, provider: "kimi" })]);
     expect(snapshot.threads[0]?.session?.status).toBe("running");

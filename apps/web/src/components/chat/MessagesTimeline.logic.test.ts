@@ -1146,6 +1146,25 @@ describe("computeStableMessagesTimelineRows", () => {
     expect(repeated.result[0]).toBe(initial.result[0]);
   });
 
+  it("takes a work row's entries by reference: a new entry object is a changed row", () => {
+    // The work log reuses entry objects for calls that did not change, so a
+    // new object is the change signal — nothing hashes tool output to find out.
+    const rowsWith = (entry: { id: string; createdAt: string; label: string; tone: "tool" }) =>
+      deriveMessagesTimelineRows({
+        timelineEntries: [{ id: "entry-work-1", kind: "work", createdAt: entry.createdAt, entry }],
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaryByAssistantMessageId: new Map(),
+        revertTurnCountByUserMessageId: new Map(),
+      });
+    const entry = { id: "work-1", createdAt: "2026-01-01T00:00:00Z", label: "read", tone: "tool" as const };
+    const initial = computeStableMessagesTimelineRows(rowsWith(entry), { byId: new Map(), result: [] });
+
+    const updated = computeStableMessagesTimelineRows(rowsWith({ ...entry, label: "read a.ts" }), initial);
+
+    expect(updated.result[0]).not.toBe(initial.result[0]);
+  });
+
   it("returns a new result when row order changes without content changes", () => {
     const firstUserMessage = {
       id: "user-1" as never,

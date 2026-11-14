@@ -10,13 +10,14 @@
  * Nothing renders for a chat in no team.
  */
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@loop/contracts";
-import { Link } from "@tanstack/react-router";
 import { NetworkIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
+import { cn } from "../../lib/utils";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useThreadTeam } from "./LoopTeam";
+import { ParentCrumb } from "./ParentCrumb";
 import { teamMemberWorking } from "./teamPresentation";
 
 function useRef(environmentId: EnvironmentId, threadId: ThreadId): ScopedThreadRef {
@@ -32,25 +33,12 @@ export const TeamLeadCrumb = memo(function TeamLeadCrumb(props: {
   const team = useThreadTeam(threadRef);
   if (!team || team.lead.threadId === props.threadId) return null;
   return (
-    <span className="inline-flex min-w-0 max-w-[40%] shrink items-center gap-2">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Link
-              className="min-w-0 truncate rounded-sm font-medium text-muted-foreground text-sm transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-              params={{ environmentId: props.environmentId, threadId: team.lead.threadId }}
-              to="/$environmentId/$threadId"
-            />
-          }
-        >
-          {team.lead.title}
-        </TooltipTrigger>
-        <TooltipPopup side="top">Back to the lead</TooltipPopup>
-      </Tooltip>
-      <span aria-hidden className="text-muted-foreground/40">
-        /
-      </span>
-    </span>
+    <ParentCrumb
+      environmentId={props.environmentId}
+      threadId={team.lead.threadId}
+      title={team.lead.title}
+      hint="Back to the lead"
+    />
   );
 });
 
@@ -76,7 +64,17 @@ export const TeamHeaderButton = memo(function TeamHeaderButton(props: {
         }
       >
         <NetworkIcon aria-hidden className="size-4 shrink-0" />
-        <span className="tabular-nums">{working > 0 ? working : team.members.length}</span>
+        <span
+          className={cn(
+            "inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[10.5px] tabular-nums",
+            // Busy: the accent on its own halo, the one count in the header that asks to be seen.
+            working > 0
+              ? "bg-chip-blue font-medium text-chip-blue-foreground"
+              : "bg-chip-neutral text-chip-neutral-foreground",
+          )}
+        >
+          {working > 0 ? working : team.members.length}
+        </span>
       </TooltipTrigger>
       <TooltipPopup side="top">
         {working > 0

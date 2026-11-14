@@ -104,6 +104,23 @@ await cp(ptySource, join(stage, "node_modules", "node-pty"), {
     recursive: true,
     dereference: true,
 });
+await pruneNodePty(join(stage, "node_modules", "node-pty"));
+
+/**
+ * Drop node-pty's bindings for every other target.
+ *
+ * The package carries prebuilds for all six platform/arch pairs plus the
+ * Windows-only ConPTY DLLs, and the loader only ever reads its own
+ * `prebuilds/<platform>-<arch>/`. MEASURED in a darwin-arm64 app: 25MB of
+ * other targets' binaries, 7MB of the release zip.
+ */
+async function pruneNodePty(dir: string): Promise<void> {
+    const prebuilds = join(dir, "prebuilds");
+    for (const entry of existsSync(prebuilds) ? await readdir(prebuilds) : []) {
+        if (entry !== `${platform}-${arch}`) await rm(join(prebuilds, entry), { recursive: true, force: true });
+    }
+    if (platform !== "win32") await rm(join(dir, "third_party", "conpty"), { recursive: true, force: true });
+}
 
 /**
  * A minimal manifest, not a copy of this workspace's.

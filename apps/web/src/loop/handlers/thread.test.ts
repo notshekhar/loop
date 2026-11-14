@@ -15,7 +15,7 @@ import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vite-plus/test";
 
 import { applyLoopEvent, beginLiveTurn, clearLiveTurn, readLiveTurn } from "./liveTurn.ts";
-import { applyEvents, fromEntries } from "@loop/transcript";
+import { applyEvents, fromEntries, type Transcript } from "@loop/transcript";
 import { buildThread } from "./thread.ts";
 
 const globals = globalThis as { window?: Window & typeof globalThis };
@@ -895,3 +895,59 @@ describe("a thread team's words in the conversation", () => {
   });
 });
 
+
+describe("a thread rebuilt while a reply streams", () => {
+  const history = [
+    userEntry("look around", "u1"),
+    {
+      type: "message",
+      role: "assistant",
+      id: "a1",
+      ts: 1_700_000_002_000,
+      content: [
+        { type: "text", text: "Listing first." },
+        { type: "tool-call", toolName: "bash", toolCallId: "call-1", input: { command: "ls" } },
+      ],
+    },
+    {
+      type: "message",
+      role: "tool",
+      id: "t1",
+      ts: 1_700_000_003_000,
+      content: [{ type: "tool-result", toolCallId: "call-1", output: { type: "text", value: "a\nb\n" } }],
+    },
+  ];
+  const rebuild = (transcript: Transcript) =>
+    Effect.runPromise(buildThread(SESSION, undefined, { transcript, ready: true, meta: { info } }));
+
+  async function streamed() {
+    let transcript = applyEvents(fromEntries(history, { running: false }), [
+      { type: "user-message", data: { id: "u2", text: "and now?", ts: 1_700_000_004_000 } },
+      { type: "session-running", data: { running: true } },
+      { type: "text-delta", data: "Working" },
+    ]);
+    const before = await rebuild(transcript);
+    transcript = applyEvents(transcript, [{ type: "text-delta", data: " on it." }]);
+    return { before, after: await rebuild(transcript), transcript };
+  }
+
+  it("hands back the rows of every message it did not change as the same objects", async () => {
+    const { before, after } = await streamed();
+    // Everything above the live reply: the same objects, so nothing that
+    // compares rows by reference redraws them.
+    expect(after.activities).toHaveLength(before.activities.length);
+    after.activities.forEach((activity, index) => expect(activity).toBe(before.activities[index]));
+    const settled = after.messages.slice(0, -1);
+    settled.forEach((message, index) => expect(message).toBe(before.messages[index]));
+    // Only the reply being written is new.
+    expect(after.messages.at(-1)).not.toBe(before.messages.at(-1));
+    expect(after.messages.at(-1)?.text).toBe("Working on it.");
+  });
+
+  it("builds exactly what a fresh fold of the same transcript builds", async () => {
+    const { after, transcript } = await streamed();
+    // A structural copy shares no objects with the cache, so it folds from scratch.
+    const fresh = await rebuild(structuredClone(transcript));
+    expect(after).toEqual(fresh);
+  });
+});

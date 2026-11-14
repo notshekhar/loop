@@ -7,7 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+    btwParentOf,
     buildSessionTreeView,
+    createBtwThread,
     extractMessageText,
     SessionManager,
     stripSessionHookContext,
@@ -111,7 +113,7 @@ import {
     type RpcRequest,
     type RpcResponse,
 } from "./protocol";
-import type { ProviderId } from "../types";
+import type { BtwMeta, ProviderId } from "../types";
 import {
     claimTeamRuntime,
     dropTeamTurn,
@@ -183,6 +185,7 @@ const RPC_METHODS = [
     "session.tree",
     "session.branch",
     "session.fork",
+    "session.btw",
     "session.archive",
     "team.get",
     "team.stop",
@@ -234,6 +237,23 @@ const RPC_METHODS = [
     "artifact.export",
     "artifact.delete",
 ] as const;
+
+/**
+ * The per-turn choices a client may send with a prompt. Thinking: anything
+ * unknown falls back to the thinkingLevel setting (runTurn's own default).
+ * Agent: the RPC form of `/<agent> <message>` — this turn runs under that
+ * agent's prompt and the session is untouched. An unknown name is refused
+ * rather than silently falling back to the default persona, which would look
+ * like the agent had simply ignored its instructions.
+ */
+function turnChoices(params: Record<string, unknown>): { thinking?: ThinkingLevel; agent?: string } {
+    const thinking = THINKING_LEVELS.includes(params.thinking as ThinkingLevel)
+        ? (params.thinking as ThinkingLevel)
+        : undefined;
+    const agent = typeof params.agent === "string" ? params.agent.trim() : "";
+    if (agent && !agentExists(agent)) throw new Error(`Unknown agent: ${agent}`);
+    return { ...(thinking ? { thinking } : {}), ...(agent ? { agent } : {}) };
+}
 
 /**
  * Settings a remote client may read and toggle — the boolean rows of the
@@ -887,6 +907,7 @@ export class RpcServer {
                     // model. `lastModel` is what it is actually running now, so
                     // a client that shows a model never contradicts /model.
                     const model = row.lastModel ?? row.model;
+                    const btwParent = btwParentOf(row);
                     return {
                         ...row,
                         lastModel: model,
@@ -898,6 +919,9 @@ export class RpcServer {
                         ...(team
                             ? { team: { id: team.teamId, role: team.role, leadId: team.leadId, state: team.state } }
                             : {}),
+                        // A `/btw` side thread: the session it was asked from,
+                        // so a client can offer the way back.
+                        ...(btwParent ? { btw: { parentId: btwParent } } : {}),
                     };
                 });
             },
@@ -1045,21 +1069,26 @@ export class RpcServer {
                 // applies unchanged.
                 const input = String(params.input ?? "") + writeAttachmentPayloads(params.images);
                 const modelId = String(params.model ?? ctx.modelId);
-                // Per-send thinking override; anything unknown falls back to the
-                // thinkingLevel setting (runTurn's own default).
-                const thinking = THINKING_LEVELS.includes(params.thinking as ThinkingLevel)
-                    ? (params.thinking as ThinkingLevel)
-                    : undefined;
-                // One-shot agent, the RPC form of `/<agent> <message>`: this
-                // turn runs under that agent's prompt and the session is
-                // untouched. An unknown name is refused rather than silently
-                // falling back to the default persona, which would look like
-                // the agent had simply ignored its instructions.
-                const agent = typeof params.agent === "string" ? params.agent.trim() : "";
-                if (agent && !agentExists(agent)) throw new Error(`Unknown agent: ${agent}`);
                 ctx.modelId = modelId;
-                this.startTurn(id, ctx, input, { modelId, ...(thinking ? { thinking } : {}), ...(agent ? { agent } : {}) });
+                this.startTurn(id, ctx, input, { modelId, ...turnChoices(params) });
                 return { ok: true };
+            },
+            "session.btw": async (params, transport) => {
+                // `/btw`: the question runs in a copy of this session, which
+                // is never touched — so it works while a turn is running here.
+                // The reply streams on the NEW session; subscribe to it.
+                const question = String(params.question ?? "").trim();
+                if (!question) throw new Error("session.btw needs a question");
+                const choices = turnChoices(params);
+                const source = await this.ensureCtx(String(params.sessionId));
+                const { session, meta } = await createBtwThread(this.manager, source.session, question);
+                const ctx = await this.ensureCtx(session.id);
+                // The asker watches the answer stream, as session.create's caller does.
+                ctx.subscribers.add(transport);
+                ctx.modelId = String(params.model ?? source.modelId);
+                this.announce({ sessionId: session.id, change: "created" });
+                this.startTurn(session.id, ctx, question, { modelId: ctx.modelId, btw: meta, ...choices });
+                return { sessionId: session.id, cwd: session.info.cwd, name: session.getName() };
             },
             "session.rename": async (params) => {
                 const id = String(params.sessionId);
@@ -1326,7 +1355,7 @@ export class RpcServer {
         id: string,
         ctx: ActiveSession,
         input: string,
-        opts: { modelId: string; thinking?: ThinkingLevel; agent?: string; team?: TeamTurnMeta },
+        opts: { modelId: string; thinking?: ThinkingLevel; agent?: string; team?: TeamTurnMeta; btw?: BtwMeta },
     ): void {
         this.setRunning(id, ctx, true);
         // run async; events stream via notifications
@@ -1344,6 +1373,7 @@ export class RpcServer {
                 thinkingLevel: opts.thinking,
                 ...(opts.agent ? { agent: opts.agent } : {}),
                 ...(opts.team ? { team: opts.team } : {}),
+                ...(opts.btw ? { btw: opts.btw } : {}),
             })
                 .catch((err) => {
                     // Same channel + shape as the emitter's "error" event, so a

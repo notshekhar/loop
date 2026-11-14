@@ -381,6 +381,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           description: "Switch model",
         },
         {
+          id: "cmd:btw",
+          type: "slash-command" as const,
+          command: "btw",
+          label: "/btw",
+          description: "Side question in its own thread — this chat never sees it",
+        },
+        {
           id: "cmd:plan",
           type: "slash-command" as const,
           command: "plan",

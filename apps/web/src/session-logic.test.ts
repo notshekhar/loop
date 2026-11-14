@@ -721,6 +721,17 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("hands back the same entry for an activity it has already derived", () => {
+    // A streamed rebuild passes a new array holding mostly the same activity
+    // objects; the timeline then recognises unchanged rows by reference.
+    const settled = makeActivity({ id: "tool-a", kind: "tool.bash", payload: { detail: "ok" } });
+    const first = deriveWorkLogEntries([settled]);
+    const live = makeActivity({ id: "tool-b", kind: "tool.bash", createdAt: "2026-02-23T00:00:01.000Z" });
+    const second = deriveWorkLogEntries([settled, live]);
+    expect(second[0]).toBe(first[0]);
+    expect(second[1]?.id).toBe("tool-b");
+  });
+
   it("omits tool started entries and keeps completed entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

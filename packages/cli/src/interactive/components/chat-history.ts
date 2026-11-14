@@ -1,5 +1,5 @@
 import { Container, logRenderError, Markdown, Spacer, Text, truncateToWidth, type TUI } from "@notshekhar/loop-tui";
-import { formatSubagentActivity, type SubagentActivityPart, type TeamTurnMeta } from "@notshekhar/loop-core";
+import { formatSubagentActivity, type BtwMeta, type SubagentActivityPart, type TeamTurnMeta } from "@notshekhar/loop-core";
 import { getMarkdownTheme, theme } from "../ui/theme";
 import { renderToolGroup } from "../ui/blocks/tool-group";
 import { getToolDetail } from "../ui/tool-detail";
@@ -587,6 +587,24 @@ export class ChatHistory extends Container {
         } else {
             this.addUserComponent(text, ts);
         }
+        this.assistantTurn = null;
+    }
+
+    /**
+     * The question that opened a `/btw` side thread: typed by the user, so a
+     * user box — under a tag saying where it was asked, because this session
+     * is a copy of that one and would otherwise read as the same chat.
+     */
+    addBtwQuestion(btw: BtwMeta, text: string, ts?: number): void {
+        this.addChild(new Spacer(1));
+        this.addChild(
+            new Text(
+                accent("↳ ") + accentTitle("Side question") + dim(` from “${btw.parentTitle}” · that chat never sees this thread · /btw back returns there`),
+                1,
+                0,
+            ),
+        );
+        this.addUserComponent(text, ts);
         this.assistantTurn = null;
     }
 

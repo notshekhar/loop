@@ -59,12 +59,16 @@ const sourcemapEnv = process.env.LOOP_WEB_SOURCEMAP?.trim().toLowerCase();
 const bundledDevEnv = process.env.LOOP_BUNDLED_DEV?.trim().toLowerCase();
 const bundledDev = bundledDevEnv === "1" || bundledDevEnv === "true";
 
+// Off unless asked for (LOOP_WEB_SOURCEMAP=1 or =hidden). The desktop app
+// ships this directory as-is, and the maps were 391 files and 40MB of it —
+// 8.3MB of the release zip — that no user's app ever reads. Dev serving is
+// unaffected: `vp dev` always has its own maps.
 const buildSourcemap: boolean | "hidden" =
-  sourcemapEnv === "0" || sourcemapEnv === "false"
-    ? false
+  sourcemapEnv === "1" || sourcemapEnv === "true"
+    ? true
     : sourcemapEnv === "hidden"
       ? "hidden"
-      : true;
+      : false;
 
 const unitTestProject = {
   extends: true,
@@ -129,7 +133,9 @@ export default defineConfig(() => {
   return {
     assetsInclude: ["**/*.wasm"],
     plugins: [
-      tanstackRouter(),
+      // Each route's component in its own chunk, so settings, usage, pull
+      // requests and the rest load when visited instead of at startup.
+      tanstackRouter({ autoCodeSplitting: true }),
       react(),
       babel({
         // We need to be explicit about the parser options after moving to @vitejs/plugin-react v6.0.0

@@ -58,7 +58,7 @@ const main = await Bun.build({
   outdir: join(dist, "main"),
   target: "node",
   format: "cjs",
-  naming: "[dir]/index.cjs",
+  naming: "[dir]/app.cjs",
   // Electron resolves its own module at runtime; bundling it produces a
   // second, non-functional copy. node-pty is a native addon and cannot be
   // bundled at all — it must be require()d from node_modules.
@@ -66,6 +66,22 @@ const main = await Bun.build({
 });
 if (!main.success) {
   throw new Error(`main bundle failed:\n${main.logs.map(String).join("\n")}`);
+}
+
+/**
+ * The entry Electron starts (`main` in package.json): it switches on Node's
+ * compile cache and only then requires `app.cjs` — see src/bootstrap.ts.
+ */
+const bootstrap = await Bun.build({
+  entrypoints: [join(here, "src", "bootstrap.ts")],
+  outdir: join(dist, "main"),
+  target: "node",
+  format: "cjs",
+  naming: "[dir]/index.cjs",
+  external: ["electron"],
+});
+if (!bootstrap.success) {
+  throw new Error(`bootstrap bundle failed:\n${bootstrap.logs.map(String).join("\n")}`);
 }
 
 /**
@@ -136,7 +152,7 @@ if (await exists(iconSource)) {
 }
 
 console.log("desktop bundle ready:");
-console.log(`  main     ${join(dist, "main", "index.cjs")}`);
+console.log(`  main     ${join(dist, "main", "index.cjs")} -> app.cjs`);
 console.log(`  host     ${join(dist, "host", "index.cjs")}`);
 console.log(`  preload  ${join(dist, "preload", "index.cjs")}`);
 console.log(`  renderer ${join(dist, "renderer")}`);

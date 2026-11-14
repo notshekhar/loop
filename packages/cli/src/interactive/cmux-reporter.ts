@@ -53,6 +53,7 @@ import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { attachCmuxResume } from "./cmux-resume";
+import { bounded } from "./bounded-json";
 import { hookBus, type HookPayload } from "@notshekhar/loop-core";
 import type { AgentStatusBus, AgentStatusEvent } from "./agent-status";
 
@@ -66,8 +67,6 @@ const DEFAULT_SOCKET = join(homedir(), ".config", "cmux", "cmux.sock");
 const DECISION_WAIT_SECONDS = 120;
 /** Telemetry is not worth waiting on: ack or give up. */
 const ACK_TIMEOUT_MS = 500;
-/** Cap on any single serialized field — cmux stores what we send. */
-const MAX_FIELD_BYTES = 8_000;
 /** Backlog cap: cmux being slow must not become loop's memory leak. */
 const MAX_QUEUED = 64;
 
@@ -180,20 +179,6 @@ export function setCmuxReporter(reporter: CmuxReporter): void {
 }
 export function cmux(): CmuxReporter {
     return current;
-}
-
-/** JSON-safe, and small enough that a 3MB tool result can't ride the socket. */
-function bounded(value: unknown, maxBytes = MAX_FIELD_BYTES): unknown {
-    if (value === undefined || value === null) return value;
-    let json: string;
-    try {
-        json = JSON.stringify(value) ?? "";
-    } catch {
-        return undefined; // circular / unserializable — the field is optional
-    }
-    if (json.length <= maxBytes) return value;
-    if (typeof value === "string") return `${value.slice(0, maxBytes)}… [truncated by ${SOURCE}]`;
-    return { truncated: true, bytes: json.length, preview: `${json.slice(0, 1_000)}…` };
 }
 
 export function attachCmuxReporter(bus: AgentStatusBus | null, opts: CmuxReporterOptions): CmuxReporter {

@@ -102,7 +102,7 @@ import {
     runBeforeTurn,
 } from "./turn-middleware";
 import { attachLedgerEntry, type Session } from "../sessions";
-import type { Entry, UsageBlock } from "../types";
+import type { BtwMeta, Entry, UsageBlock } from "../types";
 import { StepTimingRecorder, type SdkStepTimingFields } from "./step-timing";
 import { subagentArgSummary } from "./subagent";
 import {
@@ -152,6 +152,8 @@ export interface RunTurnOptions {
      * draws a team card instead of a user bubble, and billed as "team".
      */
     team?: TeamTurnMeta;
+    /** The user's question opening a `/btw` side thread (sessions/btw.ts). */
+    btw?: BtwMeta;
 }
 
 // AI SDK prints advisory warnings (e.g. about system messages inside the
@@ -725,6 +727,7 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
         role: "user",
         content: userInput,
         ...(opts.team ? { team: opts.team } : {}),
+        ...(opts.btw ? { btw: opts.btw } : {}),
     };
     await session.append(userEntry);
     // Clients build the turn from the live stream alone (transcript/), so the
@@ -734,6 +737,7 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
         text: userInput,
         ts: userEntry.ts,
         ...(opts.team ? { team: opts.team } : {}),
+        ...(opts.btw ? { btw: opts.btw } : {}),
     });
 
     const { provider, model: modelShortId } = parseModelId(modelId);

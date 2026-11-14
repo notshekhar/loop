@@ -40,7 +40,7 @@ export function ComposerQueuedTurns({
   return (
     <div
       className={cn(
-        "chat-composer-queue-strip mx-auto flex w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] flex-col gap-0.5 px-2 pt-1.5 pb-5",
+        "chat-composer-tucked-strip mx-auto flex w-[calc(100%-2.75rem)] max-w-[calc(48rem-2.75rem)] flex-col gap-0.5 px-2 pt-1.5 pb-5",
         className,
       )}
     >

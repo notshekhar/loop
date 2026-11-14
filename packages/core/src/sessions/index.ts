@@ -7,6 +7,7 @@ export {
     type SessionTreeView,
     type TreeNodeTool,
 } from "./tree-view";
+export { btwParentIn, btwParentOf, btwThreadName, createBtwThread, type BtwThread } from "./btw";
 export { wrapSessionHookContext, matchSessionHookContext, stripSessionHookContext } from "./hook-context";
 export { getDb, closeDb, setDbPathForTests } from "./db";
 export { SessionStore, getSessionStore, type SessionFolder, type SessionPage, type SessionRecord, type SessionScope } from "./sqlite-store";

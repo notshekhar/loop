@@ -52,6 +52,9 @@
       "@loop/handlers/ids": [
         "../web/src/loop/handlers/ids.ts"
       ],
+      "@loop/btw": [
+        "../web/src/loop/useBtwThreads.ts"
+      ],
       "@loop/handlers/sessionPaging": [
         "../web/src/loop/handlers/sessionPaging.ts"
       ],

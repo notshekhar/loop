@@ -17,6 +17,7 @@ import {
   utilityProcess,
 } from "electron";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { extname, join, normalize, resolve } from "node:path";
@@ -43,7 +44,16 @@ const RENDERER_ORIGIN = `${RENDERER_SCHEME}://loop`;
 protocol.registerSchemesAsPrivileged([
   {
     scheme: RENDERER_SCHEME,
-    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+    // `codeCache`: Chromium only keeps V8's compiled code for schemes that ask.
+    // Without it the renderer re-parsed its 5MB of startup JS on every launch
+    // — MEASURED 85ms of background parsing that a warm cache removes.
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      codeCache: true,
+    },
   },
 ]);
 
@@ -146,6 +156,13 @@ async function serveRenderer(request: Request): Promise<Response> {
 const anchorCwd = process.env["LOOP_ANCHOR_CWD"] ?? homedir();
 const spawnBinary = process.env["LOOP_SPAWN_BINARY"] === "1";
 const loopBinary = resolveLoopBinary(process.env["LOOP_BINARY"], app.getAppPath());
+/**
+ * The binary core runs as bun (`BUN_BE_BUN=1`) to install and launch language
+ * servers. Under the CLI that is `process.execPath`; here that is this app, and
+ * spawning it opened a second copy instead (core's bun-binary.ts). The loop
+ * binary is the same runtime the CLI uses, so it does the job unchanged.
+ */
+if (existsSync(loopBinary)) process.env["LOOP_BUN_BINARY"] ??= loopBinary;
 const loop = spawnBinary
   ? new LoopProcess({ binary: loopBinary, cwd: anchorCwd })
   : new CoreHost({ cwd: anchorCwd });

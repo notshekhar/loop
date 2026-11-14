@@ -4,14 +4,14 @@
  * instead of silently doing nothing at runtime.
  */
 import type { EventEmitter } from "node:events";
-import type { CostBreakdown, UsageBlock } from "../types";
+import type { BtwMeta, CostBreakdown, UsageBlock } from "../types";
 import type { TodoItem } from "../tools/todo";
 import type { TeamTurnMeta } from "../teams/runtime";
 
 export interface TurnEvents {
     /** The prompt that opens the turn, once it is saved — its entry id is the
      * turn's id in the transcript (packages/core/src/transcript). */
-    "user-message": { id: string; text: string; ts: number; team?: TeamTurnMeta };
+    "user-message": { id: string; text: string; ts: number; team?: TeamTurnMeta; btw?: BtwMeta };
     /** Team mail handed to the model between two steps of a running turn
      * (teams/). Saved as its own entry, so it is drawn where it arrived. */
     "team-message": { id: string; team: TeamTurnMeta; ts: number };

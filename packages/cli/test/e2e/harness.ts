@@ -106,32 +106,50 @@ export class Session {
         this.project = cwd ?? mkdtempSync(join(tmpdir(), "loop-project-"));
 
         this.term = new Terminal({ cols, rows, scrollback: 4000, allowProposedApi: true });
+        this.envExtra = envExtra;
+        this.pty = this.spawn([]);
+    }
 
-        this.pty = spawnPty({
+    private readonly envExtra: Record<string, string> | undefined;
+
+    private spawn(args: readonly string[]): Pty {
+        const pty = spawnPty({
             cmd: "bun",
-            args: [CLI],
+            args: [CLI, ...args],
             cwd: this.project,
-            rows,
-            cols,
+            rows: this.rows,
+            cols: this.cols,
             env: {
                 HOME: this.home,
                 TERM: "xterm-256color",
-                COLUMNS: String(cols),
-                LINES: String(rows),
+                COLUMNS: String(this.cols),
+                LINES: String(this.rows),
                 // spawnPty inherits process.env, so this is unset by emptying it
                 // (the reader compares against "1").
                 LOOP_SPAWN_BINARY: "",
                 // 25 scenarios booting loop would otherwise chime 25 times, and
                 // the bell fallback would land bytes in the stream we assert on.
                 LOOP_SOUND: "0",
-                ...envExtra,
+                ...this.envExtra,
             },
         });
-
-        this.pty.onData((chunk) => {
+        pty.onData((chunk) => {
             this.raw += chunk;
             this.queue = this.queue.then(() => this.consume(chunk));
         });
+        return pty;
+    }
+
+    /**
+     * Quit loop and start it again in the same HOME and project, with `args`
+     * — what a fresh process sees, e.g. `--session <id>` resuming one. The
+     * screen starts clean, as a new terminal would.
+     */
+    async restart(args: readonly string[]): Promise<void> {
+        await this.stop();
+        this.term.reset();
+        this.raw = "";
+        this.pty = this.spawn(args);
     }
 
     // -- the terminal side ------------------------------------------------
@@ -244,7 +262,7 @@ export class Session {
         this.screenRows().forEach((line, i) => console.log(`${String(i).padStart(2)}|${line}`));
     }
 
-    async close(): Promise<void> {
+    private async stop(): Promise<void> {
         if (!this.pty.exited) {
             this.pty.write("\x03\x03");
             await this.pump(0.6);
@@ -252,6 +270,10 @@ export class Session {
         this.pty.kill();
         const deadline = Date.now() + 3000;
         while (!this.pty.exited && Date.now() < deadline) await sleep(50);
+    }
+
+    async close(): Promise<void> {
+        await this.stop();
         this.term.dispose();
         rmSync(this.home, { recursive: true, force: true });
         rmSync(this.project, { recursive: true, force: true });

@@ -39,6 +39,8 @@ export interface NewSessionOptions {
     cwd: string;
     provider: ProviderId;
     model: string;
+    /** Canonical transcript address of the session this one was started from. */
+    parentSession?: string;
 }
 
 function toSessionInfo(record: SessionRecord): SessionInfo {
@@ -110,6 +112,7 @@ export class SessionManager {
             cwd: opts.cwd,
             provider: opts.provider,
             model: opts.model,
+            ...(opts.parentSession ? { parentSession: opts.parentSession } : {}),
         };
         const session = new Session(info, transcriptPath(opts.cwd, id), []);
         await session.append({ type: "session-info", ts: Date.now(), ...info });

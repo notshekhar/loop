@@ -83,25 +83,51 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     <div className="flex flex-col">
       <SidebarThreadRowItem
         {...props}
-        teamToggle={{ count: row.children.length, expanded, onToggle: () => setOpen(!expanded) }}
+        teamToggle={{
+          count: row.children.length,
+          working: row.children.some((child) => child.state === "working"),
+          expanded,
+          onToggle: () => setOpen(!expanded),
+        }}
       />
       {expanded ? (
-        <div className="ml-[13px] flex flex-col gap-px border-sidebar-border/60 border-l pl-1">
-          {row.children.map((child) => (
-            <SidebarThreadRowItem
-              active={child.id === activeThreadId}
-              key={child.id}
-              nested
-              {...(props.onArchive ? { onArchive: props.onArchive } : {})}
-              {...(props.onContextMenu ? { onContextMenu: props.onContextMenu } : {})}
-              row={child}
-            />
+        <div className="ml-[11px] flex flex-col">
+          {row.children.map((child, index) => (
+            <div className="relative pl-3" key={child.id}>
+              <TeamBranch last={index === row.children.length - 1} />
+              <SidebarThreadRowItem
+                active={child.id === activeThreadId}
+                nested
+                {...(props.onArchive ? { onArchive: props.onArchive } : {})}
+                {...(props.onContextMenu ? { onContextMenu: props.onContextMenu } : {})}
+                row={child}
+              />
+            </div>
           ))}
         </div>
       ) : null}
     </div>
   );
 });
+
+/**
+ * The lead's rail beside a nested team thread: a trunk down from the lead,
+ * curving into this row at its dot's height. The last thread's trunk stops at
+ * the curve, so the rail ends where the team does.
+ */
+function TeamBranch({ last }: { last: boolean }) {
+  return (
+    <>
+      {last ? null : (
+        <span aria-hidden className="absolute top-0 bottom-0 left-0 w-px bg-primary/35" />
+      )}
+      <span
+        aria-hidden
+        className="absolute top-0 left-0 h-[15px] w-2.5 rounded-bl-[6px] border-primary/35 border-b border-l"
+      />
+    </>
+  );
+}
 
 const SidebarThreadRowItem = memo(function SidebarThreadRowItem({
   row,
@@ -119,7 +145,7 @@ const SidebarThreadRowItem = memo(function SidebarThreadRowItem({
   /** A thread drawn under its team's lead. */
   nested?: boolean;
   /** On a lead: its threads' fold. */
-  teamToggle?: { count: number; expanded: boolean; onToggle: () => void };
+  teamToggle?: { count: number; working: boolean; expanded: boolean; onToggle: () => void };
   onContextMenu?: (row: ThreadRowModel, position: { x: number; y: number }) => void;
   onArchive?: (row: ThreadRowModel) => void;
 }) {
@@ -156,7 +182,12 @@ const SidebarThreadRowItem = memo(function SidebarThreadRowItem({
             <span
               aria-expanded={teamToggle.expanded}
               aria-label={`${teamToggle.expanded ? "Hide" : "Show"} ${teamToggle.count} team threads`}
-              className="flex shrink-0 cursor-pointer items-center gap-0.5 rounded px-1 text-[10.5px] text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+              className={cn(
+                "flex h-4 shrink-0 cursor-pointer items-center gap-0.5 rounded-md px-1 text-[10.5px] tabular-nums transition-colors",
+                teamToggle.working
+                  ? "bg-chip-blue text-chip-blue-foreground hover:brightness-125"
+                  : "bg-chip-neutral text-chip-neutral-foreground hover:text-sidebar-foreground",
+              )}
               onClick={(event) => {
                 // The row is a link; folding the team must not also open it.
                 event.preventDefault();

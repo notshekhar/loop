@@ -18,6 +18,7 @@ import { OpenInPicker } from "./OpenInPicker";
 import { SessionInsights } from "../loop/SessionInsights";
 import { SessionTreeDialog } from "../loop/SessionTreeDialog";
 import { TeamHeaderButton, TeamLeadCrumb } from "../loop/TeamHeader";
+import { SideThreadCrumb } from "../loop/SideThreadCrumb";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useLoopProjectFileScripts } from "~/hooks/useLoopProjectFileScripts";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -135,6 +136,7 @@ export const ChatHeader = memo(function ChatHeader({
           </span>
         ) : null}
         <TeamLeadCrumb environmentId={activeThreadEnvironmentId} threadId={activeThreadId} />
+        <SideThreadCrumb environmentId={activeThreadEnvironmentId} threadId={activeThreadId} />
         <Tooltip>
           <TooltipTrigger
             render={

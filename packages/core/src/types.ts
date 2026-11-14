@@ -204,6 +204,14 @@ export type AuthEntry =
     | { mode: "oauth"; provider: "xai"; xai: XaiOAuthCredentials }
     | { mode: "oauth"; provider: ProviderId; creds: GenericOAuthCredentials };
 
+/** Where a `/btw` side question was asked from — rides on its user entry. */
+export interface BtwMeta {
+    /** Session id of the conversation the question was asked in. */
+    readonly parentId: string;
+    /** That conversation's title when the question was asked. */
+    readonly parentTitle: string;
+}
+
 export interface SessionInfoData {
     id: string;
     createdAt: number;
@@ -297,6 +305,11 @@ export type Entry = EntryTreeFields &
                * draw it as a team card, not a user bubble. `midTurn` marks
                * mail handed over between two steps of a running turn. */
               team?: TeamTurnMeta;
+              /** Set on the question that opened a side thread (`/btw`): the
+               * user typed it, so clients still draw a user bubble, tagged with
+               * the conversation it was asked from. Display only — the model
+               * never sees it (sessions/btw.ts). */
+              btw?: BtwMeta;
               /** Wall-clock stamps for the step this assistant message closed —
                * display metadata for the trace view, never sent to the provider
                * (kept outside content for the same reason as reasoningMs).

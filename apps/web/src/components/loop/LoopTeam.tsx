@@ -32,9 +32,11 @@ import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { teamAtoms } from "../../state/team";
 import type { LoopTeamEntry, LoopToolEntry } from "./loopEntry";
+import { LaneDot, TintPill } from "./TeamRail";
 import {
   formatTeamUsd,
   splitSpawnedMembers,
+  teamLaneFor,
   teamMemberWorking,
   teamStatePresentation,
 } from "./teamPresentation";
@@ -84,58 +86,6 @@ export function StateDot({
     />
   );
 }
-
-/** One thread of the team as a row that opens it. */
-export const TeamMemberRow = memo(function TeamMemberRow({
-  member,
-  environmentId,
-  here,
-  showCost = true,
-}: {
-  member: TeamMember;
-  environmentId: ScopedThreadRef["environmentId"];
-  here: boolean;
-  showCost?: boolean;
-}) {
-  const look = teamStatePresentation(member.state, member.running);
-  const working = teamMemberWorking(member);
-  return (
-    <Link
-      className={cn(
-        "group/member flex items-center gap-2 rounded-md px-2 py-1.5 outline-hidden transition-colors hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring",
-        here && "bg-accent/30",
-      )}
-      params={{ environmentId, threadId: member.threadId }}
-      to="/$environmentId/$threadId"
-    >
-      <StateDot running={member.running} state={member.state} />
-      <span className="min-w-0 flex-1">
-        <span className="flex items-baseline gap-1.5">
-          <span className="truncate font-medium text-[12.5px] text-foreground/90">
-            {member.title}
-          </span>
-          {member.role === "lead" ? (
-            <span className="shrink-0 text-[10.5px] text-muted-foreground/60 uppercase tracking-[0.04em]">
-              lead
-            </span>
-          ) : null}
-        </span>
-        <span className="block truncate text-[11.5px] text-muted-foreground/70">
-          <span className={look.textClass}>{look.label}</span>
-          {working && member.activity ? (
-            <span className="font-mono"> · {member.activity}</span>
-          ) : null}
-          {here ? <span> · here</span> : null}
-        </span>
-      </span>
-      {showCost && member.usd > 0 ? (
-        <span className="shrink-0 text-[11px] text-muted-foreground/60 tabular-nums">
-          {formatTeamUsd(member.usd)}
-        </span>
-      ) : null}
-    </Link>
-  );
-});
 
 /** The left rail a tool row's nested content hangs from — the subagent log's. */
 function Rail({ children }: { children: React.ReactNode }) {
@@ -205,9 +155,100 @@ function Prose({
   );
 }
 
+type MessageKind = "brief" | "message" | "report" | "update";
+
+const MESSAGE_KIND: Record<
+  MessageKind,
+  { label: string; icon: typeof MailIcon; chipClass: string }
+> = {
+  brief: { label: "Brief", icon: NetworkIcon, chipClass: "bg-chip-blue text-chip-blue-foreground" },
+  message: {
+    label: "Message",
+    icon: MailIcon,
+    chipClass: "bg-chip-violet text-chip-violet-foreground",
+  },
+  report: {
+    label: "Report",
+    icon: CircleCheckIcon,
+    chipClass: "bg-chip-green text-chip-green-foreground",
+  },
+  update: {
+    label: "Team update",
+    icon: UsersIcon,
+    chipClass: "bg-chip-neutral text-chip-neutral-foreground",
+  },
+};
+
+/**
+ * Something one thread wrote to another, as a card: what kind it is (a tinted
+ * pill), who sent it (their name in their rail colour, opening their thread),
+ * then the text. A card, not a bubble — the user never typed it.
+ */
+function TeamMessageCard({
+  kind,
+  sender,
+  label,
+  children,
+}: {
+  kind: MessageKind;
+  sender?: React.ReactNode;
+  /** Overrides the kind's own label ("Reported to the lead"). */
+  label?: string;
+  children: React.ReactNode;
+}) {
+  const look = MESSAGE_KIND[kind];
+  const Icon = look.icon;
+  return (
+    <div className="my-1.5 overflow-hidden rounded-xl border border-border bg-card/60">
+      <div className="flex min-w-0 items-center gap-2 px-3 pt-2.5 pb-1">
+        <span
+          className={cn(
+            "inline-flex h-5 shrink-0 items-center gap-1 rounded-lg px-1.5 font-medium text-[11px]",
+            look.chipClass,
+          )}
+        >
+          <Icon aria-hidden className="size-3" />
+          {label ?? look.label}
+        </span>
+        {sender ? (
+          <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-muted-foreground">
+            from {sender}
+          </span>
+        ) : null}
+      </div>
+      <div className="px-3 pb-2.5">{children}</div>
+    </div>
+  );
+}
+
+/** A thread's name in its rail colour, opening it when there is somewhere to open. */
+function SenderPill({
+  from,
+  team,
+  environmentId,
+}: {
+  from: { threadId: string; title: string };
+  team: TeamSnapshot | null;
+  environmentId: ScopedThreadRef["environmentId"] | undefined;
+}) {
+  const member = team ? [team.lead, ...team.members].find((m) => m.threadId === from.threadId) : null;
+  const lane = teamLaneFor(team, member?.id ?? "");
+  const pill = <TintPill className={cn("h-5 px-1.5 text-[11.5px]", lane.pillClass)}>{from.title}</TintPill>;
+  if (!environmentId) return pill;
+  return (
+    <Link
+      className="min-w-0 rounded-lg outline-hidden transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
+      params={{ environmentId, threadId: from.threadId }}
+      to="/$environmentId/$threadId"
+    >
+      {pill}
+    </Link>
+  );
+}
+
 /** What the team wrote into this thread: a brief, a message, a report. */
 export const LoopTeamCard = memo(function LoopTeamCard({
-  team,
+  team: entry,
   threadRef,
   cwd,
 }: {
@@ -216,61 +257,37 @@ export const LoopTeamCard = memo(function LoopTeamCard({
   /** Where relative file links in the text resolve from. */
   cwd?: string | undefined;
 }) {
+  const team = useThreadTeam(threadRef);
   const environmentId = threadRef?.environmentId;
-  const sender = (from: { threadId: string; title: string }) =>
-    environmentId ? (
-      <Link
-        className="text-foreground/85 underline-offset-2 hover:underline"
-        params={{ environmentId, threadId: from.threadId }}
-        to="/$environmentId/$threadId"
-      >
-        {from.title}
-      </Link>
-    ) : (
-      <span className="text-foreground/85">{from.title}</span>
-    );
+  const sender = (from: { threadId: string; title: string }) => (
+    <SenderPill environmentId={environmentId} from={from} team={team} />
+  );
 
-  if (team.kind === "spawn") {
-    const brief = (team.text ?? "").replace(
+  if (entry.kind === "spawn") {
+    const brief = (entry.text ?? "").replace(
       /\n\n\(Brief from "[^"]*"\. Your thread is "[^"]*"\. Call report when you are done\.\)$/,
       "",
     );
     return (
-      <div className="py-px">
-        <Head
-          icon={<NetworkIcon aria-hidden className={ICON} />}
-          label="Brief"
-          detail={<>from {team.from ? sender(team.from) : "the lead"}</>}
-        />
-        <Rail>
-          <Prose cwd={cwd} text={brief} threadRef={threadRef} />
-        </Rail>
-      </div>
+      <TeamMessageCard kind="brief" sender={entry.from ? sender(entry.from) : "the lead"}>
+        <Prose cwd={cwd} text={brief} threadRef={threadRef} />
+      </TeamMessageCard>
     );
   }
 
   return (
     <div className="py-px">
-      {(team.mail ?? []).map((mail) => {
-        const report = mail.kind === "report";
-        const update = mail.kind === "update";
-        const Icon = report ? CircleCheckIcon : update ? UsersIcon : MailIcon;
+      {(entry.mail ?? []).map((mail) => {
+        const kind: MessageKind =
+          mail.kind === "report" ? "report" : mail.kind === "update" ? "update" : "message";
         return (
-          <div key={mail.id}>
-            <Head
-              icon={
-                <Icon
-                  aria-hidden
-                  className={cn(ICON, report && "text-emerald-600 dark:text-emerald-300/90")}
-                />
-              }
-              label={update ? "Team update" : report ? "Report" : "Message"}
-              {...(update ? {} : { detail: <>from {sender(mail.from)}</> })}
-            />
-            <Rail>
-              <Prose cwd={cwd} text={mail.text} threadRef={threadRef} />
-            </Rail>
-          </div>
+          <TeamMessageCard
+            key={mail.id}
+            kind={kind}
+            {...(kind === "update" ? {} : { sender: sender(mail.from) })}
+          >
+            <Prose cwd={cwd} text={mail.text} threadRef={threadRef} />
+          </TeamMessageCard>
         );
       })}
     </div>
@@ -289,34 +306,36 @@ function titleFor(team: TeamSnapshot | null, sessionId: string): string {
   return member ? member.title : "a thread";
 }
 
-/** One thread under the spawn row: dot, title, what it is doing. Opens it. */
+/** One thread under the spawn row: its rail dot, title, what it is doing, its state. Opens it. */
 function SpawnedThread({
   member,
+  team,
   environmentId,
 }: {
   member: TeamMember;
+  team: TeamSnapshot | null;
   environmentId: ScopedThreadRef["environmentId"];
 }) {
   const look = teamStatePresentation(member.state, member.running);
   const working = teamMemberWorking(member);
   return (
     <Link
-      className="group/spawned -mx-1.5 flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-[12px] outline-hidden transition-colors hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring"
+      className="group/spawned -mx-1.5 flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1 text-[12px] outline-hidden transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
       params={{ environmentId, threadId: member.threadId }}
       to="/$environmentId/$threadId"
     >
-      <StateDot running={member.running} state={member.state} />
-      <span className="shrink-0 text-foreground/80 underline-offset-2 group-hover/spawned:text-foreground group-hover/spawned:underline">
+      <LaneDot lane={teamLaneFor(team, member.id)} pulse={look.pulse} />
+      <span className="shrink-0 text-foreground underline-offset-2 group-hover/spawned:underline">
         {member.title}
       </span>
-      <span className="min-w-0 flex-1 truncate text-muted-foreground/55">
+      <span className="min-w-0 flex-1 truncate text-muted-foreground">
         {working && member.activity ? (
-          <span className="font-mono text-[11.5px]">{member.activity}</span>
+          <span className="font-mono text-[11px]">{member.activity}</span>
         ) : null}
       </span>
-      <span className={cn("shrink-0 text-[11px]", look.textClass)}>{look.label}</span>
+      <TintPill className={cn("h-5 px-1.5 text-[11px]", look.chipClass)}>{look.label}</TintPill>
       {member.usd > 0 ? (
-        <span className="w-12 shrink-0 text-right text-[11px] text-muted-foreground/50 tabular-nums">
+        <span className="w-12 shrink-0 text-right text-[11px] text-muted-foreground tabular-nums">
           {formatTeamUsd(member.usd)}
         </span>
       ) : null}
@@ -370,7 +389,12 @@ export const LoopTeamToolRow = memo(function LoopTeamToolRow({
         <Rail>
           {started.length > 0 && environmentId
             ? started.map((member) => (
-                <SpawnedThread environmentId={environmentId} key={member.id} member={member} />
+                <SpawnedThread
+                  environmentId={environmentId}
+                  key={member.id}
+                  member={member}
+                  team={team}
+                />
               ))
             : failed
               ? null
@@ -387,7 +411,12 @@ export const LoopTeamToolRow = memo(function LoopTeamToolRow({
                 Also in the team
               </div>
               {others.map((member) => (
-                <SpawnedThread environmentId={environmentId} key={member.id} member={member} />
+                <SpawnedThread
+                  environmentId={environmentId}
+                  key={member.id}
+                  member={member}
+                  team={team}
+                />
               ))}
             </>
           ) : null}
@@ -427,20 +456,12 @@ export const LoopTeamToolRow = memo(function LoopTeamToolRow({
 
   if (tool.name === "report") {
     return (
-      <div className="py-px">
-        <Head
-          icon={
-            <CircleCheckIcon
-              aria-hidden
-              className={cn(ICON, "text-emerald-600 dark:text-emerald-300/90")}
-            />
-          }
-          label={tool.isPartial ? "Reporting to the lead" : "Reported to the lead"}
-        />
-        <Rail>
-          <Prose cwd={cwd} text={stringArg(tool.args, "summary")} threadRef={threadRef} />
-        </Rail>
-      </div>
+      <TeamMessageCard
+        kind="report"
+        label={tool.isPartial ? "Reporting to the lead" : "Reported to the lead"}
+      >
+        <Prose cwd={cwd} text={stringArg(tool.args, "summary")} threadRef={threadRef} />
+      </TeamMessageCard>
     );
   }
 

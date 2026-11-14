@@ -486,6 +486,11 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
   team: Schema.optional(Schema.NullOr(ThreadTeamRef)),
+  /**
+   * A `/btw` side thread: the CLIENT id of the thread it was asked from, so
+   * the header and the phone can offer the way back. Absent on any other.
+   */
+  sideThreadOf: Schema.optional(Schema.NullOr(ThreadId)),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 

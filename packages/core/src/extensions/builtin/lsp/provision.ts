@@ -1,11 +1,12 @@
 /**
  * Auto-installs npm-based language servers into ~/.loop/servers/<key>/ on first
  * use, so diagnostics work without the user pre-installing anything. The install
- * runs with loop's own runtime as the package manager: process.execPath is the
- * loop binary, and BUN_BE_BUN=1 makes it behave as the bun CLI — so `install`
- * works with no separate node/bun on the machine.
+ * runs with loop's own runtime as the package manager: the loop binary, which
+ * BUN_BE_BUN=1 makes behave as the bun CLI — so `install` works with no
+ * separate node/bun on the machine. See bun-binary.ts for which binary that is.
  */
 import { getConfigDir } from "../../../brand";
+import { bunBinary } from "../../../bun-binary";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -71,7 +72,9 @@ async function install(dir: string, npm: Record<string, string>, binPath: string
             join(dir, "package.json"),
             JSON.stringify({ name: "loop-lsp-server", private: true, dependencies: npm }, null, 2),
         );
-        const ok = await run(process.execPath, ["install"], dir, INSTALL_TIMEOUT_MS);
+        const bun = bunBinary();
+        if (bun === null) return null;
+        const ok = await run(bun, ["install"], dir, INSTALL_TIMEOUT_MS);
         return ok && existsSync(binPath) ? { dir, bin: binPath } : null;
     } catch {
         return null;

@@ -4,6 +4,7 @@
  * provision one into ~/.loop/servers. Everything is driven by the registry.
  */
 import { brandEnv } from "../../../brand";
+import { bunBinary } from "../../../bun-binary";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, parse } from "node:path";
@@ -122,15 +123,17 @@ export function isDisqualified(def: LanguageServerDef, filePath: string, fallbac
 
 /**
  * Build a launch spec. "node" servers (e.g. pyright-langserver) run with loop's
- * runtime: process.execPath is the loop binary, and BUN_BE_BUN=1 makes it
- * behave as the bun CLI — so no separate node/bun is needed. "native" servers
- * (e.g. gopls, TypeScript 7's tsc) run directly.
+ * runtime: the loop binary, which BUN_BE_BUN=1 makes behave as the bun CLI — so
+ * no separate node/bun is needed; without one (bun-binary.ts) they cannot run.
+ * "native" servers (e.g. gopls, TypeScript 7's tsc) run directly.
  */
-function specFromExe(def: LanguageServerDef, exe: string, forceNative = false): LspServerSpec {
+function specFromExe(def: LanguageServerDef, exe: string, forceNative = false): LspServerSpec | null {
     const languageId = (absPath: string) => languageIdFor(def, absPath);
     const args = def.args ?? [];
     if (def.runtime === "node" && !forceNative) {
-        return { name: def.key, command: process.execPath, args: [exe, ...args], env: { BUN_BE_BUN: "1" }, languageId };
+        const bun = bunBinary();
+        if (bun === null) return null;
+        return { name: def.key, command: bun, args: [exe, ...args], env: { BUN_BE_BUN: "1" }, languageId };
     }
     return { name: def.key, command: exe, args: [...args], languageId };
 }

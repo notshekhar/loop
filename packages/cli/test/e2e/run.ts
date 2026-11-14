@@ -22,6 +22,7 @@
  * Run: bun packages/cli/test/e2e/run.ts [name ...]
  */
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { Database } from "bun:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Session, withSession, type SessionOptions } from "./harness";
@@ -1076,6 +1077,81 @@ async function testNotes(): Promise<void> {
 }
 
 /**
+ * `/btw` mid-turn: the question runs in a fresh side thread while the main turn
+ * keeps streaming, its answer lands in this chat as a card, and neither model
+ * sees the other's conversation. `/btw` alone lists it and opens it.
+ */
+async function testBtw(): Promise<void> {
+    const SLOW_MS = 5_000;
+    const QUESTION = "what does this repo do?";
+    const sent: string[] = [];
+    const allText = (body: { messages?: { content: unknown }[] }): string =>
+        JSON.stringify(body.messages ?? []);
+    const server = Bun.serve({
+        port: 0,
+        idleTimeout: 30,
+        fetch: async (req) => {
+            const text = allText((await req.json().catch(() => ({}))) as never);
+            sent.push(text);
+            if (text.includes(QUESTION)) return streamedReply("SIDE-ANSWER: it is a parser.");
+            if (text.includes("slow task") && !text.includes("SLOW-DONE")) {
+                await Bun.sleep(SLOW_MS);
+                return streamedReply("SLOW-DONE.");
+            }
+            return streamedReply("MAIN-AGAIN.");
+        },
+    });
+    try {
+        await withFixtureSession(server.port, async (s) => {
+            const screen = () => s.screenRows().join("\n");
+            await s.pump(7);
+            await s.send("slow task first\r", 1.0);
+            await s.send(`/btw ${QUESTION}\r`, 3.0);
+            check(screen().includes("SIDE-ANSWER: it is a parser."), "the side answer shows mid-turn", s.screenRows());
+            check(screen().includes("not part of this conversation"), "marked as outside this chat", s.screenRows());
+            check(!screen().includes("SLOW-DONE"), "while the main turn is still running", s.screenRows());
+
+            await s.pump(SLOW_MS / 1000 + 2);
+            check(screen().includes("SLOW-DONE."), "the main turn finished where it started", s.screenRows());
+            await s.send("and now?\r", 2.5);
+            check(screen().includes("MAIN-AGAIN."), "the main chat carries on", s.screenRows());
+            const mainRequest = sent[sent.length - 1] ?? "";
+            check(!mainRequest.includes(QUESTION), "its model never saw the side question");
+            const sideRequest = sent.find((body) => body.includes(QUESTION)) ?? "";
+            check(!sideRequest.includes("slow task first"), "and the side thread started fresh, without the main chat");
+            check(!mainRequest.includes("SIDE-ANSWER"), "nor the side answer");
+
+            await s.send("/btw\r", 1.2);
+            check(screen().includes("Side threads · 1"), "/btw lists the side thread", s.screenRows());
+            await s.send("\r", 2.0);
+            check(screen().includes("Side question"), "and opens it, tagged", s.screenRows());
+            check(screen().includes("SIDE-ANSWER"), "with its answer", s.screenRows());
+            await s.send("/btw back\r", 2.0);
+            check(screen().includes("MAIN-AGAIN."), "/btw back returns to the chat it was asked from", s.screenRows());
+
+            // A fresh process resuming the side thread draws the same tag.
+            const db = new Database(join(s.home, ".loop", "agent.db"), { readonly: true });
+            const row = db.query<{ pub_id: string }, []>("SELECT pub_id FROM sessions WHERE name LIKE 'btw:%'").get();
+            db.close();
+            check(row !== null, "the side thread is saved under its btw name");
+            await s.restart(["--session", row!.pub_id]);
+            await s.pump(6);
+            check(
+                screen().includes("Side question from “slow task first”"),
+                "a resumed side thread is tagged",
+                s.screenRows(),
+            );
+            await s.send("/btw\r", 1.2);
+            check(screen().includes("← Back to “slow task first”"), "its /btw list offers the way back", s.screenRows());
+            await s.send("\r", 2.5);
+            check(screen().includes("MAIN-AGAIN."), "which opens the chat it was asked from", s.screenRows());
+        });
+    } finally {
+        server.stop(true);
+    }
+}
+
+/**
  * Two sessions in one loop, one of them mid-turn. The fixture holds any prompt
  * containing "slow" for SLOW_MS before answering, so a turn is provably still
  * running while the other session is used — and must finish where it started.
@@ -1655,6 +1731,7 @@ const SCENARIOS: Record<string, () => Promise<void>> = {
     new: testNewSession,
     "banner-model": testBannerFollowsModel,
     notes: testNotes,
+    btw: testBtw,
     clear: testClearScreen,
     resize: testResize,
     "alt-screen": testAltScreenKeepsScrollbackClean,

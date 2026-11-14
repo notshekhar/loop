@@ -1,5 +1,8 @@
 import { type EnvironmentConnectionPhase } from "@loop/runtime/connection";
-import { TEAM_BAR_HEIGHT, ThreadTeamBar } from "./team/ThreadTeamBar";
+import { ThreadTeamBar } from "./team/ThreadTeamBar";
+import { THREAD_TOP_BAR_HEIGHT } from "./ThreadTopBar";
+import { ThreadSideBar } from "./btw/ThreadSideBar";
+import { ThreadBtwCards } from "./btw/ThreadBtwCards";
 import type { EnvironmentThreadStatus } from "@loop/runtime/state/threads";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
@@ -175,6 +178,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const insets = useSafeAreaInsets();
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  // One strip under the header: the team bar, or a side thread's way back.
+  const sideThreadOf = props.selectedThread.sideThreadOf ?? null;
+  const hasTopBar = Boolean(props.selectedThread.team) || sideThreadOf !== null;
+  const underTransparentHeader = props.usesAutomaticContentInsets === true && Platform.OS === "ios";
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
   const composerOverlayRef = useRef<View>(null);
   const listRef = useRef<LegendListRef>(null);
@@ -370,7 +377,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             anchorMessageId={anchorMessageId}
             contentInsetEndAdjustment={contentInsetEndAdjustment}
             contentTopInset={0}
-            extraTopInset={props.selectedThread.team ? TEAM_BAR_HEIGHT : 0}
+            extraTopInset={hasTopBar ? THREAD_TOP_BAR_HEIGHT : 0}
             contentBottomInset={estimatedOverlayHeight}
             contentMaxWidth={contentMaxWidth}
             layoutVariant={layoutVariant}
@@ -382,9 +389,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             <ThreadTeamBar
               environmentId={String(props.environmentId)}
               threadId={String(props.selectedThread.id)}
-              underTransparentHeader={
-                props.usesAutomaticContentInsets === true && Platform.OS === "ios"
-              }
+              underTransparentHeader={underTransparentHeader}
+            />
+          ) : sideThreadOf ? (
+            <ThreadSideBar
+              environmentId={props.environmentId}
+              parentThreadId={sideThreadOf}
+              underTransparentHeader={underTransparentHeader}
             />
           ) : null}
         </View>
@@ -403,6 +414,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               pushes the resting content floor up by the same amount. */}
           <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
             <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+              <ThreadBtwCards
+                environmentId={String(props.environmentId)}
+                threadId={String(props.selectedThread.id)}
+              />
               {props.activePendingApproval || props.activePendingUserInput ? (
                 <Animated.View
                   className="shrink-0 gap-3 px-4 pb-3"

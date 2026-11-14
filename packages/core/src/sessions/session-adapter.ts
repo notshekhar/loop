@@ -1,4 +1,5 @@
 import type { TeamTurnMeta } from "../teams/runtime";
+import { btwOf } from "../transcript/btw";
 import type { Entry, ProviderId, StepTiming, SubagentActivityPart, ToolTiming, UsageBlock } from "../types";
 
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -87,6 +88,7 @@ export function adaptSessionEntry(raw: unknown): Entry | null {
             const content = nested ? nested.content : obj.content;
             const mappedRole =
                 role === "toolResult" || role === "tool" ? "tool" : role === "assistant" ? "assistant" : "user";
+            const btw = btwOf(obj.btw);
             const timing = parseStepTiming(obj.timing);
             return {
                 type: "message",
@@ -110,6 +112,9 @@ export function adaptSessionEntry(raw: unknown): Entry | null {
                 // A user message the thread team wrote (a brief, mail): clients
                 // draw it as a team card, and it must stay one after a reload.
                 ...(mappedRole === "user" && isTeamMeta(obj.team) ? { team: obj.team } : {}),
+                // A `/btw` question's tag (where it was asked, for the UI's way
+                // back) must outlive the process that asked it.
+                ...(btw && mappedRole === "user" ? { btw } : {}),
                 ...tree,
             };
         }

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { agentOptionOf, dispatchCommand, thinkingLevelOf } from "./dispatch.ts";
 import { useQueuedTurnsStore } from "../../queuedTurnsStore.ts";
+import { btwQuestionOf, btwThreadsOf } from "./btw.ts";
 import {
   applyLoopEvent,
   notifyThreadChanged,
@@ -502,6 +503,7 @@ describe("sending while a turn is running", () => {
       call: (method, params) => {
         calls.push({ method, params });
         if (method === "session.create") return Promise.resolve({ sessionId } as never);
+        if (method === "session.btw") return Promise.resolve({ sessionId: `${sessionId}-BTW` } as never);
         if (method === "session.send" && busy) {
           return Promise.reject(
             new Error(`session ${sessionId} already has a turn running (cancel it first)`),
@@ -550,6 +552,40 @@ describe("sending while a turn is running", () => {
       await Promise.resolve();
       await Promise.resolve();
       expect(bridge.sends()).toHaveLength(2);
+    } finally {
+      bridge.restore();
+    }
+  });
+
+  it("asks /btw in a side thread at once instead of queueing it", async () => {
+    // A side question is for asking WHILE the agent works; queued behind the
+    // turn it would arrive after the answer it was meant to inform.
+    const id = freshIds();
+    const sessionId = `01BTW${id.thread}`;
+    const bridge = installBridge(sessionId);
+    try {
+      await bridge.dispatch(threadCreate(id.thread, "/Users/someone/project"));
+      await bridge.dispatch(turnStart(id.thread));
+      await bridge.dispatch({
+        type: "thread.turn.start",
+        commandId: "cmd-btw",
+        threadId: id.thread,
+        message: { messageId: "m-btw", text: "/btw  what is this repo? ", attachments: [] },
+        modelSelection: { instanceId: "anthropic", model: "anthropic/claude" },
+      } as unknown as ClientOrchestrationCommand);
+
+      const btw = bridge.calls.find((call) => call.method === "session.btw");
+      expect(btw?.params).toEqual({
+        sessionId,
+        question: "what is this repo?",
+        model: "anthropic/claude",
+      });
+      // Only the plain message was sent (and queued behind the busy turn).
+      expect(bridge.sends()).toHaveLength(1);
+      expect(useQueuedTurnsStore.getState().queue.map((turn) => turn.text)).toEqual(["hi"]);
+      expect(btwThreadsOf(sessionId).map((t) => [t.sessionId, t.question])).toEqual([
+        [`${sessionId}-BTW`, "what is this repo?"],
+      ]);
     } finally {
       bridge.restore();
     }
@@ -766,5 +802,20 @@ describe("queueing more than one message", () => {
       useQueuedTurnsStore.setState({ queue: [] });
       bridge.restore();
     }
+  });
+});
+
+describe("btwQuestionOf", () => {
+  it("refuses a bare /btw instead of sending it to the model", () => {
+    expect(() => btwQuestionOf(" /btw ")).toThrow("needs a question");
+  });
+
+  it("takes the question after /btw", () => {
+    expect(btwQuestionOf("/btw why\nso slow?")).toBe("why\nso slow?");
+  });
+
+  it("is null for anything else", () => {
+    expect(btwQuestionOf("/btwx hi")).toBeNull();
+    expect(btwQuestionOf("ask /btw later")).toBeNull();
   });
 });

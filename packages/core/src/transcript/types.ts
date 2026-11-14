@@ -175,7 +175,15 @@ export interface TranscriptMessage {
         createdAt: number;
         /** The user stopped the turn before it finished. */
         interrupted?: boolean;
+        /** A user message that opened a `/btw` side thread: asked from this conversation. */
+        btw?: TranscriptBtw;
     };
+}
+
+/** Where a side question was asked from (core types.ts BtwMeta). */
+export interface TranscriptBtw {
+    readonly parentId: string;
+    readonly parentTitle: string;
 }
 
 /** A checklist item, as the todo tool keeps it. */

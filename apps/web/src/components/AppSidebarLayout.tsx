@@ -206,7 +206,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     // plus the page sitting together in one inset card below the title band
     // (see `[data-shell="rail"]` in index.css).
     <SidebarProvider
-      className="h-dvh! min-h-0! overflow-hidden bg-[var(--app-shell-background)]"
+      className="h-dvh! min-h-0! overflow-hidden bg-[var(--app-frame-background)]"
       data-shell="rail"
       defaultOpen
       style={sidebarProviderStyle}

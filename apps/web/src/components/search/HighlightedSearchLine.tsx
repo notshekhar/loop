@@ -1,4 +1,4 @@
-import { getFiletypeFromFileName } from "@pierre/diffs";
+import { getFiletypeFromFileName } from "@pierre/diffs/utils/getFiletypeFromFileName";
 import type { ProjectContentMatch } from "@loop/contracts";
 import { memo, Suspense, use, useMemo, type CSSProperties } from "react";
 

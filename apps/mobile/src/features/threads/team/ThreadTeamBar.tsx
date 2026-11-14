@@ -1,39 +1,26 @@
 /**
- * The team bar: a full-width strip pinned just under the header of a chat
- * that is in a thread team. "Lead" goes back to the lead (in a thread); the
- * rest opens the team sheet. It is part of the layout, not a floating pill:
- * the feed is told its height (`TEAM_BAR_HEIGHT`) and starts below it, so it
- * never covers a message. Absent for every chat that is in no team.
+ * The team bar (a ThreadTopBar) of a chat that is in a thread team. "Lead"
+ * goes back to the lead (in a thread); the rest opens the team sheet. Absent
+ * for every chat that is in no team.
  */
-import { HeaderHeightContext } from "@react-navigation/elements";
 import { useNavigation } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
-import { useContext } from "react";
-import { Pressable, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Pressable } from "react-native";
 
 import { SymbolView } from "../../../components/AppSymbol";
 import { AppText as Text } from "../../../components/AppText";
 import { useThemeColor } from "../../../lib/useThemeColor";
+import { ThreadTopBar } from "../ThreadTopBar";
 import { formatTeamUsd, isTeamMemberWorking } from "./teamPresentation";
 import { useThreadTeam } from "./useThreadTeam";
-
-/** The bar's height; the feed adds it to its top inset. */
-export const TEAM_BAR_HEIGHT = 40;
 
 export function ThreadTeamBar(props: {
   readonly environmentId: string;
   readonly threadId: string;
-  /**
-   * True when the feed scrolls under a transparent native header (iOS glass):
-   * the bar then sits at the header's bottom edge. Otherwise the screen's
-   * content already starts below the header, and so does the bar.
-   */
+  /** See ThreadTopBar. */
   readonly underTransparentHeader: boolean;
 }) {
   const navigation = useNavigation();
-  const insets = useSafeAreaInsets();
-  const headerHeight = useContext(HeaderHeightContext);
   const tint = useThemeColor("--color-icon-subtle");
   const team = useThreadTeam(props.environmentId, props.threadId);
   if (!team) return null;
@@ -49,13 +36,9 @@ export function ThreadTeamBar(props: {
         : isLead
           ? "all finished"
           : (here?.state ?? "");
-  const top = props.underTransparentHeader ? headerHeight || insets.top + 44 : 0;
 
   return (
-    <View
-      className="absolute inset-x-0 z-20 flex-row items-center border-b border-border bg-screen px-3"
-      style={{ top, height: TEAM_BAR_HEIGHT }}
-    >
+    <ThreadTopBar underTransparentHeader={props.underTransparentHeader}>
       {!isLead ? (
         <Pressable
           accessibilityLabel="Back to lead"
@@ -103,6 +86,6 @@ export function ThreadTeamBar(props: {
         </Text>
         <SymbolView name="chevron.right" size={11} tintColor={tint} type="monochrome" />
       </Pressable>
-    </View>
+    </ThreadTopBar>
   );
 }
