@@ -1,8 +1,7 @@
 import { EXTENSION_MANIFEST_KEYS } from "../src/brand";
 import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { getExtensionHost } from "../src/extensions";
-import { applyCommandOps } from "../src/extensions/host";
+import { applyCommandOps, ExtensionHost } from "../src/extensions/host";
 import { isCompatible } from "../src/extensions/manifest";
 import { parseSource } from "../src/extensions/sources";
 import { withToolHooks } from "../src/agent/tool-hooks";
@@ -22,9 +21,17 @@ import {
 // seam must be a behavioral no-op. These tests run against a host that has
 // never loaded anything (no init / empty registry), which is exactly the
 // clean-install state.
+//
+// A fresh host each time, not the process-wide neverLoadedHost(): bun runs
+// every test file in one process, and any earlier file that starts the host
+// loads the default-on builtins (anatomy) into that shared one.
+function neverLoadedHost(): ExtensionHost {
+    return new ExtensionHost();
+}
+
 describe("extensions — zero-regression when none are loaded", () => {
     test("host getters are empty without any loaded extension", () => {
-        const host = getExtensionHost();
+        const host = neverLoadedHost();
         const tools = host.getTools();
         expect(tools.add.size).toBe(0);
         expect(tools.remove.size).toBe(0);
@@ -41,7 +48,7 @@ describe("extensions — zero-regression when none are loaded", () => {
             .list()
             .map((c) => c.name)
             .sort();
-        getExtensionHost().applyCommands(reg);
+        neverLoadedHost().applyCommands(reg);
         const after = reg
             .list()
             .map((c) => c.name)
@@ -61,7 +68,7 @@ describe("extensions — zero-regression when none are loaded", () => {
             sessionId: "s",
             transcriptPath: "/tmp/x",
             emitter,
-            resultMiddleware: getExtensionHost().getToolResultMiddleware(), // empty
+            resultMiddleware: neverLoadedHost().getToolResultMiddleware(), // empty
         }) as unknown as Record<string, { execute: (i: unknown, o: unknown) => Promise<unknown> }>;
 
         // String output is returned verbatim; object output keeps its identity
@@ -79,7 +86,7 @@ describe("extensions — zero-regression when none are loaded", () => {
             sessionId: "s",
             transcriptPath: "/tmp/x",
             emitter,
-            callMiddleware: getExtensionHost().getToolCallMiddleware(), // empty
+            callMiddleware: neverLoadedHost().getToolCallMiddleware(), // empty
         }) as unknown as Record<string, { execute: (i: unknown, o: unknown) => Promise<unknown> }>;
         const input = { command: "ls" };
         await wrapped.echo.execute(input, {});
@@ -176,8 +183,8 @@ describe("extensions — turn middleware is a no-op when none are loaded", () =>
 
 describe("extensions — agents/grants are no-ops when none are loaded", () => {
     test("getToolGrants is empty for any agent", () => {
-        expect(getExtensionHost().getToolGrants("plan")).toHaveLength(0);
-        expect(getExtensionHost().getToolGrants("default")).toHaveLength(0);
+        expect(neverLoadedHost().getToolGrants("plan")).toHaveLength(0);
+        expect(neverLoadedHost().getToolGrants("default")).toHaveLength(0);
     });
 
     test("getAgentTools is unchanged: default = all, plan = its fixed set", async () => {
@@ -272,7 +279,7 @@ describe("extensions — command override merging", () => {
 
 describe("extensions — lifecycle is safe with nothing loaded", () => {
     test("close() resolves and leaves nothing loaded (idempotent)", async () => {
-        const host = getExtensionHost();
+        const host = neverLoadedHost();
         await expect(host.close()).resolves.toBeUndefined();
         expect(host.isLoaded("anything")).toBe(false);
         // safe to call again
@@ -280,6 +287,6 @@ describe("extensions — lifecycle is safe with nothing loaded", () => {
     });
 
     test("getWarnings starts empty", () => {
-        expect(getExtensionHost().getWarnings()).toHaveLength(0);
+        expect(neverLoadedHost().getWarnings()).toHaveLength(0);
     });
 });
