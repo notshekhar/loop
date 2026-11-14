@@ -198,7 +198,10 @@ export async function runUpgrade(version: string, opts: { force?: boolean } = {}
         args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", `irm ${UPGRADE_URL_PS1} | iex`];
     } else {
         shell = "bash";
-        args = ["-c", `curl -fsSL ${UPGRADE_URL} | bash`];
+        // A connect timeout, because raw.githubusercontent.com shares GitHub's
+        // CDN addresses and one can be unreachable from a given network:
+        // without it curl waits the OS's full 75s on that address first.
+        args = ["-c", `curl --connect-timeout 10 -fsSL ${UPGRADE_URL} | bash`];
     }
 
     const r = spawnSync(shell, args, { stdio: "inherit", env });
