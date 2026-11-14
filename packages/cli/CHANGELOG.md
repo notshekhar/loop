@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.21.41] - 2026-11-14
+
+### Fixed
+
+- **Installs and upgrades no longer stall for minutes before the progress bar.** GitHub serves downloads from several addresses, and one can be unreachable from a given network; the installer waited the system's full 75 seconds on it, up to three times per upgrade. It now gives up on a dead address after a few seconds and moves on, and the bar no longer needs its own request (234 s → 18 s on an affected network).
+
 ## [0.21.40] - 2026-11-14
 
 ### Added
