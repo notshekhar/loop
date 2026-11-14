@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.21.40] - 2026-11-14
+
+### Added
+
+- **Ask a side question with `/btw`.** `/btw <question>` answers in its own fresh thread: it starts with no context from the chat you asked it in, and that chat never sees it, so you can ask mid-turn without derailing the work. The answer shows under the input, `/btw` lists your side threads, and `/btw back` (or the header crumb on desktop and mobile) returns to the chat it came from. Works in the TUI, desktop, web and mobile.
+- **Orca integration.** loop reports working, blocked and idle to Orca panes and resumes its session there.
+
+### Changed
+
+- **Desktop looks sharper.** A higher-contrast dark theme with tinted pills, one rounded frame around every screen, and a one-tone team rail.
+- **Desktop is faster and smaller.** Long streams render far faster, startup uses a code cache, and the app ships without release sourcemaps or other platforms' terminal binaries.
+
+### Fixed
+
+- **`/steak` and `/cost` stay instant on a big ledger.** SQLite triggers now keep running totals as turns are billed, so neither command scans the whole history any more (230 ms → 1.6 ms on a 930 MB database). The totals are built once, the first time this version opens your database.
+- **Language servers start inside the desktop app.**
+
 ## [0.21.39] - 2026-11-13
 
 ### Added
