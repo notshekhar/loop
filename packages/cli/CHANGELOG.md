@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.21.42] - 2026-11-15
+
+### Fixed
+
+- **loop starts without spawning ~28 background processes.** Every launch re-checked whether you are signed in to Claude Code, Cursor, Codex and Antigravity — and checking Claude Code boots a whole Claude Code session, hooks and MCP servers included — while you were typing. Those checks now ride their 1-hour cache like the rest of the catalog, so launch uses about half the CPU. A sign-in done outside loop shows up within the hour; reloading models re-checks right away.
+
+### Changed
+
+- **Large source files are split into job folders** (the TUI renderer, editor, markdown, keys, LaTeX, the agent turn, the RPC server, the MCP manager, app startup). No behaviour change.
+
 ## [0.21.41] - 2026-11-14
 
 ### Fixed
