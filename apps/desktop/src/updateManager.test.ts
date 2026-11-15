@@ -1,10 +1,26 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { UpdateManager, type UpdateState } from "./updateManager";
 
+/**
+ * Every download makes a `loop-update-*` work dir under the OS temp dir, and
+ * these tests download for real. Pointed at the system one, each run left
+ * three more behind — 31 had piled up. They go in a temp root of their own.
+ */
+const realTmpdir = process.env["TMPDIR"];
+let tempRoot = "";
+beforeAll(async () => {
+  tempRoot = await mkdtemp(join(tmpdir(), "loop-update-tests-"));
+  process.env["TMPDIR"] = tempRoot;
+});
+afterAll(async () => {
+  if (realTmpdir === undefined) delete process.env["TMPDIR"];
+  else process.env["TMPDIR"] = realTmpdir;
+  await rm(tempRoot, { recursive: true, force: true });
+});
 
 /** A fetch that answers the latest-release redirect, a checksum and the bytes. */
 function serveRelease(tag: string): typeof fetch {

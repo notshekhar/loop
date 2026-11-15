@@ -61,8 +61,9 @@ const main = await Bun.build({
   naming: "[dir]/app.cjs",
   // Electron resolves its own module at runtime; bundling it produces a
   // second, non-functional copy. node-pty is a native addon and cannot be
-  // bundled at all — it must be require()d from node_modules.
-  external: ["electron", "node-pty"],
+  // bundled at all — it must be require()d from node_modules. `original-fs`
+  // exists only inside Electron (src/installFs.ts).
+  external: ["electron", "node-pty", "original-fs"],
 });
 if (!main.success) {
   throw new Error(`main bundle failed:\n${main.logs.map(String).join("\n")}`);

@@ -12,7 +12,7 @@
  * the notifications.
  */
 import { EventEmitter } from "node:events";
-import { rm } from "node:fs/promises";
+import { rm } from "./installFs";
 
 import {
   type Arch,
@@ -251,6 +251,9 @@ export class UpdateManager extends EventEmitter {
       }
 
       await swapInstall({ layout, stagedRoot: this.#stagedRoot });
+      // The staged copy has moved into place; what is left is the downloaded
+      // archive (~170MB), which nothing will ever read again.
+      await this.#cleanup();
       // The INSTALLED root, not the exec path: on macOS the thing to reopen is
       // the bundle, and only the caller knows how to reopen one.
       this.#options.restart(layout.root);

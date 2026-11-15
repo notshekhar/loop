@@ -15,12 +15,14 @@
  */
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { chmod, mkdir, mkdtemp, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+
+// Every operation on an install tree goes through here — see installFs.ts.
+import { existsSync, readdir, rename, rm } from "./installFs";
 
 export const DEFAULT_REPO = "notshekhar/loop";
 
@@ -113,40 +115,60 @@ export async function checkForUpdate(input: {
 }): Promise<AvailableRelease | null> {
   const repo = input.repo ?? DEFAULT_REPO;
   const doFetch = input.fetchImpl ?? fetch;
-  const response = await doFetch(`https://github.com/${repo}/releases/latest`, {
-    method: "HEAD",
-    redirect: "follow",
-  });
-  const tag = response.url.split("/").pop() ?? "";
-  if (!/^v\d/.test(tag)) throw new Error(`could not resolve the latest release tag (got "${tag}")`);
+  const tag = await latestReleaseTag(repo, doFetch);
 
   // Only ever forward. A machine running a build newer than the published one
   // (a local build, a rolled-back release) must not be dragged backwards.
   if (compareVersions(tag, input.currentVersion) <= 0) return null;
 
   const assetName = assetNameFor(input.platform, input.arch);
-  const release = (releaseTag: string): AvailableRelease => {
-    const base = `https://github.com/${repo}/releases/download/${releaseTag}`;
-    return {
-      tag: releaseTag,
-      version: releaseTag.replace(/^v/, ""),
-      assetName,
-      assetUrl: `${base}/${assetName}`,
-      sha256Url: `${base}/${assetName}.sha256`,
-    };
-  };
 
   // The desktop is rebuilt only when its own version moves, so the latest
   // release is often a CLI-only one with no desktop build in it. Offering it
   // put "Update available" in front of every user and then failed the
   // download on a missing checksum. Check the asset is really there first.
-  const latest = release(tag);
+  const latest = releaseFor(repo, tag, assetName);
   const head = await doFetch(latest.assetUrl, { method: "HEAD", redirect: "follow" }).catch(() => null);
   if (head?.ok) return latest;
 
-  // Not in the latest: the newest release that has it, if that is still newer
-  // than this build. The releases list is the rate-limited API, but this runs
-  // a few times a day, and a failure just means "nothing to offer".
+  const fallbackTag = await newestTagWithAsset(repo, assetName, doFetch);
+  if (!fallbackTag || compareVersions(fallbackTag, input.currentVersion) <= 0) return null;
+  return releaseFor(repo, fallbackTag, assetName);
+}
+
+/** The tag `releases/latest` redirects to. */
+async function latestReleaseTag(repo: string, doFetch: Fetch): Promise<string> {
+  const response = await doFetch(`https://github.com/${repo}/releases/latest`, {
+    method: "HEAD",
+    redirect: "follow",
+  });
+  const tag = response.url.split("/").pop() ?? "";
+  if (!/^v\d/.test(tag)) throw new Error(`could not resolve the latest release tag (got "${tag}")`);
+  return tag;
+}
+
+function releaseFor(repo: string, tag: string, assetName: string): AvailableRelease {
+  const base = `https://github.com/${repo}/releases/download/${tag}`;
+  return {
+    tag,
+    version: tag.replace(/^v/, ""),
+    assetName,
+    assetUrl: `${base}/${assetName}`,
+    sha256Url: `${base}/${assetName}.sha256`,
+  };
+}
+
+/**
+ * The newest published release that carries `assetName`, or null.
+ *
+ * The releases list is the rate-limited API, but this runs a few times a day,
+ * and a failure just means "nothing to offer".
+ */
+async function newestTagWithAsset(
+  repo: string,
+  assetName: string,
+  doFetch: Fetch,
+): Promise<string | null> {
   try {
     const response = await doFetch(`https://api.github.com/repos/${repo}/releases?per_page=30`, {
       headers: { accept: "application/vnd.github+json" },
@@ -161,9 +183,7 @@ export async function checkForUpdate(input: {
     const withAsset = releases.find(
       (r) => !r.draft && !r.prerelease && r.tag_name && r.assets?.some((a) => a.name === assetName),
     );
-    if (!withAsset?.tag_name) return null;
-    if (compareVersions(withAsset.tag_name, input.currentVersion) <= 0) return null;
-    return release(withAsset.tag_name);
+    return withAsset?.tag_name ?? null;
   } catch {
     return null;
   }

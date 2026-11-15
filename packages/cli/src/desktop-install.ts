@@ -207,7 +207,13 @@ export async function cmdInstallDesktop(opts: { force?: boolean } = {}): Promise
               stdio: "inherit",
               env,
           })
-        : spawnSync("bash", ["-c", `curl -fsSL ${SCRIPT_SH} | bash`], { stdio: "inherit", env });
+        : // A connect timeout, because raw.githubusercontent.com shares GitHub's
+          // CDN addresses and one can be unreachable from a given network:
+          // without it curl waits the OS's full 75s on that address first.
+          spawnSync("bash", ["-c", `curl --connect-timeout 10 -fsSL ${SCRIPT_SH} | bash`], {
+              stdio: "inherit",
+              env,
+          });
     if (result.status !== 0) {
         process.exitCode = result.status ?? 1;
         return;
