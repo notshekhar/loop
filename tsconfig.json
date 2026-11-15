@@ -1,0 +1,5 @@
+{
+    "//": "For editors only. Language servers look for a file named tsconfig.json, so without this the build scripts (packages/*/build.ts, scripts/*.ts) fell into an inferred project with no Bun or Node types and showed false errors. It owns no files itself; it points at the config that really checks them. Typecheck still runs each project explicitly (scripts/typecheck.ts).",
+    "files": [],
+    "references": [{ "path": "./tsconfig.build-scripts.json" }]
+}
