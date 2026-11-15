@@ -82,14 +82,20 @@ function optional(record: Record<string, unknown>, key: string): string | null |
 }
 
 export function createDirectHandlers(): Record<string, DirectHandler> {
+    return { ...reminderHandlers(), ...backgroundTaskHandlers() };
+}
+
+/**
+ * Reminders — the terminal's /reminder.
+ *
+ * Deliberately reported with `firesOnlyWhileOpen`. Core's reminders fire
+ * from a 1s ticker inside a running loop and there is NO seen/missed tracking
+ * (see reminders.ts) — so a reminder set here is not an OS notification that
+ * will find you later. A UI that implied otherwise would be lying about the
+ * one thing that matters.
+ */
+function reminderHandlers(): Record<string, DirectHandler> {
     return {
-        // ─── Reminders — the terminal's /reminder ──────────────────────────
-        //
-        // Deliberately reported with `firesOnlyWhileOpen`. Core's reminders
-        // fire from a 1s ticker inside a running loop and there is NO
-        // seen/missed tracking (see reminders.ts) — so a reminder set here is
-        // not an OS notification that will find you later. A UI that implied
-        // otherwise would be lying about the one thing that matters.
         "reminders.list": () => ({
             reminders: listReminders(),
             firesOnlyWhileOpen: true,
@@ -108,12 +114,18 @@ export function createDirectHandlers(): Record<string, DirectHandler> {
             return reminder ? { ok: true, reminder } : { ok: false };
         },
         "reminders.remove": (params) => ({ ok: deleteReminder(str(params.id, "a reminder id")) }),
+    };
+}
 
-        // ─── Background tasks — the terminal's /background ─────────────────
-        //
-        // A task is bound to a folder, so `cwd` is required rather than
-        // defaulted: silently attaching one to the process's anchor directory
-        // would run it somewhere the user never chose.
+/**
+ * Background tasks — the terminal's /background.
+ *
+ * A task is bound to a folder, so `cwd` is required rather than defaulted:
+ * silently attaching one to the process's anchor directory would run it
+ * somewhere the user never chose.
+ */
+function backgroundTaskHandlers(): Record<string, DirectHandler> {
+    return {
         "background.list": (params) => ({
             tasks: listGoals(typeof params.cwd === "string" && params.cwd ? params.cwd : undefined),
         }),

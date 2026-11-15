@@ -5,57 +5,27 @@
  * tailscale, SSH, WSL and an auto-updater; none of that is loop's, so this is
  * written rather than forked. It does three things: open a window, keep one
  * `loop rpc` child alive, and pipe JSON-RPC between the two.
+ *
+ * This file only wires the parts together; each lives in `window/` or `ipc/`.
  */
-import {
-  app,
-  BrowserWindow,
-  ipcMain,
-  MessageChannelMain,
-  protocol,
-  screen,
-  shell,
-  utilityProcess,
-} from "electron";
-import { spawn } from "node:child_process";
+import { app, BrowserWindow, ipcMain, MessageChannelMain, utilityProcess } from "electron";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { extname, join, normalize, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { CoreHost } from "./coreHost.js";
 import { LoopProcess, resolveLoopBinary } from "./loopProcess.js";
 import { HostClient, type HostProcess } from "./hostClient.js";
 import { HOST_CALLBACKS, TERMINAL_PORT_CHANNEL } from "./hostProtocol.js";
-import { PreviewManager, type PreviewColorScheme } from "./preview.js";
-import { UpdateManager } from "./updateManager.js";
-import type { Arch, Platform } from "./updater.js";
+import { PreviewManager } from "./preview.js";
+import { connectHost } from "./ipc/hostBridge.js";
+import { connectLoop } from "./ipc/loopBridge.js";
+import { connectPreviews } from "./ipc/previews.js";
+import { connectUpdates } from "./ipc/updates.js";
+import { keepPreviewLinksInPanel, MainWindow } from "./window/mainWindow.js";
+import { handleRendererScheme, registerRendererScheme } from "./window/rendererProtocol.js";
 
-const RENDERER_SCHEME = "app";
-const RENDERER_ORIGIN = `${RENDERER_SCHEME}://loop`;
-
-/**
- * The renderer is served over a custom scheme rather than `file://`.
- *
- * The UI is a single-page app with real paths (`/project/:id`), and `file://`
- * has no notion of a history fallback — a reload on any route but `/` would
- * 404. A registered scheme also gives the page a real origin, which localStorage
- * and the router both need.
- */
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: RENDERER_SCHEME,
-    // `codeCache`: Chromium only keeps V8's compiled code for schemes that ask.
-    // Without it the renderer re-parsed its 5MB of startup JS on every launch
-    // — MEASURED 85ms of background parsing that a warm cache removes.
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      corsEnabled: true,
-      codeCache: true,
-    },
-  },
-]);
+registerRendererScheme();
 
 /**
  * Paths are resolved from Electron's app root, not from this file.
@@ -78,64 +48,6 @@ const preloadPath = resolve(distDirectory, "preload", "index.cjs");
 const hostPath = resolve(distDirectory, "host", "index.cjs");
 /** The window icon, copied into dist alongside the renderer by `build.ts`. */
 const appIconPath = resolve(distDirectory, "icon.png");
-
-/**
- * The app ships every asset it uses, so nothing needs to be fetched from the
- * network. `wasm-unsafe-eval` stays for the bundled WebAssembly modules, and
- * inline styles for the bundled CSS-in-JS.
- *
- * Connections are the exception: Settings → Connections pairs other machines
- * running loop (`loop serve`, `/rc`) and then talks to them directly, at
- * whatever http/ws address or tailnet name the user gave. Scripts still come
- * only from the bundle, so this widens where the app's own code may connect,
- * not what code runs. Same policy as upstream's desktop.
- */
-const CONTENT_SECURITY_POLICY = [
-  "default-src 'self'",
-  "script-src 'self' 'wasm-unsafe-eval'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
-  "font-src 'self' data:",
-  "connect-src 'self' data: blob: http: https: ws: wss:",
-  "worker-src 'self' blob:",
-].join("; ");
-
-const CONTENT_TYPES: Readonly<Record<string, string>> = {
-  ".css": "text/css",
-  ".html": "text/html",
-  ".js": "text/javascript",
-  ".json": "application/json",
-  ".map": "application/json",
-  ".png": "image/png",
-  ".svg": "image/svg+xml",
-  ".ttf": "font/ttf",
-  ".wasm": "application/wasm",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-};
-
-async function serveRenderer(request: Request): Promise<Response> {
-  const { pathname } = new URL(request.url);
-  // normalize + a prefix check keeps a crafted `..` path inside the bundle.
-  const candidate = normalize(join(rendererDirectory, decodeURIComponent(pathname)));
-  const insideBundle = candidate.startsWith(rendererDirectory);
-  const hasExtension = extname(pathname) !== "";
-
-  // Anything without a file extension is a route, not an asset: hand back the
-  // shell and let the router resolve it.
-  const target = insideBundle && hasExtension ? candidate : join(rendererDirectory, "index.html");
-  try {
-    const body = await readFile(target);
-    return new Response(body, {
-      headers: {
-        "content-type": CONTENT_TYPES[extname(target)] ?? "application/octet-stream",
-        "content-security-policy": CONTENT_SECURITY_POLICY,
-      },
-    });
-  } catch {
-    return new Response("Not found", { status: 404 });
-  }
-}
 
 /**
  * Where loop actually runs.
@@ -192,8 +104,12 @@ const host = new HostClient(
   },
 );
 const previews = new PreviewManager();
-
-let mainWindow: BrowserWindow | null = null;
+const mainWindow = new MainWindow({
+  preloadPath,
+  iconPath: appIconPath,
+  onLoad: connectTerminalPort,
+});
+const forward = (channel: string, payload: unknown) => mainWindow.forward(channel, payload);
 
 /**
  * Give the host a pipe straight to the renderer, for terminal output.
@@ -209,88 +125,11 @@ let mainWindow: BrowserWindow | null = null;
  * before taking the new one, so reloading in a loop cannot leak ports.
  */
 function connectTerminalPort(): void {
-  const target = mainWindow;
-  if (!target || target.isDestroyed() || !host.running) return;
+  const target = mainWindow.current;
+  if (!target || !host.running) return;
   const { port1, port2 } = new MessageChannelMain();
   host.transferPort(port1);
   target.webContents.postMessage(TERMINAL_PORT_CHANNEL, null, [port2]);
-}
-
-function createWindow(): void {
-  // Open filling the screen. Sized to the work area at construction rather than
-  // `maximize()`d after it, because the latter paints a 1440x900 window first
-  // and then snaps — and the work area already excludes the menu bar, the Dock
-  // and the taskbar, so this is "as big as a window is allowed to be" without
-  // going fullscreen (which on macOS would take over a whole space).
-  const { workArea } = screen.getPrimaryDisplay();
-
-  mainWindow = new BrowserWindow({
-    x: workArea.x,
-    y: workArea.y,
-    width: workArea.width,
-    height: workArea.height,
-    minWidth: 720,
-    minHeight: 480,
-    // Matches the renderer's dark workspace, so the frame Electron paints
-    // before the first render isn't a different gray than the app that lands in it.
-    backgroundColor: "#191919",
-    // macOS takes its icon from the app bundle, so this is for Linux and
-    // Windows, where an unset icon means the default Electron diamond.
-    ...(process.platform === "darwin" ? {} : { icon: appIconPath }),
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
-    trafficLightPosition: { x: 16, y: 18 },
-    webPreferences: {
-      preload: preloadPath,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      // The browser panel renders each preview tab as a <webview>, which
-      // Electron disables by default — without this the panel mounts and
-      // stays blank, with no error to go on.
-      webviewTag: true,
-    },
-  });
-
-  // Links to the outside world open in the user's browser, never in the shell:
-  // a navigated-away window has no way back and no address bar.
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
-    return { action: "deny" };
-  });
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (!url.startsWith(RENDERER_ORIGIN)) {
-      event.preventDefault();
-      void shell.openExternal(url);
-    }
-  });
-
-  mainWindow.on("closed", () => {
-    mainWindow = null;
-  });
-
-  // Fires on the first load and on every reload, which is exactly when the
-  // renderer's end of the terminal pipe needs replacing — the previous one
-  // died with the document that held it.
-  mainWindow.webContents.on("did-finish-load", connectTerminalPort);
-
-  // The renderer insets its header to clear the traffic lights, and macOS
-  // hides them in fullscreen — so without this the inset becomes a gap.
-  mainWindow.on("enter-full-screen", () => forwardToRenderer("loop:fullscreen", true));
-  mainWindow.on("leave-full-screen", () => forwardToRenderer("loop:fullscreen", false));
-
-  // Ambient animations pause and display-only polls slow down while the window
-  // is not in front (apps/web lib/appActivity.ts). Sent from here because the
-  // document's own blur also fires when focus moves into a preview <webview>.
-  mainWindow.on("focus", () => forwardToRenderer("loop:window.focus", true));
-  mainWindow.on("blur", () => forwardToRenderer("loop:window.focus", false));
-
-  void mainWindow.loadURL(`${RENDERER_ORIGIN}/`);
-}
-
-function forwardToRenderer(channel: string, payload: unknown): void {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(channel, payload);
-  }
 }
 
 /**
@@ -318,367 +157,25 @@ app.whenReady().then(() => {
   // `quit()` above is not immediate; without this the loser of the race would
   // still spin up a core and a window before the process went away.
   if (!gotSingleInstanceLock) return;
-  protocol.handle(RENDERER_SCHEME, serveRenderer);
+  handleRendererScheme(rendererDirectory);
+  app.on("web-contents-created", (_event, contents) => keepPreviewLinksInPanel(contents));
 
-  /**
-   * A preview guest is a browser, so its own links must not leak out of it.
-   *
-   * The window's two navigation handlers send every off-origin navigation to
-   * the user's real browser — right for a link in the transcript, and exactly
-   * wrong for the browser panel, where following a link is the whole point.
-   * Guests get their own handler instead, and a `target=_blank` loads in the
-   * panel rather than as a chromeless Electron window with no way back.
-   *
-   * `file:` is in the list because the panel opens local pages that way (see
-   * openFileInPreview) — a generated report linking to a sibling page with
-   * `target="_blank"` would otherwise do nothing at all.
-   */
-  app.on("web-contents-created", (_event, contents) => {
-    if (contents.getType() !== "webview") return;
-    contents.setWindowOpenHandler(({ url }) => {
-      if (/^(?:https?|file):\/\//i.test(url)) void contents.loadURL(url);
-      return { action: "deny" };
-    });
-  });
-
-  loop.on("notification", (message) => {
-    if (message.method === "session.event") forwardToRenderer("loop:event", message.params);
-    // Host-wide news — a session created, renamed, started or stopped
-    // somewhere, a thread team moving — in the shape the WebSocket transport
-    // gives it (apps/web loop/transport.ts): a `session-status` part with no
-    // seq. Dropped here before, the desktop learned of a session another part
-    // of the app created (a team's threads) only on its next unrelated
-    // refresh, and a team panel opened on a draft never heard its team begin.
-    if (message.method === "session.status") {
-      const status = message.params as { sessionId?: unknown } | undefined;
-      if (typeof status?.sessionId !== "string") return;
-      forwardToRenderer("loop:event", {
-        sessionId: status.sessionId,
-        seq: 0,
-        part: { type: "session-status", data: status },
-      });
-    }
-  });
-  loop.on("stderr", (line) => {
-    // loop's own diagnostics belong in the shell's log, not swallowed.
-    console.error(`[loop] ${line}`);
-  });
-  // Only a spawned binary can exit on its own; in-process core never emits
-  // this, so the restart path is simply never armed.
-  loop.on("exit", (code) => {
-    console.error(`[loop] exited with ${code ?? "signal"}; restarting`);
-    forwardToRenderer("loop:status", { running: false });
-    // A crashed agent should not take the window with it.
-    setTimeout(() => {
-      loop.start();
-      forwardToRenderer("loop:status", { running: loop.running });
-    }, 1000);
-  });
-  // Which loop is running is the first thing to know when an RPC 404s, and it
-  // is invisible otherwise — bundled and installed binaries look identical
-  // from the renderer.
-  console.error(`[loop] running: ${spawnBinary ? loopBinary : "in-process core"}`);
-  loop.start();
-
-  /**
-   * Answers in an envelope rather than by throwing, and the preload unwraps it.
-   *
-   * An RPC error here is an ordinary outcome of the protocol, not a fault:
-   * "Unknown sessionId" for a conversation that was deleted, "Method not
-   * found" against an older loop, "a turn is already running". The renderer
-   * handles all three. But a handler that REJECTS makes Electron print
-   * `Error occurred in handler for 'loop:call'` with a full stack to the
-   * main-process log every single time — so an app that was working correctly
-   * read as one that was crashing.
-   *
-   * The envelope keeps the error (the renderer still throws, see preload.ts)
-   * and drops the noise.
-   */
-  ipcMain.handle("loop:call", async (_event, payload: { method: string; params: unknown }) => {
-    try {
-      return { ok: true as const, value: await loop.call(payload.method, payload.params) };
-    } catch (error) {
-      return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  /**
-   * Everything the workspace host owns: the filesystem, git, GitHub, editors
-   * and PTYs.
-   *
-   * Each of these was a handler that did the work here. They are forwards now,
-   * and deliberately nothing more — the host returns exactly what these used to
-   * return, envelopes included, so the renderer cannot tell the difference.
-   * Keeping main a pipe is the point: the work that blocks a thread should not
-   * be on the thread running loop's core.
-   *
-   * The channel name and the host method are the same string minus `loop:`, so
-   * adding a capability means adding it to `hostHandlers.ts` and listing it
-   * here.
-   */
-  const HOST_METHODS = [
-    "fs.list",
-    "fs.read",
-    "fs.write",
-    "fs.readAsset",
-    "fs.browse",
-    "fs.createDirectory",
-    "git.discover",
-    "git.stage",
-    "git.unstage",
-    "git.discard",
-    "git.stageContent",
-    "git.conflictStages",
-    "git.fileAtRevision",
-    "git.refs",
-    "git.status",
-    "git.watch",
-    "git.unwatch",
-    "git.init",
-    "git.diffPreview",
-    "git.runStackedAction",
-    "sc.lookup",
-    "pr.list",
-    "pr.detail",
-    "pr.diff",
-    "pr.conversation",
-    "pr.action",
-    "gh.loginStart",
-    "gh.loginStatus",
-    "gh.loginCancel",
-    "gh.loginToken",
-    "sc.clone",
-    "sc.publish",
-    "shell.which",
-    "shell.launch",
-    "pty.open",
-    "pty.snapshot",
-    "pty.list",
-    "pty.write",
-    "pty.resize",
-    "pty.clear",
-    "pty.close",
-  ] as const;
-  for (const method of HOST_METHODS) {
-    ipcMain.handle(`loop:${method}`, (_event, params: unknown) => host.call(method, params));
-  }
-
-  // Terminal output and git-action progress arrive on the host's own schedule;
-  // main forwards them by the channel the host names.
-  host.on("notify", ({ channel, payload }) => forwardToRenderer(channel, payload));
-  host.on("stderr", (line) => console.error(`[host] ${line}`));
-  // The shells died with the host. Telling the renderer lets a pane show that
-  // rather than sitting on a dead session waiting for bytes.
-  host.on("lost", () => forwardToRenderer("loop:terminal.hostLost", {}));
-  // A restarted host has no pipe — the old one went with the process that
-  // held it — so it gets a fresh one as soon as it is up.
-  host.on("ready", connectTerminalPort);
-  host.start();
-
-  /**
-   * The browser panel.
-   *
-   * The renderer owns the `<webview>` element and this owns the guest behind
-   * it — see preview.ts. Everything here is keyed by the renderer's tab id,
-   * which is the only name the two halves share.
-   */
-  /**
-   * In-app updates.
-   *
-   * Only for a packaged build: `app.isPackaged` is false when running from the
-   * repo, and there "replace the install directory" would mean renaming a
-   * checkout out from under the developer. Disabled is a state the pill already
-   * understands, so it simply does not appear.
-   */
-  const updates = new UpdateManager({
-    currentVersion: app.getVersion(),
-    platform: process.platform as Platform,
-    arch: process.arch === "arm64" ? "arm64" : ("x64" as Arch),
-    execPath: process.execPath,
-    enabled: app.isPackaged,
-    run: (command, args) =>
-      new Promise<void>((resolveRun, rejectRun) => {
-        const child = spawn(command, [...args], { stdio: "ignore" });
-        child.on("error", rejectRun);
-        child.on("exit", (code) =>
-          code === 0 ? resolveRun() : rejectRun(new Error(`${command} exited ${code}`)),
-        );
-      }),
-    // Detached and unref'd, or the helper dies with the process it is waiting for.
-    spawnDetached: (command, args) => {
-      spawn(command, [...args], { detached: true, stdio: "ignore" }).unref();
-    },
-    /**
-     * Leave, and come back as the new copy.
-     *
-     * `null` means quit and nothing else — the Windows helper relaunches us
-     * itself, and doing it here too would re-lock the install directory it is
-     * waiting to move.
-     *
-     * On macOS the relaunch goes through `/usr/bin/open` rather than a bare
-     * `app.relaunch()`. Electron's default relaunch execs the inner Mach-O
-     * (`Loop.app/Contents/MacOS/Loop`) directly, which is a launch macOS never
-     * performs itself: the bundle has just been replaced on disk, and starting
-     * the executable behind LaunchServices' back is what leaves the app quit
-     * with nothing coming back. `open -n -a` asks macOS to launch the bundle
-     * the way a double-click does, so the new copy is registered, activated
-     * and given its dock icon.
-     */
-    restart: (relaunchFrom) => {
-      if (relaunchFrom !== null) {
-        if (process.platform === "darwin") {
-          app.relaunch({ execPath: "/usr/bin/open", args: ["-n", "-a", relaunchFrom] });
-        } else {
-          app.relaunch();
-        }
-      }
-      app.quit();
-    },
-  });
-  updates.on("state", (state) => forwardToRenderer("loop:update.state", state));
-  ipcMain.handle("loop:update.state", () => updates.state);
-  // `checked` comes from the manager rather than being hardcoded true: a
-  // manual check has to be able to say "nothing happened" (build without
-  // updates, or a check already running) instead of looking like a no-op.
-  ipcMain.handle("loop:update.check", async () => await updates.check());
-  ipcMain.handle("loop:update.download", async () => {
-    const state = await updates.download();
-    return { accepted: true, completed: state.status === "downloaded", state };
-  });
-  /**
-   * Open a link in the real browser, for the update toast's release notes.
-   *
-   * Restricted to http(s): this is reachable from the renderer, and handing an
-   * arbitrary string to the OS opener is how a `file:` or custom-scheme URL
-   * turns into launching something local.
-   */
-  ipcMain.handle("loop:update.openExternal", async (_event, p: { url: string }) => {
-    try {
-      const parsed = new URL(p.url);
-      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
-      await shell.openExternal(parsed.toString());
-      return true;
-    } catch {
-      return false;
-    }
-  });
-  ipcMain.handle("loop:update.install", async () => {
-    const state = await updates.install();
-    return { accepted: true, completed: false, state };
-  });
-  // One check shortly after launch, then every six hours. Delayed so it never
-  // competes with the window's first paint.
-  if (app.isPackaged) {
-    setTimeout(() => void updates.check(), 10_000);
-    setInterval(() => void updates.check(), 6 * 60 * 60 * 1000);
-  }
-
-  previews.on("state", (state) => forwardToRenderer("loop:preview.state", state));
-  previews.on("frame", (frame) => forwardToRenderer("loop:preview.frame", frame));
-  ipcMain.handle("loop:preview.config", () => previews.getPreviewConfig());
-  ipcMain.handle("loop:preview.createTab", (_event, p: { tabId: string }) => {
-    previews.createTab(p.tabId);
-  });
-  ipcMain.handle("loop:preview.closeTab", (_event, p: { tabId: string }) => {
-    previews.closeTab(p.tabId);
-  });
-  ipcMain.handle(
-    "loop:preview.registerWebview",
-    (_event, p: { tabId: string; webContentsId: number }) => {
-      previews.registerWebview(p.tabId, p.webContentsId);
-    },
-  );
-  ipcMain.handle("loop:preview.states", () => previews.states());
-  ipcMain.handle("loop:preview.navigate", (_event, p: { tabId: string; url: string }) =>
-    previews.navigate(p.tabId, p.url),
-  );
-  ipcMain.handle("loop:preview.goBack", (_event, p: { tabId: string }) => {
-    previews.goBack(p.tabId);
-  });
-  ipcMain.handle("loop:preview.goForward", (_event, p: { tabId: string }) => {
-    previews.goForward(p.tabId);
-  });
-  ipcMain.handle("loop:preview.refresh", (_event, p: { tabId: string }) => {
-    previews.refresh(p.tabId);
-  });
-  ipcMain.handle("loop:preview.hardReload", (_event, p: { tabId: string }) => {
-    previews.hardReload(p.tabId);
-  });
-  ipcMain.handle("loop:preview.zoomIn", (_event, p: { tabId: string }) => {
-    previews.zoomIn(p.tabId);
-  });
-  ipcMain.handle("loop:preview.zoomOut", (_event, p: { tabId: string }) => {
-    previews.zoomOut(p.tabId);
-  });
-  ipcMain.handle("loop:preview.resetZoom", (_event, p: { tabId: string }) => {
-    previews.resetZoom(p.tabId);
-  });
-  ipcMain.handle(
-    "loop:preview.setColorScheme",
-    (_event, p: { tabId: string; colorScheme: PreviewColorScheme }) =>
-      previews.setColorScheme(p.tabId, p.colorScheme),
-  );
-  ipcMain.handle("loop:preview.openDevTools", (_event, p: { tabId: string }) => {
-    previews.openDevTools(p.tabId);
-  });
-  ipcMain.handle("loop:preview.pickElement", (_event, p: { tabId: string }) =>
-    previews.pickElement(p.tabId),
-  );
-  ipcMain.handle("loop:preview.cancelPickElement", (_event, p: { tabId: string }) => {
-    previews.cancelPickElement(p.tabId);
-  });
-  ipcMain.handle("loop:preview.clearCookies", () => previews.clearCookies());
-  ipcMain.handle("loop:preview.clearCache", () => previews.clearCache());
-  ipcMain.handle("loop:preview.screenshot", (_event, p: { tabId: string }) =>
-    previews.captureScreenshot(p.tabId),
-  );
-  ipcMain.handle("loop:preview.revealArtifact", (_event, p: { path: string }) => {
-    previews.revealArtifact(p.path);
-  });
-  ipcMain.handle("loop:preview.copyArtifact", (_event, p: { path: string }) =>
-    previews.copyArtifactToClipboard(p.path),
-  );
-  ipcMain.handle("loop:preview.startScreencast", (_event, p: { tabId: string }) =>
-    previews.startScreencast(p.tabId),
-  );
-  ipcMain.handle("loop:preview.stopScreencast", (_event, p: { tabId: string }) =>
-    previews.stopScreencast(p.tabId),
-  );
-  ipcMain.handle(
-    "loop:preview.saveRecording",
-    (_event, p: { tabId: string; mimeType: string; data: Uint8Array }) =>
-      previews.saveRecording(p.tabId, p.mimeType, p.data),
-  );
+  connectLoop(loop, forward, spawnBinary ? loopBinary : "in-process core");
+  connectHost(host, forward, connectTerminalPort);
+  connectUpdates(forward);
+  connectPreviews(previews, forward);
 
   // Asked once on mount, because a reload mid-fullscreen would otherwise wait
   // for a transition that already happened.
-  ipcMain.handle("loop:window.isFullscreen", () => mainWindow?.isFullScreen() ?? false);
-  ipcMain.handle("loop:window.isFocused", () => mainWindow?.isFocused() ?? false);
+  ipcMain.handle("loop:window.isFullscreen", () => mainWindow.isFullScreen());
+  ipcMain.handle("loop:window.isFocused", () => mainWindow.isFocused());
 
-  createWindow();
+  mainWindow.open();
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) mainWindow.open();
   });
-
-  /**
-   * Someone tried to launch a second copy — show them the one already running.
-   *
-   * Refusing to start without this would look like the app failing to open: the
-   * click does nothing, no window appears, and the natural response is to click
-   * again. Raising the existing window is what makes the single instance feel
-   * intentional rather than broken. A minimized window has to be restored
-   * first; `focus()` alone leaves it in the Dock.
-   */
-  app.on("second-instance", () => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      createWindow();
-      return;
-    }
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-  });
+  app.on("second-instance", () => mainWindow.reveal());
 });
 
 app.on("window-all-closed", () => {
