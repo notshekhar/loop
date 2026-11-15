@@ -62,7 +62,7 @@ describe("the context gauge after the catalog lands", () => {
         // the property worth pinning — a future field added to it is restored
         // by both without anybody remembering to.
         const app = await Bun.file(new URL("../src/interactive/app/launch.ts", import.meta.url)).text();
-        const warmup = app.slice(app.indexOf("void getCatalog({ refresh: true })"));
+        const warmup = app.slice(app.indexOf("void getCatalog({ refresh: true, refreshLocal: false })"));
         expect(warmup.slice(0, warmup.indexOf("});"))).toContain("refreshStatusLine()");
     });
 });

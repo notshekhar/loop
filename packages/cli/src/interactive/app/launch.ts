@@ -31,9 +31,13 @@ export function announceStartup(core: AppCore): void {
  * lists drift (new releases, deprecations, gating) and the cached list is
  * good for up to 1h otherwise. Fire-and-forget; mergedCache rebuilds when
  * this lands so the /model picker reflects today's reality.
+ *
+ * The machine-local probes are left to their own cache: re-running them on
+ * every launch spawned ~28 processes (four agent CLIs, and a whole Claude Code
+ * session with its hooks and MCP servers) while the user was typing.
  */
 function refreshCatalogThenStatusLine(core: AppCore): void {
-    void getCatalog({ refresh: true })
+    void getCatalog({ refresh: true, refreshLocal: false })
         .catch(() => {})
         .then(() => {
             // The catalog (including custom-provider models) resolves

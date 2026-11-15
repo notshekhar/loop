@@ -578,8 +578,23 @@ async function refreshAvailability(): Promise<Record<string, string[]>> {
     }
 }
 
-export async function getCatalog(opts: { refresh?: boolean } = {}): Promise<Record<string, ModelInfo>> {
+export interface GetCatalogOptions {
+    /** Re-fetch provider model lists and models.dev instead of serving the cache. */
+    refresh?: boolean;
+    /**
+     * Also re-run the machine-local probes — the native-agent CLIs (Claude
+     * Code, Cursor, Codex, Antigravity) and the Bedrock credential chain —
+     * instead of their 1h stale-while-revalidate cache. Defaults to `refresh`.
+     * Each probe spawns a program (Claude Code's boots a whole session, with
+     * its hooks and MCP servers, just to list models), so a refresh that runs
+     * on every launch turns this off.
+     */
+    refreshLocal?: boolean;
+}
+
+export async function getCatalog(opts: GetCatalogOptions = {}): Promise<Record<string, ModelInfo>> {
     if (mergedCache && !opts.refresh) return mergedCache;
+    const refreshLocal = opts.refreshLocal ?? opts.refresh ?? false;
 
     const ts = cacheStore.get("ts") as number;
     const stored = (cacheStore.get("availability") as Record<string, string[]>) ?? {};
@@ -715,7 +730,7 @@ export async function getCatalog(opts: { refresh?: boolean } = {}): Promise<Reco
     // the underlying vendor model in the known catalog (us.anthropic.claude-x-…
     // -v1:0 → anthropic's claude-x); unmatched models (Nova, Llama, …) fall
     // back to $0 + a generic context, correctable via ~/.loop/models.json.
-    for (const s of await bedrockModelSummaries(opts.refresh ?? false)) {
+    for (const s of await bedrockModelSummaries(refreshLocal)) {
         const id = `bedrock/${s.id}`;
         out[id] = buildModelInfo(
             id,
@@ -748,10 +763,10 @@ export async function getCatalog(opts: { refresh?: boolean } = {}): Promise<Reco
     // installed AND signed in on this machine. Probed results are cached on
     // disk (native-agents.json) and refreshed in the background.
     const [claude, cursor, codex, antigravity] = await Promise.all([
-        probeClaudeCode({ refresh: opts.refresh }).catch(() => null),
-        probeCursor({ refresh: opts.refresh }).catch(() => null),
-        probeCodex({ refresh: opts.refresh }).catch(() => null),
-        probeAntigravity({ refresh: opts.refresh }).catch(() => null),
+        probeClaudeCode({ refresh: refreshLocal }).catch(() => null),
+        probeCursor({ refresh: refreshLocal }).catch(() => null),
+        probeCodex({ refresh: refreshLocal }).catch(() => null),
+        probeAntigravity({ refresh: refreshLocal }).catch(() => null),
     ]);
     if (claude?.loggedIn) {
         for (const m of claude.models) {
