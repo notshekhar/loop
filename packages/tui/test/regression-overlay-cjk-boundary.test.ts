@@ -1,30 +1,9 @@
 import assert from "node:assert";
 import { describe, it } from "bun:test";
-import { type TUI } from "../src/tui";
+import { compositeTuiLine } from "../src/tui";
 import { extractSegments, sliceByColumn, visibleWidth } from "../src/utils";
-import { VirtualTerminal } from "./virtual-terminal";
-import { TuiMainScreen } from "../src/tui-main-screen";
 
-type TuiComposite = {
-    compositeLineAt(
-        baseLine: string,
-        overlayLine: string,
-        startCol: number,
-        overlayWidth: number,
-        totalWidth: number,
-    ): string;
-};
-
-function compositeLineAt(
-    baseLine: string,
-    overlayLine: string,
-    startCol: number,
-    overlayWidth: number,
-    totalWidth: number,
-): string {
-    const tui = new TuiMainScreen(new VirtualTerminal(totalWidth, 10)) as unknown as TuiComposite;
-    return tui.compositeLineAt(baseLine, overlayLine, startCol, overlayWidth, totalWidth);
-}
+const compositeLineAt = compositeTuiLine;
 
 describe("overlay CJK boundary regression", () => {
     it("excludes a wide grapheme from before when overlay starts inside it", () => {

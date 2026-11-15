@@ -1,6 +1,6 @@
 import type { ScrollView } from "./components/scroll-view";
 import { allocateStackSizes, visibleStackEntries } from "./components/stack";
-import { getLayoutNode } from "./layout-node";
+import { getLayoutNode, type ScrollLayoutNode, type StackLayoutNode } from "./layout-node";
 import { cropKittyImageLine, getKittyImageMetadata, isImageLine } from "./terminal-image";
 import { type Component, CURSOR_MARKER, compositeTuiLine } from "./tui";
 import { extractAnsiCode, getGraphemeCellRange, sliceByColumn, visibleWidth } from "./utils";
@@ -97,155 +97,152 @@ function updateClips(box: LayoutBox, parentClip: LayoutRect): void {
     for (const child of box.children) updateClips(child, box.clip);
 }
 
-function layoutComponent(
-    context: LayoutContext,
-    component: Component,
-    x: number,
-    y: number,
-    width: number,
-    height: number | undefined,
-    clip: LayoutRect,
-): LayoutBox {
-    const safeWidth = Math.max(1, Math.floor(width));
+/** Where a component is being placed. `height` undefined = as tall as it wants. */
+interface Slot {
+    x: number;
+    y: number;
+    width: number;
+    height: number | undefined;
+    clip: LayoutRect;
+}
+
+function layoutComponent(context: LayoutContext, component: Component, slot: Slot): LayoutBox {
     const node = getLayoutNode(component);
-    if (!node) {
-        const lines = renderCached(context, component, safeWidth);
-        const allocatedHeight = height === undefined ? lines.length : Math.max(0, Math.floor(height));
-        let lineOffset = 0;
-        if (lines.length > allocatedHeight && allocatedHeight > 0) {
-            const cursorLine = lines.findIndex((line) => line.includes(CURSOR_MARKER));
-            if (cursorLine >= allocatedHeight) lineOffset = cursorLine - allocatedHeight + 1;
-        }
-        return {
-            component,
-            rect: { x, y, width: safeWidth, height: allocatedHeight },
-            clip: intersect(clip, { x, y, width: safeWidth, height: allocatedHeight }),
-            children: [],
-            lines,
-            lineOffset,
-            layer: 0,
-        };
-    }
+    if (!node) return layoutLeaf(context, component, slot);
+    if (node.type === "scroll") return layoutScroll(context, component, node, slot);
+    if (node.type === "vstack") return layoutVStack(context, component, node, slot);
+    return layoutHStack(context, component, node, slot);
+}
 
-    if (node.type === "scroll") {
-        const previousScrollTop = node.state.scrollTop;
-        const contentWidth = node.state.getContentWidth(safeWidth);
-        const childBox = layoutComponent(
-            context,
-            node.component,
-            x,
-            y - previousScrollTop,
-            contentWidth,
-            undefined,
-            clip,
-        );
-        const contentHeight = childBox.rect.height;
-        const viewportHeight = height === undefined ? contentHeight : Math.max(0, Math.floor(height));
-        node.state.updateLayout(contentHeight, viewportHeight, context.requestRender);
-        translateBox(childBox, previousScrollTop - node.state.scrollTop);
-        const scrollView = node.state as ScrollView;
-        if (node.state.primary || !context.primaryScrollView) context.primaryScrollView = scrollView;
-        const rect = { x, y, width: safeWidth, height: viewportHeight };
-        const childClip = intersect(clip, rect);
-        const box: LayoutBox = {
-            component,
-            rect,
-            clip: childClip,
-            children: [childBox],
-            scrollView,
-            scrollContentLines: renderCached(context, node.component, contentWidth),
-            layer: 0,
-        };
-        childBox.parent = box;
-        updateClips(childBox, childClip);
-        return box;
-    }
+const safeWidthOf = (slot: Slot) => Math.max(1, Math.floor(slot.width));
 
+function emptyBox(component: Component, rect: LayoutRect, clip: LayoutRect): LayoutBox {
+    return { component, rect, clip: intersect(clip, rect), children: [], layer: 0 };
+}
+
+/**
+ * A plain component: its rendered lines, cut to the slot. When they don't
+ * fit, the window scrolls just far enough to keep the cursor in view.
+ */
+function layoutLeaf(context: LayoutContext, component: Component, slot: Slot): LayoutBox {
+    const width = safeWidthOf(slot);
+    const lines = renderCached(context, component, width);
+    const allocatedHeight = slot.height === undefined ? lines.length : Math.max(0, Math.floor(slot.height));
+    let lineOffset = 0;
+    if (lines.length > allocatedHeight && allocatedHeight > 0) {
+        const cursorLine = lines.findIndex((line) => line.includes(CURSOR_MARKER));
+        if (cursorLine >= allocatedHeight) lineOffset = cursorLine - allocatedHeight + 1;
+    }
+    const rect = { x: slot.x, y: slot.y, width, height: allocatedHeight };
+    return { ...emptyBox(component, rect, slot.clip), lines, lineOffset };
+}
+
+/** The content laid out at full height, then shifted by the scroll offset and clipped to the viewport. */
+function layoutScroll(context: LayoutContext, component: Component, node: ScrollLayoutNode, slot: Slot): LayoutBox {
+    const width = safeWidthOf(slot);
+    const previousScrollTop = node.state.scrollTop;
+    const contentWidth = node.state.getContentWidth(width);
+    const childBox = layoutComponent(context, node.component, {
+        x: slot.x,
+        y: slot.y - previousScrollTop,
+        width: contentWidth,
+        height: undefined,
+        clip: slot.clip,
+    });
+    const contentHeight = childBox.rect.height;
+    const viewportHeight = slot.height === undefined ? contentHeight : Math.max(0, Math.floor(slot.height));
+    node.state.updateLayout(contentHeight, viewportHeight, context.requestRender);
+    translateBox(childBox, previousScrollTop - node.state.scrollTop);
+    const scrollView = node.state as ScrollView;
+    if (node.state.primary || !context.primaryScrollView) context.primaryScrollView = scrollView;
+    const box: LayoutBox = {
+        ...emptyBox(component, { x: slot.x, y: slot.y, width, height: viewportHeight }, slot.clip),
+        children: [childBox],
+        scrollView,
+        scrollContentLines: renderCached(context, node.component, contentWidth),
+    };
+    childBox.parent = box;
+    updateClips(childBox, box.clip);
+    return box;
+}
+
+function layoutVStack(context: LayoutContext, component: Component, node: StackLayoutNode, slot: Slot): LayoutBox {
+    const width = safeWidthOf(slot);
     const entries = visibleStackEntries(node.entries, context.viewport);
-    const gapTotal = Math.max(0, entries.length - 1) * node.gap;
-    if (node.type === "vstack") {
-        const intrinsicHeights = entries.map((entry) =>
-            typeof entry.basis === "number" ? entry.basis : measureHeight(context, entry.component, safeWidth),
-        );
-        const sizes = allocateStackSizes(entries, intrinsicHeights, height, node.gap);
-        const naturalHeight = sizes.reduce((sum, size) => sum + size, 0) + gapTotal;
-        const allocatedHeight = height === undefined ? naturalHeight : Math.max(0, Math.floor(height));
-        const rect = { x, y, width: safeWidth, height: allocatedHeight };
-        const box: LayoutBox = {
-            component,
-            rect,
-            clip: intersect(clip, rect),
-            children: [],
-            layer: 0,
-        };
-        let childY = y;
-        for (let index = 0; index < entries.length; index++) {
-            box.children.push(
-                withParent(
-                    layoutComponent(context, entries[index]!.component, x, childY, safeWidth, sizes[index]!, box.clip),
-                    box,
-                ),
-            );
-            childY += sizes[index]! + node.gap;
-        }
-        return box;
-    }
-
-    const intrinsicWidths = entries.map((entry) =>
-        typeof entry.basis === "number" ? entry.basis : measureWidth(context, entry.component, safeWidth),
+    const intrinsicHeights = entries.map((entry) =>
+        typeof entry.basis === "number" ? entry.basis : measureHeight(context, entry.component, width),
     );
-    const widths = allocateStackSizes(entries, intrinsicWidths, safeWidth, node.gap);
+    const sizes = allocateStackSizes(entries, intrinsicHeights, slot.height, node.gap);
+    const naturalHeight = sizes.reduce((sum, size) => sum + size, 0) + gapTotal(entries.length, node.gap);
+    const allocatedHeight = slot.height === undefined ? naturalHeight : Math.max(0, Math.floor(slot.height));
+    const box = emptyBox(component, { x: slot.x, y: slot.y, width, height: allocatedHeight }, slot.clip);
+    let childY = slot.y;
+    entries.forEach((entry, index) => {
+        const child = { x: slot.x, y: childY, width, height: sizes[index]!, clip: box.clip };
+        box.children.push(withParent(layoutComponent(context, entry.component, child), box));
+        childY += sizes[index]! + node.gap;
+    });
+    return box;
+}
+
+const gapTotal = (count: number, gap: number) => Math.max(0, count - 1) * gap;
+
+function layoutHStack(context: LayoutContext, component: Component, node: StackLayoutNode, slot: Slot): LayoutBox {
+    const width = safeWidthOf(slot);
+    const entries = visibleStackEntries(node.entries, context.viewport);
+    const intrinsicWidths = entries.map((entry) =>
+        typeof entry.basis === "number" ? entry.basis : measureWidth(context, entry.component, width),
+    );
+    const widths = allocateStackSizes(entries, intrinsicWidths, width, node.gap);
     const intrinsicHeights = entries.map((entry, index) =>
         measureHeight(context, entry.component, Math.max(1, widths[index]!)),
     );
     const allocatedHeight =
-        height === undefined
+        slot.height === undefined
             ? intrinsicHeights.reduce((max, childHeight) => Math.max(max, childHeight), 0)
-            : Math.max(0, height);
-    const rect = { x, y, width: safeWidth, height: allocatedHeight };
-    const box: LayoutBox = {
+            : Math.max(0, slot.height);
+    const box = emptyBox(component, { x: slot.x, y: slot.y, width, height: allocatedHeight }, slot.clip);
+    let childX = slot.x;
+    entries.forEach((entry, index) => {
+        const childHeight =
+            node.align === "stretch" ? allocatedHeight : Math.min(allocatedHeight, intrinsicHeights[index]!);
+        const childY = slot.y + alignOffset(node.align, allocatedHeight, childHeight);
+        const childWidth = widths[index]!;
+        box.children.push(
+            childWidth === 0
+                ? zeroWidthBox(entry.component, childX, childY, childHeight, box)
+                : withParent(
+                      layoutComponent(context, entry.component, {
+                          x: childX,
+                          y: childY,
+                          width: childWidth,
+                          height: childHeight,
+                          clip: box.clip,
+                      }),
+                      box,
+                  ),
+        );
+        childX += childWidth + node.gap;
+    });
+    return box;
+}
+
+function alignOffset(align: StackLayoutNode["align"], available: number, used: number): number {
+    if (align === "center") return Math.floor((available - used) / 2);
+    if (align === "end") return available - used;
+    return 0;
+}
+
+/** A child squeezed to no width keeps its place in the tree but is never rendered. */
+function zeroWidthBox(component: Component, x: number, y: number, height: number, parent: LayoutBox): LayoutBox {
+    return {
         component,
-        rect,
-        clip: intersect(clip, rect),
+        rect: { x, y, width: 0, height },
+        clip: { x, y, width: 0, height: 0 },
         children: [],
+        parent,
         layer: 0,
     };
-    let childX = x;
-    for (let index = 0; index < entries.length; index++) {
-        const naturalChildHeight = intrinsicHeights[index]!;
-        const childHeight = node.align === "stretch" ? allocatedHeight : Math.min(allocatedHeight, naturalChildHeight);
-        let childY = y;
-        if (node.align === "center") childY += Math.floor((allocatedHeight - childHeight) / 2);
-        else if (node.align === "end") childY += allocatedHeight - childHeight;
-        const childWidth = widths[index]!;
-        if (childWidth === 0) {
-            box.children.push({
-                component: entries[index]!.component,
-                rect: { x: childX, y: childY, width: 0, height: childHeight },
-                clip: { x: childX, y: childY, width: 0, height: 0 },
-                children: [],
-                parent: box,
-                layer: 0,
-            });
-        } else {
-            box.children.push(
-                withParent(
-                    layoutComponent(
-                        context,
-                        entries[index]!.component,
-                        childX,
-                        childY,
-                        childWidth,
-                        childHeight,
-                        box.clip,
-                    ),
-                    box,
-                ),
-            );
-        }
-        childX += childWidth + node.gap;
-    }
-    return box;
 }
 
 function styleScrollbarCell(line: string, column: number, totalWidth: number, style: (text: string) => string): string {
@@ -372,12 +369,8 @@ export function renderLayoutFrame(
         requestRender,
         primaryScrollView: undefined,
     };
-    const rootBox = layoutComponent(context, root, 0, 0, safeWidth, safeHeight, {
-        x: 0,
-        y: 0,
-        width: safeWidth,
-        height: safeHeight,
-    });
+    const screen = { x: 0, y: 0, width: safeWidth, height: safeHeight };
+    const rootBox = layoutComponent(context, root, { ...screen, clip: screen });
     const lines = Array.from({ length: safeHeight }, () => "");
     paintBox(rootBox, lines, safeWidth);
     return {

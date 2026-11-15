@@ -9,87 +9,83 @@ export interface FuzzyMatch {
     score: number;
 }
 
+/** Score bonus for a run of consecutive matches, per match in the run. */
+const CONSECUTIVE_BONUS = 5;
+/** Score cost of each skipped character between two matches. */
+const GAP_PENALTY = 2;
+/** Score bonus for a match at the start of a word. */
+const WORD_BOUNDARY_BONUS = 10;
+/** Score cost per character of distance into the text. */
+const POSITION_PENALTY = 0.1;
+/** Score bonus when the query is the whole text. */
+const EXACT_MATCH_BONUS = 100;
+/** Score cost of matching only after swapping a query's letters and digits. */
+const SWAPPED_QUERY_PENALTY = 5;
+
 export function fuzzyMatch(query: string, text: string): FuzzyMatch {
     const queryLower = query.toLowerCase();
     const textLower = text.toLowerCase();
-
-    const matchQuery = (normalizedQuery: string): FuzzyMatch => {
-        if (normalizedQuery.length === 0) {
-            return { matches: true, score: 0 };
-        }
-
-        if (normalizedQuery.length > textLower.length) {
-            return { matches: false, score: 0 };
-        }
-
-        let queryIndex = 0;
-        let score = 0;
-        let lastMatchIndex = -1;
-        let consecutiveMatches = 0;
-
-        for (let i = 0; i < textLower.length && queryIndex < normalizedQuery.length; i++) {
-            if (textLower[i] === normalizedQuery[queryIndex]) {
-                const isWordBoundary = i === 0 || /[\s\-_./:]/.test(textLower[i - 1]!);
-
-                // Reward consecutive matches
-                if (lastMatchIndex === i - 1) {
-                    consecutiveMatches++;
-                    score -= consecutiveMatches * 5;
-                } else {
-                    consecutiveMatches = 0;
-                    // Penalize gaps
-                    if (lastMatchIndex >= 0) {
-                        score += (i - lastMatchIndex - 1) * 2;
-                    }
-                }
-
-                // Reward word boundary matches
-                if (isWordBoundary) {
-                    score -= 10;
-                }
-
-                // Slight penalty for later matches
-                score += i * 0.1;
-
-                lastMatchIndex = i;
-                queryIndex++;
-            }
-        }
-
-        if (queryIndex < normalizedQuery.length) {
-            return { matches: false, score: 0 };
-        }
-
-        if (normalizedQuery === textLower) {
-            score -= 100;
-        }
-
-        return { matches: true, score };
-    };
-
-    const primaryMatch = matchQuery(queryLower);
+    const primaryMatch = matchInOrder(queryLower, textLower);
     if (primaryMatch.matches) {
         return primaryMatch;
     }
-
-    const alphaNumericMatch = queryLower.match(/^(?<letters>[a-z]+)(?<digits>[0-9]+)$/);
-    const numericAlphaMatch = queryLower.match(/^(?<digits>[0-9]+)(?<letters>[a-z]+)$/);
-    const swappedQuery = alphaNumericMatch
-        ? `${alphaNumericMatch.groups?.digits ?? ""}${alphaNumericMatch.groups?.letters ?? ""}`
-        : numericAlphaMatch
-          ? `${numericAlphaMatch.groups?.letters ?? ""}${numericAlphaMatch.groups?.digits ?? ""}`
-          : "";
-
+    // "v2" also finds "2v", and the other way round.
+    const swappedQuery = swapLettersAndDigits(queryLower);
     if (!swappedQuery) {
         return primaryMatch;
     }
-
-    const swappedMatch = matchQuery(swappedQuery);
+    const swappedMatch = matchInOrder(swappedQuery, textLower);
     if (!swappedMatch.matches) {
         return primaryMatch;
     }
+    return { matches: true, score: swappedMatch.score + SWAPPED_QUERY_PENALTY };
+}
 
-    return { matches: true, score: swappedMatch.score + 5 };
+function matchInOrder(query: string, textLower: string): FuzzyMatch {
+    if (query.length === 0) {
+        return { matches: true, score: 0 };
+    }
+    if (query.length > textLower.length) {
+        return { matches: false, score: 0 };
+    }
+    let queryIndex = 0;
+    let score = 0;
+    let lastMatchIndex = -1;
+    let consecutiveMatches = 0;
+    for (let i = 0; i < textLower.length && queryIndex < query.length; i++) {
+        if (textLower[i] !== query[queryIndex]) continue;
+        if (lastMatchIndex === i - 1) {
+            consecutiveMatches++;
+            score -= consecutiveMatches * CONSECUTIVE_BONUS;
+        } else {
+            consecutiveMatches = 0;
+            if (lastMatchIndex >= 0) {
+                score += (i - lastMatchIndex - 1) * GAP_PENALTY;
+            }
+        }
+        if (i === 0 || /[\s\-_./:]/.test(textLower[i - 1]!)) {
+            score -= WORD_BOUNDARY_BONUS;
+        }
+        score += i * POSITION_PENALTY;
+        lastMatchIndex = i;
+        queryIndex++;
+    }
+    if (queryIndex < query.length) {
+        return { matches: false, score: 0 };
+    }
+    if (query === textLower) {
+        score -= EXACT_MATCH_BONUS;
+    }
+    return { matches: true, score };
+}
+
+/** "abc12" → "12abc" and "12abc" → "abc12"; "" for anything else. */
+function swapLettersAndDigits(query: string): string {
+    const alphaNumeric = query.match(/^(?<letters>[a-z]+)(?<digits>[0-9]+)$/);
+    if (alphaNumeric) return `${alphaNumeric.groups?.digits ?? ""}${alphaNumeric.groups?.letters ?? ""}`;
+    const numericAlpha = query.match(/^(?<digits>[0-9]+)(?<letters>[a-z]+)$/);
+    if (numericAlpha) return `${numericAlpha.groups?.letters ?? ""}${numericAlpha.groups?.digits ?? ""}`;
+    return "";
 }
 
 /**

@@ -1,149 +1,38 @@
+/** Laying out and painting a parsed sequence diagram onto a cell canvas. */
 import { visibleWidth, wrapTextWithAnsi } from "../utils";
 import { Canvas } from "./canvas";
+import type { ParsedSequence, SequenceEvent, SequenceFrame, SequenceMessage, SequenceNote } from "./sequence-parse";
+
+export {
+    parseSequence,
+    type ArrowHead,
+    type ParsedSequence,
+    type SequenceEvent,
+    type SequenceFrame,
+    type SequenceMessage,
+    type SequenceNote,
+} from "./sequence-parse";
 
 /** Minimum cells between two lifelines. */
 const MIN_GAP = 4;
 /** Cells a frame is inset per nesting level. */
 const FRAME_INSET = 2;
-
-export type ArrowHead = "arrow" | "open" | "cross" | "async";
-
-export interface SequenceMessage {
-    kind: "message";
-    from: string;
-    to: string;
-    text: string;
-    dashed: boolean;
-    head: ArrowHead;
-}
-
-export interface SequenceNote {
-    kind: "note";
-    /** Lifelines the note covers; one entry for `left of` / `right of`. */
-    over: string[];
-    side: "over" | "left" | "right";
-    text: string;
-}
-
-export interface SequenceFrame {
-    kind: "frame";
-    /** `else` continues the frame it sits in rather than opening a new one. */
-    tag: "loop" | "alt" | "opt" | "par" | "critical" | "break" | "else" | "end";
-    text: string;
-}
-
-export type SequenceEvent = SequenceMessage | SequenceNote | SequenceFrame;
-
-export interface ParsedSequence {
-    participants: Array<{ id: string; label: string }>;
-    events: SequenceEvent[];
-}
-
-const HEADS: Array<[token: string, dashed: boolean, head: ArrowHead]> = [
-    ["-->>", true, "arrow"],
-    ["--\\)", true, "async"],
-    ["--x", true, "cross"],
-    ["-->", true, "open"],
-    ["->>", false, "arrow"],
-    ["-\\)", false, "async"],
-    ["-x", false, "cross"],
-    ["->", false, "open"],
-];
-
-const MESSAGE_PATTERN = new RegExp(
-    `^([A-Za-z0-9_]+)\\s*(${HEADS.map(([token]) => token).join("|")})\\s*([A-Za-z0-9_]+)\\s*:\\s*(.*)$`,
-);
-
-const FRAME_TAGS = ["loop", "alt", "opt", "par", "critical", "break", "else"] as const;
-
-export function parseSequence(source: string): ParsedSequence | undefined {
-    const participants: Array<{ id: string; label: string }> = [];
-    const events: SequenceEvent[] = [];
-    const seen = new Set<string>();
-    let seenHeader = false;
-
-    const declare = (id: string, label?: string) => {
-        if (seen.has(id)) {
-            if (label) {
-                const existing = participants.find((entry) => entry.id === id);
-                if (existing) existing.label = label;
-            }
-            return;
-        }
-        seen.add(id);
-        participants.push({ id, label: label ?? id });
-    };
-
-    for (const raw of source.split("\n")) {
-        const line = raw.replace(/%%.*$/, "").trim();
-        if (!line) continue;
-        if (!seenHeader) {
-            if (!/^sequenceDiagram\b/.test(line)) return undefined;
-            seenHeader = true;
-            continue;
-        }
-
-        const participant = /^(?:participant|actor)\s+([A-Za-z0-9_]+)(?:\s+as\s+(.+))?$/.exec(line);
-        if (participant) {
-            declare(participant[1]!, participant[2]?.trim());
-            continue;
-        }
-
-        const note = /^Note\s+(over|left of|right of)\s+([^:]+):\s*(.*)$/i.exec(line);
-        if (note) {
-            const targets = note[2]!
-                .split(",")
-                .map((entry) => entry.trim())
-                .filter(Boolean);
-            targets.forEach((id) => declare(id));
-            const side = note[1]!.toLowerCase().startsWith("left")
-                ? "left"
-                : note[1]!.toLowerCase().startsWith("right")
-                  ? "right"
-                  : "over";
-            events.push({ kind: "note", over: targets, side, text: note[3]!.trim() });
-            continue;
-        }
-
-        if (line === "end") {
-            events.push({ kind: "frame", tag: "end", text: "" });
-            continue;
-        }
-        const frame = new RegExp(`^(${FRAME_TAGS.join("|")})\\b\\s*(.*)$`).exec(line);
-        if (frame) {
-            events.push({ kind: "frame", tag: frame[1]! as SequenceFrame["tag"], text: frame[2]!.trim() });
-            continue;
-        }
-
-        const message = MESSAGE_PATTERN.exec(line);
-        if (message) {
-            const token = message[2]!;
-            const spec = HEADS.find(([candidate]) => candidate.replace(/\\/g, "") === token);
-            declare(message[1]!);
-            declare(message[3]!);
-            events.push({
-                kind: "message",
-                from: message[1]!,
-                to: message[3]!,
-                text: message[4]!.trim(),
-                dashed: spec?.[1] ?? false,
-                head: spec?.[2] ?? "arrow",
-            });
-            continue;
-        }
-        // autonumber, activate/deactivate, rect, links: known, and nothing a
-        // cell grid gains from drawing.
-    }
-
-    if (participants.length === 0) return undefined;
-    return { participants, events };
-}
+/** Passes of gap-widening; each settles the labels the previous one pushed apart. */
+const GAP_PASSES = 6;
 
 interface Row {
     event: SequenceEvent;
     top: number;
     height: number;
     depth: number;
+}
+
+/** Where each participant's column sits, once the gaps have settled. */
+interface Columns {
+    index: Map<string, number>;
+    count: number;
+    boxWidth: number[];
+    centre: number[];
 }
 
 const wrap = (text: string, limit: number): string[] =>
@@ -173,26 +62,41 @@ export function drawSequence(parsed: ParsedSequence, maxWidth: number): Canvas |
 }
 
 function paintSequence(parsed: ParsedSequence, maxWidth: number, nameCap: number, textCap: number): Canvas | undefined {
-    const { participants, events } = parsed;
-    const index = new Map(participants.map((entry, position) => [entry.id, position]));
-    const count = participants.length;
-
-    const names = participants.map((entry) => wrap(entry.label, nameCap));
+    const names = parsed.participants.map((entry) => wrap(entry.label, nameCap));
     const headerHeight = Math.max(...names.map((lines) => lines.length)) + 2;
+    const inset = maxFrameDepth(parsed.events) * FRAME_INSET;
+    const columns = settleColumns(parsed, names, inset, textCap);
+    const { rows, wrapped, height } = layoutRows(parsed.events, columns, headerHeight, textCap);
+    const width = diagramWidth(rows, wrapped, columns, inset);
+    if (width > maxWidth || width <= 0) return undefined;
 
-    // Frame nesting decides the inset, and it does not depend on any sizing.
+    const canvas = new Canvas(width, height);
+    drawParticipants(canvas, names, columns, headerHeight, height);
+    drawRows(canvas, rows, wrapped, columns, width, height);
+    return canvas;
+}
+
+/** Frame nesting decides the inset, and it does not depend on any sizing. */
+function maxFrameDepth(events: readonly SequenceEvent[]): number {
     let maxDepth = 0;
-    let probe = 0;
+    let depth = 0;
     for (const event of events) {
         if (event.kind !== "frame") continue;
-        if (event.tag === "end") probe = Math.max(0, probe - 1);
-        else if (event.tag !== "else") maxDepth = Math.max(maxDepth, ++probe);
+        if (event.tag === "end") depth = Math.max(0, depth - 1);
+        else if (event.tag !== "else") maxDepth = Math.max(maxDepth, ++depth);
     }
+    return maxDepth;
+}
 
+/**
+ * Widen gaps until every label fits — but only up to the cap. Past it the
+ * label wraps onto more rows rather than dragging the columns apart.
+ */
+function settleColumns(parsed: ParsedSequence, names: string[][], inset: number, textCap: number): Columns {
+    const count = parsed.participants.length;
+    const index = new Map(parsed.participants.map((entry, position) => [entry.id, position]));
     const boxWidth = names.map((lines) => Math.max(...lines.map(visibleWidth)) + 4);
-    const inset = maxDepth * FRAME_INSET;
     const gaps = new Array<number>(Math.max(0, count - 1)).fill(MIN_GAP);
-
     const centres = () => {
         const result: number[] = [];
         let cursor = inset;
@@ -202,98 +106,103 @@ function paintSequence(parsed: ParsedSequence, maxWidth: number, nameCap: number
         }
         return result;
     };
-
-    // Widen gaps until every label fits — but only up to the cap. Past it the
-    // label wraps onto more rows rather than dragging the columns apart.
-    for (let pass = 0; pass < 6; pass++) {
-        const centre = centres();
-        let grew = false;
-        const require = (left: number, right: number, need: number) => {
-            if (left === right) return;
-            const have = centre[right]! - centre[left]!;
-            if (have >= need) return;
-            const deficit = need - have;
-            const share = Math.ceil(deficit / (right - left));
-            for (let gap = left; gap < right; gap++) gaps[gap] = (gaps[gap] ?? 0) + share;
-            grew = true;
-        };
-        for (const event of events) {
-            if (event.kind === "message") {
-                const from = index.get(event.from);
-                const to = index.get(event.to);
-                if (from === undefined || to === undefined) continue;
-                const want = Math.min(visibleWidth(event.text), textCap);
-                if (from === to) {
-                    if (from < count - 1) require(from, from + 1, want + 6);
-                    continue;
-                }
-                require(Math.min(from, to), Math.max(from, to), want + 3);
-            } else if (event.kind === "note") {
-                const columns = event.over
-                    .map((id) => index.get(id))
-                    .filter((value): value is number => value !== undefined);
-                if (columns.length === 0) continue;
-                require(Math.min(...columns), Math.max(...columns), Math.min(visibleWidth(event.text), textCap) + 4);
-            }
-        }
-        if (!grew) break;
+    for (let pass = 0; pass < GAP_PASSES; pass++) {
+        if (!widenGaps(parsed.events, { index, count, boxWidth, centre: centres() }, gaps, textCap)) break;
     }
+    return { index, count, boxWidth, centre: centres() };
+}
 
-    const centre = centres();
+/** One widening pass; returns whether any gap grew. */
+function widenGaps(events: readonly SequenceEvent[], columns: Columns, gaps: number[], textCap: number): boolean {
+    const { index, count, centre } = columns;
+    let grew = false;
+    const require = (left: number, right: number, need: number) => {
+        if (left === right) return;
+        const have = centre[right]! - centre[left]!;
+        if (have >= need) return;
+        const share = Math.ceil((need - have) / (right - left));
+        for (let gap = left; gap < right; gap++) gaps[gap] = (gaps[gap] ?? 0) + share;
+        grew = true;
+    };
+    for (const event of events) {
+        if (event.kind === "message") {
+            const from = index.get(event.from);
+            const to = index.get(event.to);
+            if (from === undefined || to === undefined) continue;
+            const want = Math.min(visibleWidth(event.text), textCap);
+            if (from === to) {
+                if (from < count - 1) require(from, from + 1, want + 6);
+                continue;
+            }
+            require(Math.min(from, to), Math.max(from, to), want + 3);
+        } else if (event.kind === "note") {
+            const noteColumns = columnsOf(event, index);
+            if (noteColumns.length === 0) continue;
+            require(Math.min(...noteColumns), Math.max(...noteColumns), Math.min(visibleWidth(event.text), textCap) +
+                4);
+        }
+    }
+    return grew;
+}
 
-    // Rows last: how tall a message is depends on how far its label had to wrap,
-    // which is only known once the columns have settled.
+function columnsOf(note: SequenceNote, index: Map<string, number>): number[] {
+    return note.over.map((id) => index.get(id)).filter((value): value is number => value !== undefined);
+}
+
+/**
+ * Rows last: how tall a message is depends on how far its label had to wrap,
+ * which is only known once the columns have settled.
+ */
+function layoutRows(events: readonly SequenceEvent[], columns: Columns, headerHeight: number, textCap: number) {
     const rows: Row[] = [];
     const wrapped = new Map<SequenceEvent, string[]>();
     let depth = 0;
     let flow = headerHeight;
+    const push = (event: SequenceEvent, height: number, rowDepth: number) => {
+        rows.push({ event, top: flow, height, depth: rowDepth });
+        flow += height;
+    };
     for (const event of events) {
         if (event.kind === "frame") {
-            if (event.tag === "end") {
-                depth = Math.max(0, depth - 1);
-                rows.push({ event, top: flow, height: 1, depth });
-                flow += 1;
-                continue;
-            }
-            if (event.tag === "else") {
-                rows.push({ event, top: flow, height: 1, depth: Math.max(0, depth - 1) });
-                flow += 1;
-                continue;
-            }
-            rows.push({ event, top: flow, height: 1, depth });
-            depth += 1;
-            maxDepth = Math.max(maxDepth, depth);
-            flow += 1;
+            if (event.tag === "end") depth = Math.max(0, depth - 1);
+            push(event, 1, event.tag === "else" ? Math.max(0, depth - 1) : depth);
+            if (event.tag !== "end" && event.tag !== "else") depth += 1;
             continue;
         }
-        if (event.kind === "note") {
-            const columns = event.over.map((id) => index.get(id)).filter((v): v is number => v !== undefined);
-            const span = columns.length ? centre[Math.max(...columns)]! - centre[Math.min(...columns)]! : 0;
-            const lines = wrap(event.text, Math.max(8, Math.min(textCap, span + 2)));
-            wrapped.set(event, lines);
-            rows.push({ event, top: flow, height: lines.length + 2, depth });
-            flow += lines.length + 2;
-            continue;
-        }
-        const from = index.get(event.from);
-        const to = index.get(event.to);
-        const room =
-            from === undefined || to === undefined
-                ? textCap
-                : from === to
-                  ? Math.max(8, centre[Math.min(from + 1, count - 1)]! - centre[from]! - 5)
-                  : Math.max(8, Math.abs(centre[to]! - centre[from]!) - 1);
-        const lines = event.text ? wrap(event.text, Math.max(8, Math.min(textCap, room))) : [];
+        const lines = wrapEventLabel(event, columns, textCap);
         wrapped.set(event, lines);
-        const height = event.from === event.to ? lines.length + 2 : lines.length + 1;
-        rows.push({ event, top: flow, height, depth });
-        flow += height;
+        const selfCall = event.kind === "message" && event.from === event.to;
+        push(event, event.kind === "note" || selfCall ? lines.length + 2 : lines.length + 1, depth);
     }
-    const height = flow + 1;
+    return { rows, wrapped, height: flow + 1 };
+}
 
-    // A self call turns to the right of its own lifeline, so the last column
-    // needs room beyond its box — otherwise a one-participant diagram has
-    // nowhere to draw the call it makes on itself.
+/** A note or message label, wrapped to the room its columns give it. */
+function wrapEventLabel(event: SequenceMessage | SequenceNote, columns: Columns, textCap: number): string[] {
+    const { index, count, centre } = columns;
+    if (event.kind === "note") {
+        const noteColumns = columnsOf(event, index);
+        const span = noteColumns.length ? centre[Math.max(...noteColumns)]! - centre[Math.min(...noteColumns)]! : 0;
+        return wrap(event.text, Math.max(8, Math.min(textCap, span + 2)));
+    }
+    const from = index.get(event.from);
+    const to = index.get(event.to);
+    const room =
+        from === undefined || to === undefined
+            ? textCap
+            : from === to
+              ? Math.max(8, centre[Math.min(from + 1, count - 1)]! - centre[from]! - 5)
+              : Math.max(8, Math.abs(centre[to]! - centre[from]!) - 1);
+    return event.text ? wrap(event.text, Math.max(8, Math.min(textCap, room))) : [];
+}
+
+/**
+ * A self call turns to the right of its own lifeline, so the last column
+ * needs room beyond its box — otherwise a one-participant diagram has
+ * nowhere to draw the call it makes on itself.
+ */
+function diagramWidth(rows: Row[], wrapped: Map<SequenceEvent, string[]>, columns: Columns, inset: number): number {
+    const { index, count, boxWidth, centre } = columns;
     let overhang = 0;
     for (const row of rows) {
         const event = row.event;
@@ -303,56 +212,67 @@ function paintSequence(parsed: ParsedSequence, maxWidth: number, nameCap: number
         const label = wrapped.get(event) ?? [];
         overhang = Math.max(overhang, centre[column]! + 6 + Math.max(0, ...label.map(visibleWidth)));
     }
-    const width = Math.max(
-        (centre[count - 1] ?? 0) + Math.ceil((boxWidth[count - 1] ?? 0) / 2) + inset,
-        overhang + inset,
-    );
-    if (width > maxWidth || width <= 0) return undefined;
+    return Math.max((centre[count - 1] ?? 0) + Math.ceil((boxWidth[count - 1] ?? 0) / 2) + inset, overhang + inset);
+}
 
-    const canvas = new Canvas(width, height);
-
-    participants.forEach((_entry, column) => {
+/** A box with the name at the top of each column, and its lifeline running down. */
+function drawParticipants(
+    canvas: Canvas,
+    names: string[][],
+    columns: Columns,
+    headerHeight: number,
+    height: number,
+): void {
+    const { boxWidth, centre } = columns;
+    names.forEach((lines, column) => {
         const left = centre[column]! - Math.floor(boxWidth[column]! / 2);
         canvas.box(left, 0, boxWidth[column]!, headerHeight, "border");
-        names[column]!.forEach((line, row) => {
+        lines.forEach((line, row) => {
             const offset = Math.max(0, Math.floor((boxWidth[column]! - 2 - visibleWidth(line)) / 2));
             canvas.text(left + 1 + offset, 1 + row, line, "accent");
         });
         canvas.vline(centre[column]!, headerHeight, height - headerHeight, "muted");
     });
+}
 
+function drawRows(
+    canvas: Canvas,
+    rows: Row[],
+    wrapped: Map<SequenceEvent, string[]>,
+    columns: Columns,
+    width: number,
+    height: number,
+): void {
+    const { index, boxWidth, centre } = columns;
     const open: Row[] = [];
     for (const row of rows) {
         const event = row.event;
-        if (event.kind === "frame") {
-            if (event.tag === "end") {
-                const start = open.pop();
-                if (start) drawFrame(canvas, start, row, width);
-                continue;
-            }
-            if (event.tag === "else") {
-                const left = row.depth * FRAME_INSET;
-                canvas.clear(left, row.top, width - left * 2, 1);
-                canvas.hline(left, row.top, width - left * 2, "border");
-                if (event.text) canvas.text(left + 2, row.top, ` ${event.text} `, "muted");
-                continue;
-            }
-            open.push(row);
-            continue;
-        }
         if (event.kind === "note") {
             drawNote(canvas, event, row, wrapped.get(event) ?? [event.text], centre, index, boxWidth, width);
-            continue;
+        } else if (event.kind === "message") {
+            drawMessage(canvas, event, row, wrapped.get(event) ?? [], centre, index);
+        } else if (event.tag === "end") {
+            const start = open.pop();
+            if (start) drawFrame(canvas, start, row, width);
+        } else if (event.tag === "else") {
+            drawElse(canvas, event, row, width);
+        } else {
+            open.push(row);
         }
-        drawMessage(canvas, event, row, wrapped.get(event) ?? [], centre, index);
     }
     // A frame left open by a missing `end` still gets its box, closed at the foot.
     while (open.length > 0) {
         const start = open.pop()!;
         drawFrame(canvas, start, { event: start.event, top: height - 1, height: 1, depth: start.depth }, width);
     }
+}
 
-    return canvas;
+/** A dividing rule across the enclosing frame, labelled with the branch. */
+function drawElse(canvas: Canvas, event: SequenceFrame, row: Row, width: number): void {
+    const left = row.depth * FRAME_INSET;
+    canvas.clear(left, row.top, width - left * 2, 1);
+    canvas.hline(left, row.top, width - left * 2, "border");
+    if (event.text) canvas.text(left + 2, row.top, ` ${event.text} `, "muted");
 }
 
 function drawMessage(

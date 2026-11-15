@@ -4,6 +4,9 @@ import type { Component } from "../tui";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils";
 import { Input } from "./input";
 
+/** Labels past this width stop pushing every value further right. */
+const MAX_LABEL_WIDTH = 36;
+
 export interface SettingItem {
     /** Unique identifier for this setting */
     id: string;
@@ -103,12 +106,10 @@ export class SettingsList implements Component {
 
     private renderMainList(width: number): string[] {
         const lines: string[] = [];
-
         if (this.searchEnabled && this.searchInput) {
             lines.push(...this.searchInput.render(width));
             lines.push("");
         }
-
         if (this.items.length === 0) {
             lines.push(this.theme.hint("  No settings available"));
             if (this.searchEnabled) {
@@ -116,67 +117,55 @@ export class SettingsList implements Component {
             }
             return lines;
         }
-
         const displayItems = this.searchEnabled ? this.filteredItems : this.items;
         if (displayItems.length === 0) {
             lines.push(truncateToWidth(this.theme.hint("  No matching settings"), width));
             this.addHintLine(lines, width);
             return lines;
         }
+        lines.push(...this.renderVisibleItems(displayItems, width));
+        lines.push(...this.renderSelectedDescription(displayItems, width));
+        this.addHintLine(lines, width);
+        return lines;
+    }
 
-        // Calculate visible range with scrolling
+    /** The window of rows around the selection, values aligned, plus "(n/m)" when it scrolls. */
+    private renderVisibleItems(displayItems: SettingItem[], width: number): string[] {
+        const lines: string[] = [];
         const startIndex = Math.max(
             0,
             Math.min(this.selectedIndex - Math.floor(this.maxVisible / 2), displayItems.length - this.maxVisible),
         );
         const endIndex = Math.min(startIndex + this.maxVisible, displayItems.length);
-
-        // Calculate max label width for alignment
-        const maxLabelWidth = Math.min(36, Math.max(...this.items.map((item) => visibleWidth(item.label))));
-
-        // Render visible items
+        const maxLabelWidth = Math.min(
+            MAX_LABEL_WIDTH,
+            Math.max(...this.items.map((item) => visibleWidth(item.label))),
+        );
         for (let i = startIndex; i < endIndex; i++) {
             const item = displayItems[i];
-            if (!item) continue;
-
-            const isSelected = i === this.selectedIndex;
-            const prefix = isSelected ? this.theme.cursor : "  ";
-            const prefixWidth = visibleWidth(prefix);
-
-            // Pad label to align values
-            const labelPadded = item.label + " ".repeat(Math.max(0, maxLabelWidth - visibleWidth(item.label)));
-            const labelText = this.theme.label(labelPadded, isSelected);
-
-            // Calculate space for value
-            const separator = "  ";
-            const usedWidth = prefixWidth + maxLabelWidth + visibleWidth(separator);
-            const valueMaxWidth = width - usedWidth - 2;
-
-            const valueText = this.theme.value(truncateToWidth(item.currentValue, valueMaxWidth, ""), isSelected);
-
-            lines.push(truncateToWidth(prefix + labelText + separator + valueText, width));
+            if (item) lines.push(this.renderItem(item, i === this.selectedIndex, maxLabelWidth, width));
         }
-
-        // Add scroll indicator if needed
         if (startIndex > 0 || endIndex < displayItems.length) {
             const scrollText = `  (${this.selectedIndex + 1}/${displayItems.length})`;
             lines.push(this.theme.hint(truncateToWidth(scrollText, width - 2, "")));
         }
-
-        // Add description for selected item
-        const selectedItem = displayItems[this.selectedIndex];
-        if (selectedItem?.description) {
-            lines.push("");
-            const wrappedDesc = wrapTextWithAnsi(selectedItem.description, width - 4);
-            for (const line of wrappedDesc) {
-                lines.push(this.theme.description(`  ${line}`));
-            }
-        }
-
-        // Add hint
-        this.addHintLine(lines, width);
-
         return lines;
+    }
+
+    private renderItem(item: SettingItem, isSelected: boolean, maxLabelWidth: number, width: number): string {
+        const prefix = isSelected ? this.theme.cursor : "  ";
+        const labelPadded = item.label + " ".repeat(Math.max(0, maxLabelWidth - visibleWidth(item.label)));
+        const labelText = this.theme.label(labelPadded, isSelected);
+        const separator = "  ";
+        const valueMaxWidth = width - (visibleWidth(prefix) + maxLabelWidth + visibleWidth(separator)) - 2;
+        const valueText = this.theme.value(truncateToWidth(item.currentValue, valueMaxWidth, ""), isSelected);
+        return truncateToWidth(prefix + labelText + separator + valueText, width);
+    }
+
+    private renderSelectedDescription(displayItems: SettingItem[], width: number): string[] {
+        const description = displayItems[this.selectedIndex]?.description;
+        if (!description) return [];
+        return ["", ...wrapTextWithAnsi(description, width - 4).map((line) => this.theme.description(`  ${line}`))];
     }
 
     handleInput(data: string): void {

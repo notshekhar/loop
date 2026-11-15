@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TUI } from "@notshekhar/loop-tui";
 
@@ -44,7 +44,16 @@ describe("who owns the mouse", () => {
     // the app or the input handler grabbing and releasing it underneath that:
     // a mode that takes the mouse on entry and gives it back on exit is a mode
     // whose text selection works or not depending on where the keyboard is.
-    const appSource = readFileSync(join(import.meta.dir, "..", "src", "interactive", "app.ts"), "utf8");
+    // The app is its orchestrator plus the startup steps in app/.
+    const appDir = join(import.meta.dir, "..", "src", "interactive", "app");
+    const appSource = [
+        join(appDir, "..", "app.ts"),
+        ...readdirSync(appDir)
+            .filter((f) => f.endsWith(".ts"))
+            .map((f) => join(appDir, f)),
+    ]
+        .map((f) => readFileSync(f, "utf8"))
+        .join("\n");
     const inputSource = readFileSync(join(import.meta.dir, "..", "src", "interactive", "input-handler.ts"), "utf8");
 
     test("neither the app nor the input handler toggles mouse reporting", () => {
@@ -89,7 +98,8 @@ describe("a frame that shrinks pulls its content back down", () => {
     });
 
     test("the fix lives in the renderer, so every selector gets it", () => {
-        expect(tuiSource).toContain("newLines.length < this.previousLines.length");
+        const check = tuiSource.slice(tuiSource.indexOf("private isShrinkingPastScreen("));
+        expect(check.slice(0, 300)).toContain("frame.lines.length < this.previousLines.length");
     });
 
     test("a rebuilt transcript tells the renderer, instead of being detected", () => {
@@ -111,9 +121,9 @@ describe("a frame that shrinks pulls its content back down", () => {
 
     test("and it does not reach for the scrollback-clearing redraw", () => {
         // The shrink branch hands off to the shared window repaint...
-        const shrink = tuiSource.slice(tuiSource.indexOf("newLines.length < this.previousLines.length"));
-        expect(shrink.slice(0, 400)).toContain("this.repaintVisibleWindow(");
-        expect(shrink.slice(0, 400)).not.toContain("fullRender(true)");
+        const shrink = tuiSource.slice(tuiSource.indexOf("this.isShrinkingPastScreen(frame)"));
+        expect(shrink.slice(0, 200)).toContain("this.repaintVisibleWindow(");
+        expect(shrink.slice(0, 200)).not.toContain("fullRender(");
         // ...and that repaint clears rows, never the screen or the scrollback.
         const repaint = tuiSource.slice(tuiSource.indexOf("private repaintVisibleWindow("));
         const body = repaint.slice(0, repaint.indexOf("\n    }"));

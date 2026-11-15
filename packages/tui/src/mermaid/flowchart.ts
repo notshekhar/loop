@@ -241,14 +241,38 @@ function wrapLabel(label: string, limit: number): string[] {
 
 export function layoutFlowchart(parsed: ParsedFlowchart, limit = Infinity): FlowchartLayout | undefined {
     const { direction } = parsed;
+    const nodes = createNodes(parsed, limit);
+    const hops = splitIntoHops(parsed.edges, nodes);
+    const byRank = arrangeRanks(nodes, hops);
+    const { bands, labelExtent } = sizeBands(byRank.length, nodes, hops, vertical(direction));
+    const crossExtent = Math.max(
+        Math.max(...[...nodes.values()].map((node) => node.cross + node.breadth)),
+        labelExtent,
+    );
+    const { bandFlow, flowExtent } = placeAlongFlow(byRank, bands);
+    // BT and RL are the same layout read from the far end.
+    if (reversed(direction)) {
+        for (const node of nodes.values()) node.flow = flowExtent - node.flow - node.depth;
+        for (let rank = 0; rank < bandFlow.length; rank++) {
+            bandFlow[rank] = flowExtent - bandFlow[rank]! - (bands[rank] ?? 0);
+        }
+    }
+    assignLaneFlows(hops, nodes, bandFlow);
+
+    const width = vertical(direction) ? crossExtent : flowExtent;
+    const height = vertical(direction) ? flowExtent : crossExtent;
+    if (width <= 0 || height <= 0) return undefined;
+    return { nodes: [...nodes.values()], hops, width, height, direction };
+}
+
+function createNodes(parsed: ParsedFlowchart, limit: number): Map<string, LayoutNode> {
     const ids = [...parsed.nodes.keys()];
     const ranks = assignRanks(ids, parsed.edges);
-
     const nodes = new Map<string, LayoutNode>();
     for (const id of ids) {
         const spec = parsed.nodes.get(id)!;
         const label = wrapLabel(spec.label, limit);
-        const { breadth, depth } = measure(label, spec.shape, direction);
+        const { breadth, depth } = measure(label, spec.shape, parsed.direction);
         nodes.set(id, {
             id,
             virtual: false,
@@ -262,13 +286,18 @@ export function layoutFlowchart(parsed: ParsedFlowchart, limit = Infinity): Flow
             flow: 0,
         });
     }
+    return nodes;
+}
 
-    // Split every edge into single-rank hops, inserting a virtual node for each
-    // rank crossed. Those placeholders reserve cross-axis space, which is what
-    // keeps a long edge from being drawn straight through an unrelated box.
+/**
+ * Split every edge into single-rank hops, inserting a virtual node for each
+ * rank crossed. Those placeholders reserve cross-axis space, which is what
+ * keeps a long edge from being drawn straight through an unrelated box.
+ */
+function splitIntoHops(edges: FlowEdge[], nodes: Map<string, LayoutNode>): Hop[] {
     const hops: Hop[] = [];
     let virtualCount = 0;
-    for (const edge of parsed.edges) {
+    for (const edge of edges) {
         const from = nodes.get(edge.from)!;
         const to = nodes.get(edge.to)!;
         // A self-loop has nowhere to go in a cell grid; the node still renders.
@@ -281,7 +310,7 @@ export function layoutFlowchart(parsed: ParsedFlowchart, limit = Infinity): Flow
         const step = to.rank >= from.rank ? 1 : -1;
         let previous = edge.from;
         for (let offset = 1; offset < span; offset++) {
-            const id = ` v${virtualCount++}`;
+            const id = ` v${virtualCount++}`;
             nodes.set(id, {
                 id,
                 virtual: true,
@@ -307,74 +336,93 @@ export function layoutFlowchart(parsed: ParsedFlowchart, limit = Infinity): Flow
         }
         hops.push({ from: previous, to: edge.to, edge, first: false, last: true, channel: 0 });
     }
+    return hops;
+}
 
+/** Nodes grouped by rank, ordered to cut crossings, and placed on the cross axis. */
+function arrangeRanks(nodes: Map<string, LayoutNode>, hops: Hop[]): LayoutNode[][] {
     const rankCount = Math.max(...[...nodes.values()].map((node) => node.rank)) + 1;
     const byRank: LayoutNode[][] = Array.from({ length: rankCount }, () => []);
     for (const node of nodes.values()) byRank[node.rank]!.push(node);
     const neighbours = neighboursOf(nodes, hops);
     orderRanks(byRank, neighbours);
     for (const rank of byRank) rank.sort((left, right) => left.order - right.order);
-
     placeCross(byRank, neighbours);
-    let crossExtent = Math.max(...[...nodes.values()].map((node) => node.cross + node.breadth));
+    return byRank;
+}
 
-    // Band sizing. A hop whose ends do not line up needs a lane to turn in, and
-    // two hops share a lane only when their spans do not overlap.
-    // Along the flow axis a label reads across the lanes, so in TD it needs its
-    // own lane and room beside the turn. Across it — LR — text cannot follow a
-    // vertical lane at all, so the label rides the approach to its target and
-    // the band has to be wide enough to hold it.
-    const alongFlow = vertical(direction);
+/** The rank a hop leaves from — the band it runs through. */
+const bandOf = (hop: Hop, nodes: Map<string, LayoutNode>) =>
+    Math.min(nodes.get(hop.from)!.rank, nodes.get(hop.to)!.rank);
+
+/**
+ * Band sizing. A hop whose ends do not line up needs a lane to turn in, and
+ * two hops share a lane only when their spans do not overlap.
+ * Along the flow axis a label reads across the lanes, so in TD it needs its
+ * own lane and room beside the turn. Across it — LR — text cannot follow a
+ * vertical lane at all, so the label rides the approach to its target and
+ * the band has to be wide enough to hold it.
+ *
+ * `labelExtent`: a label sitting beside a lane can reach past the widest box,
+ * and a two-node chart is narrower than its own edge label more often than not.
+ */
+function sizeBands(rankCount: number, nodes: Map<string, LayoutNode>, hops: Hop[], alongFlow: boolean) {
     const bands: number[] = [];
-    // A label sitting beside a lane can reach past the widest box, and a
-    // two-node chart is narrower than its own edge label more often than not.
     let labelExtent = 0;
     for (let rank = 0; rank < rankCount - 1; rank++) {
-        const crossing = hops.filter((hop) => Math.min(nodes.get(hop.from)!.rank, nodes.get(hop.to)!.rank) === rank);
-        const lanes: Array<Array<{ span: [number, number]; label: boolean }>> = [];
-        let labelSpace = 0;
-        for (const hop of crossing) {
-            const from = nodes.get(hop.from)!;
-            const to = nodes.get(hop.to)!;
-            const straight = centreOf(from) === centreOf(to);
-            hop.channel = straight ? -1 : 0;
-            if (hop.label) labelSpace = Math.max(labelSpace, visibleWidth(hop.label) + 2);
-            if (hop.label && alongFlow) {
-                const anchor = (straight ? centreOf(from) : Math.min(centreOf(from), centreOf(to))) + 1;
-                labelExtent = Math.max(labelExtent, anchor + visibleWidth(hop.label) + 2);
-            }
-            if (straight && !(hop.label && alongFlow)) continue;
-
-            const label = Boolean(hop.label) && alongFlow;
-            const text = label ? visibleWidth(hop.label!) + 2 : 0;
-            const span: [number, number] = straight
-                ? [centreOf(from), centreOf(from) + text]
-                : [Math.min(centreOf(from), centreOf(to)), Math.max(centreOf(from), centreOf(to)) + text];
-            // Two runs may share a lane when they do not overlap. Bare runs are
-            // allowed to touch, because where they meet is a node they both
-            // reach; a label needs the clearance to stay readable.
-            let lane = lanes.findIndex((taken) =>
-                taken.every((other) =>
-                    label || other.label
-                        ? span[1] < other.span[0] || span[0] > other.span[1]
-                        : span[1] <= other.span[0] || span[0] >= other.span[1],
-                ),
-            );
-            if (lane === -1) lane = lanes.push([]) - 1;
-            lanes[lane]!.push({ span, label });
-            if (label) hop.labelLane = lane;
-            if (!straight) hop.channel = lane;
-        }
+        const crossing = hops.filter((hop) => bandOf(hop, nodes) === rank);
+        const band = assignLanes(crossing, nodes, alongFlow);
+        labelExtent = Math.max(labelExtent, band.labelExtent);
         // A lead-in cell, the lanes, a lead-out cell, and — across the flow —
         // the run the label sits on.
-        bands.push(Math.max(2, 1 + lanes.length + 1 + (alongFlow ? 0 : labelSpace)));
+        bands.push(Math.max(2, 1 + band.laneCount + 1 + (alongFlow ? 0 : band.labelSpace)));
     }
+    return { bands, labelExtent };
+}
 
-    crossExtent = Math.max(crossExtent, labelExtent);
+/** Give each hop in one band a lane (or none when it runs straight), and measure its labels. */
+function assignLanes(crossing: Hop[], nodes: Map<string, LayoutNode>, alongFlow: boolean) {
+    const lanes: Array<Array<{ span: [number, number]; label: boolean }>> = [];
+    let labelSpace = 0;
+    let labelExtent = 0;
+    for (const hop of crossing) {
+        const from = centreOf(nodes.get(hop.from)!);
+        const to = centreOf(nodes.get(hop.to)!);
+        const straight = from === to;
+        hop.channel = straight ? -1 : 0;
+        if (hop.label) labelSpace = Math.max(labelSpace, visibleWidth(hop.label) + 2);
+        const label = Boolean(hop.label) && alongFlow;
+        if (label) {
+            const anchor = (straight ? from : Math.min(from, to)) + 1;
+            labelExtent = Math.max(labelExtent, anchor + visibleWidth(hop.label!) + 2);
+        }
+        if (straight && !label) continue;
 
+        const text = label ? visibleWidth(hop.label!) + 2 : 0;
+        const span: [number, number] = straight ? [from, from + text] : [Math.min(from, to), Math.max(from, to) + text];
+        // Two runs may share a lane when they do not overlap. Bare runs are
+        // allowed to touch, because where they meet is a node they both
+        // reach; a label needs the clearance to stay readable.
+        let lane = lanes.findIndex((taken) =>
+            taken.every((other) =>
+                label || other.label
+                    ? span[1] < other.span[0] || span[0] > other.span[1]
+                    : span[1] <= other.span[0] || span[0] >= other.span[1],
+            ),
+        );
+        if (lane === -1) lane = lanes.push([]) - 1;
+        lanes[lane]!.push({ span, label });
+        if (label) hop.labelLane = lane;
+        if (!straight) hop.channel = lane;
+    }
+    return { laneCount: lanes.length, labelSpace, labelExtent };
+}
+
+/** Each rank's position along the flow, and where the band after it starts. */
+function placeAlongFlow(byRank: LayoutNode[][], bands: number[]) {
     let flow = 0;
     const bandFlow: number[] = [];
-    for (let rank = 0; rank < rankCount; rank++) {
+    for (let rank = 0; rank < byRank.length; rank++) {
         const depth = Math.max(1, ...byRank[rank]!.map((node) => node.depth));
         for (const node of byRank[rank]!) {
             // A placeholder spans its whole rank, so the edge passing through
@@ -385,26 +433,15 @@ export function layoutFlowchart(parsed: ParsedFlowchart, limit = Infinity): Flow
         bandFlow.push(flow + depth);
         flow += depth + (bands[rank] ?? 0);
     }
-    const flowExtent = flow;
+    return { bandFlow, flowExtent: flow };
+}
 
-    // BT and RL are the same layout read from the far end.
-    if (reversed(direction)) {
-        for (const node of nodes.values()) node.flow = flowExtent - node.flow - node.depth;
-        for (let rank = 0; rank < bandFlow.length; rank++) {
-            bandFlow[rank] = flowExtent - bandFlow[rank]! - (bands[rank] ?? 0);
-        }
-    }
-
+function assignLaneFlows(hops: Hop[], nodes: Map<string, LayoutNode>, bandFlow: number[]): void {
     for (const hop of hops) {
-        const band = Math.min(nodes.get(hop.from)!.rank, nodes.get(hop.to)!.rank);
-        hop.laneFlow = hop.channel < 0 ? undefined : (bandFlow[band] ?? 0) + 1 + hop.channel;
-        hop.labelFlow = hop.labelLane === undefined ? undefined : (bandFlow[band] ?? 0) + 1 + hop.labelLane;
+        const start = (bandFlow[bandOf(hop, nodes)] ?? 0) + 1;
+        hop.laneFlow = hop.channel < 0 ? undefined : start + hop.channel;
+        hop.labelFlow = hop.labelLane === undefined ? undefined : start + hop.labelLane;
     }
-
-    const width = vertical(direction) ? crossExtent : flowExtent;
-    const height = vertical(direction) ? flowExtent : crossExtent;
-    if (width <= 0 || height <= 0) return undefined;
-    return { nodes: [...nodes.values()], hops, width, height, direction };
 }
 
 interface Point {

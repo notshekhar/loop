@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "bun:test";
-import { AltScreenSearchComponent, AltScreenSearchIndex, findAltScreenSearchMatches } from "../src/alt-screen-search";
+import { AltScreenSearchComponent } from "../src/alt-screen/search-bar";
+import { AltScreenSearchIndex, findAltScreenSearchMatches } from "../src/alt-screen/search-index";
 import { Text } from "../src/components/text";
 import { TuiAltScreen } from "../src/tui-alt-screen";
 import { stripTerminalSequences, visibleWidth } from "../src/utils";

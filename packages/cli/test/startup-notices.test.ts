@@ -68,7 +68,7 @@ describe("the block is emitted before the conversation, not after it", () => {
     // status lines UNDERNEATH the entire replayed conversation, because both
     // collectors are awaited and used to run after the replay. Nothing is
     // painted until tui.start(), so this is purely a matter of call order.
-    const app = readFileSync(join(import.meta.dir, "..", "src", "interactive", "app.ts"), "utf8");
+    const app = readFileSync(join(import.meta.dir, "..", "src", "interactive", "app", "launch.ts"), "utf8");
 
     test("startup banners are collected before the transcript is replayed", () => {
         const banners = app.indexOf("await showWorkspaceBanners(");

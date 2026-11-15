@@ -139,22 +139,84 @@ function unquote(value: string): string {
 }
 
 export function parseFlowchart(source: string): ParsedFlowchart | undefined {
-    const lines = source.split("\n");
-    let direction: Direction = "TD";
-    const nodes = new Map<string, { label: string; shape: NodeShape }>();
-    const edges: FlowEdge[] = [];
-    const groups: FlowGroup[] = [];
-    // Innermost first, so a node joins the group it sits closest inside.
-    const open: FlowGroup[] = [];
+    const chart = new FlowchartBuilder();
     let seenHeader = false;
+    for (const raw of source.split("\n")) {
+        const line = raw.replace(/%%.*$/, "").trim();
+        if (!line) continue;
+        if (!seenHeader) {
+            const header = /^(?:flowchart|graph)(?:\s+([A-Za-z]{2}))?\s*(.*)$/.exec(line);
+            if (!header) return undefined;
+            seenHeader = true;
+            if (header[1]) chart.direction = DIRECTIONS[header[1].toUpperCase()] ?? "TD";
+            if (!header[2]) continue;
+        }
+        chart.statement(line);
+    }
+    if (chart.nodes.size === 0) return undefined;
+    return { direction: chart.direction, nodes: chart.nodes, edges: chart.edges, groups: chart.groups };
+}
 
-    const note = (ref: NodeRef) => {
-        const group = open[open.length - 1];
+/** Links chained in one statement are capped, so a malformed line can't spin. */
+const MAX_CHAINED_LINKS = 64;
+
+class FlowchartBuilder {
+    direction: Direction = "TD";
+    readonly nodes = new Map<string, { label: string; shape: NodeShape }>();
+    readonly edges: FlowEdge[] = [];
+    readonly groups: FlowGroup[] = [];
+    /** Innermost last, so a node joins the group it sits closest inside. */
+    private readonly open: FlowGroup[] = [];
+
+    statement(line: string): void {
+        if (IGNORED.test(line)) return;
+        if (line === "end") {
+            this.open.pop();
+            return;
+        }
+        if (/^subgraph\b/.test(line)) {
+            this.openGroup(line);
+            return;
+        }
+        this.chain(line);
+    }
+
+    private openGroup(line: string): void {
+        const match = SUBGRAPH_PATTERN.exec(line);
+        const id = match?.[1] ?? `group${this.groups.length}`;
+        const title = match?.[2] ?? match?.[3];
+        const group: FlowGroup = { id, title: title === undefined ? id : unquote(title), members: [] };
+        this.groups.push(group);
+        this.open.push(group);
+    }
+
+    /** `A --> B --> C` keeps going from whichever node the last link landed on. */
+    private chain(line: string): void {
+        let from = parseNodeRef(line);
+        if (!from) return;
+        this.note(from);
+        let cursor = line.slice(from.length).trimStart();
+        let guard = 0;
+        while (cursor.length > 0 && guard++ < MAX_CHAINED_LINKS) {
+            const link = parseLink(cursor);
+            if (!link) break;
+            cursor = cursor.slice(link.length).trimStart();
+            const to = parseNodeRef(cursor);
+            if (!to) break;
+            this.note(to);
+            this.edges.push({ from: from.id, to: to.id, label: link.label, head: link.head, tail: link.tail });
+            cursor = cursor.slice(to.length).trimStart();
+            from = to;
+        }
+    }
+
+    private note(ref: NodeRef): void {
+        const group = this.open[this.open.length - 1];
         if (group && !group.members.includes(ref.id)) group.members.push(ref.id);
-        const existing = nodes.get(ref.id);
+        const existing = this.nodes.get(ref.id);
         const label = ref.label === undefined ? undefined : unquote(ref.label);
         if (!existing) {
-            nodes.set(ref.id, { label: label ?? ref.id, shape: ref.shape });
+            this.nodes.set(ref.id, { label: label ?? ref.id, shape: ref.shape });
             return;
         }
         // A later definition carrying a real label beats an earlier bare mention.
@@ -162,56 +224,5 @@ export function parseFlowchart(source: string): ParsedFlowchart | undefined {
             existing.label = label;
             existing.shape = ref.shape;
         }
-    };
-
-    for (const raw of lines) {
-        const line = raw.replace(/%%.*$/, "").trim();
-        if (!line) continue;
-
-        if (!seenHeader) {
-            const header = /^(?:flowchart|graph)(?:\s+([A-Za-z]{2}))?\s*(.*)$/.exec(line);
-            if (!header) return undefined;
-            seenHeader = true;
-            if (header[1]) direction = DIRECTIONS[header[1].toUpperCase()] ?? "TD";
-            if (!header[2]) continue;
-        }
-
-        if (IGNORED.test(line)) continue;
-        if (line === "end") {
-            open.pop();
-            continue;
-        }
-        if (/^subgraph\b/.test(line)) {
-            const match = SUBGRAPH_PATTERN.exec(line);
-            const id = match?.[1] ?? `group${groups.length}`;
-            const title = match?.[2] ?? match?.[3];
-            const group: FlowGroup = { id, title: title === undefined ? id : unquote(title), members: [] };
-            groups.push(group);
-            open.push(group);
-            continue;
-        }
-
-        let cursor = line;
-        let from = parseNodeRef(cursor);
-        if (!from) continue;
-        note(from);
-        cursor = cursor.slice(from.length).trimStart();
-
-        // `A --> B --> C` keeps going from whichever node the last link landed on.
-        let guard = 0;
-        while (cursor.length > 0 && guard++ < 64) {
-            const link = parseLink(cursor);
-            if (!link) break;
-            cursor = cursor.slice(link.length).trimStart();
-            const to = parseNodeRef(cursor);
-            if (!to) break;
-            note(to);
-            edges.push({ from: from.id, to: to.id, label: link.label, head: link.head, tail: link.tail });
-            cursor = cursor.slice(to.length).trimStart();
-            from = to;
-        }
     }
-
-    if (nodes.size === 0) return undefined;
-    return { direction, nodes, edges, groups };
 }
