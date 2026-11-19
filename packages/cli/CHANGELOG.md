@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.21.43] - 2026-11-20
+
+### Fixed
+
+- **Desktop updates install again.** "Restart to update" sat for minutes and could leave `Loop.app.old` behind: deleting the old install went through Electron's archive-aware file layer, which walked into `app.asar` and failed on every entry. Installs are now moved and removed with the plain file system (78s → 1ms), and the ~170MB download is cleaned up after the swap. Apps on 0.21.42 or older still carry the old updater, so update them once with `loop install desktop`.
+- **The desktop installer no longer stalls on an unreachable GitHub address.** `install-desktop.sh` and `loop install desktop` give up on a dead address after 10s and try the next one, instead of waiting 75s per request (164s → 24s), and the installer shows the same progress bar as `install.sh`.
+
+### Changed
+
+- **The desktop app's main process and several web components are split into small files by job** (window, IPC bridges, browser panel; connections settings, git actions, branch selector, diff panel, model picker, composer drafts). No behaviour change.
+
 ## [0.21.42] - 2026-11-15
 
 ### Fixed
