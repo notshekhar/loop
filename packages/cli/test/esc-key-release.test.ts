@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { setKittyProtocolActive } from "@notshekhar/loop-tui";
 import { createInputHandler } from "../src/interactive/input-handler";
 
@@ -36,6 +36,11 @@ function makeHarness() {
 }
 
 describe("Esc interrupt fires on press, not on key-release", () => {
+    // The protocol flag is process-global and CI runs every package's tests in
+    // one process: left on, it made legacy Alt sequences (`\x1by`) stop
+    // matching in whichever editor test file happened to run next.
+    afterEach(() => setKittyProtocolActive(false));
+
     test("press aborts the turn; release is ignored", () => {
         setKittyProtocolActive(true);
         const { handler, state } = makeHarness();
