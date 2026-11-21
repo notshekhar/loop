@@ -1,0 +1,15 @@
+mod ask_panel;
+pub mod composer;
+pub mod controls;
+mod conversation;
+mod effort;
+pub mod format;
+mod header;
+pub mod icon;
+mod model_picker;
+mod rail;
+mod ring;
+mod sidebar;
+pub mod terminal;
+pub mod text_input;
+pub mod workspace;

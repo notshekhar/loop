@@ -1,0 +1,29 @@
+[package]
+name = "loop-gpui"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+description = "loop's desktop app on GPUI, Zed's UI framework"
+
+[[bin]]
+name = "loop-gpui"
+path = "src/main.rs"
+
+# GPL-3.0-or-later because code is copied from Zed's GPL crates (see
+# LICENSE); gpui, gpui_platform and alacritty_terminal are Apache-2.0.
+# Pinned to one Zed commit: gpui's API moves weekly.
+[dependencies]
+gpui = { git = "https://github.com/zed-industries/zed", rev = "0cc1ffb6b324165ec173a016c5548520c1eeb7ec" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "0cc1ffb6b324165ec173a016c5548520c1eeb7ec", default-features = false, features = ["font-kit"] }
+alacritty_terminal = "0.26"
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+pulldown-cmark = { version = "0.13", default-features = false }
+unicode-segmentation = "1"
+
+[dev-dependencies]
+gpui = { git = "https://github.com/zed-industries/zed", rev = "0cc1ffb6b324165ec173a016c5548520c1eeb7ec", features = ["test-support"] }
