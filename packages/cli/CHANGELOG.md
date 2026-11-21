@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.45] - 2026-11-21
+
+### Fixed
+
+- **`loop run` exits as soon as the reply is printed.** Every one-shot run (and every scheduled goal run) used to sit for 3 more seconds after its output: the timer that caps how long SessionEnd hooks may take was never cleared, and it kept the process alive even when the hooks finished at once. A trivial `loop run` now takes ~110 ms end to end instead of ~3.2 s, which adds up fast in scripts and loops.
+- **A fresh install draws its first screen without waiting on the agent CLIs.** With no model selected, loop checks which providers are usable, and that means running the Claude Code, Cursor, Codex and Antigravity CLIs. That used to hold the very first frame for 0.5–1.5 s. The screen now appears at once, and the "No model selected" hint lands in the startup block when the checks answer.
+
 ## [0.21.44] - 2026-11-21
 
 ### Changed
