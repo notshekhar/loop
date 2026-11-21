@@ -140,6 +140,41 @@ async function testBoot(): Promise<void> {
     });
 }
 
+/**
+ * A fresh install has no model and no probe cache, so finding out which
+ * providers are usable means running every agent CLI. The first screen must
+ * not wait for that: here each CLI hangs for 4s, and the prompt block has to
+ * be drawn long before, with the no-model hint arriving once they answer.
+ */
+async function testFreshInstallDrawsBeforeProbes(): Promise<void> {
+    const bin = mkdtempSync(join(tmpdir(), "loop-slow-cli-"));
+    const slowCli = join(bin, "slow-cli");
+    writeFileSync(slowCli, "#!/bin/sh\nsleep 4\n", { mode: 0o755 });
+    const envExtra = Object.fromEntries(
+        ["LOOP_CLAUDE_CODE_BIN", "LOOP_CURSOR_AGENT_BIN", "LOOP_CODEX_BIN", "LOOP_ANTIGRAVITY_BIN"].map((name) => [name, slowCli]),
+    );
+    try {
+        await withSession({ settings: NOIR, envExtra }, async (s) => {
+            await s.pump(2);
+            const early = s.screenRows();
+            check(
+                early.some((r) => r.trim().startsWith("─")),
+                "the prompt block is drawn while the agent CLIs are still running",
+                early,
+            );
+            await s.pump(6);
+            const rows = s.screenRows();
+            check(
+                rows.some((r) => r.includes("No model selected")),
+                "the no-model hint arrives once they answer",
+                rows,
+            );
+        });
+    } finally {
+        rmSync(bin, { recursive: true, force: true });
+    }
+}
+
 /** The masthead's model row follows a model switched after it is on screen. */
 async function testBannerFollowsModel(): Promise<void> {
     const provider = { name: "fake", sdk: "anthropic", baseURL: "http://127.0.0.1:1", apiKey: "k" };
@@ -1720,6 +1755,7 @@ const SCENARIOS: Record<string, () => Promise<void>> = {
     handoff: testHandoff,
     recipes: testRecipes,
     boot: testBoot,
+    "fresh-install": testFreshInstallDrawsBeforeProbes,
     growth: testNoDuplicatesWhileGrowing,
     completion: testCompletionListCostsNothing,
     selector: testSelectorCostsNothing,

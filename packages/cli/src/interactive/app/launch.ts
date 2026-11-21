@@ -59,18 +59,21 @@ function refreshCatalogThenStatusLine(core: AppCore): void {
  * The startup block (workspace context, skills, extensions, the no-model
  * hint) goes in BEFORE the transcript, not after it.
  *
- * Both awaits used to run after the replay, which put the header's own
- * status lines underneath the entire resumed conversation — `loop --session
- * <id>` opened on a screen whose last lines were "workspace context: none"
- * and "extensions: …" instead of the end of the chat. Nothing is painted
- * until the screen starts, so paying for these two awaits here costs the
- * first frame nothing.
+ * The workspace banners used to run after the replay, which put the header's
+ * own status lines underneath the entire resumed conversation — `loop
+ * --session <id>` opened on a screen whose last lines were "workspace context:
+ * none" and "extensions: …" instead of the end of the chat.
+ *
+ * The no-model hint is not awaited: finding out which providers are usable
+ * probes the Claude Code, Cursor, Codex and Antigravity CLIs, and on a fresh
+ * install (no probe cache, and no model by definition) that held the very
+ * first frame for 0.5–1.5s. It lands in the startup block when it is ready.
  */
 export async function showStartupBlock(core: AppCore, deps: AppDeps, initialSession: Session | null): Promise<void> {
     const { history, state } = core;
     showWelcomeBanner(history, state, deps);
     await showWorkspaceBanners(history, state.cwd);
-    if (!state.modelId) await showNoModelGuidance(core);
+    if (!state.modelId) void showNoModelGuidance(core).catch(() => {});
     // A session opened via --session replays its transcript like /resume does
     // — reopening a conversation without its history looked like data loss.
     // After the banner and its status block: the conversation goes below both.
@@ -85,10 +88,12 @@ export async function showStartupBlock(core: AppCore, deps: AppDeps, initialSess
  */
 async function showNoModelGuidance(core: AppCore): Promise<void> {
     const providers = await listUsableProviders();
+    // The probes can outlast the user: a model picked meanwhile makes the hint wrong.
+    if (core.state.modelId) return;
     if (providers.length === 0) {
-        core.history.addSystem(warn("No model selected and no provider available. Run /login to get started."));
+        core.history.addStartupLine(warn("No model selected and no provider available. Run /login to get started."));
     } else {
-        core.history.addSystem(
+        core.history.addStartupLine(
             warn(`No model selected. Run /provider to pick one (${providers.join(", ")}), or /login to add another.`),
         );
     }

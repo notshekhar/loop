@@ -673,3 +673,30 @@ export async function runHooks(
         return outcome;
     }
 }
+
+/** How long a run that ends on its own waits for SessionEnd hooks before finishing regardless. */
+export const SESSION_END_GRACE_MS = 3_000;
+
+/**
+ * SessionEnd for a run that ends by draining the event loop rather than
+ * `process.exit` (`loop run`, goal runs): give the hooks up to
+ * SESSION_END_GRACE_MS, then move on. The grace timer is cleared the moment
+ * the hooks settle — left running, it held every one of those processes open
+ * the full three seconds after its output was already done.
+ */
+export async function runSessionEndHooks(session: { id: string; path: string }, cwd: string): Promise<void> {
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    try {
+        await Promise.race([
+            runHooks(
+                "SessionEnd",
+                undefined,
+                { session_id: session.id, transcript_path: session.path, reason: "exit" },
+                cwd,
+            ),
+            new Promise((resolve) => (grace = setTimeout(resolve, SESSION_END_GRACE_MS))),
+        ]);
+    } finally {
+        clearTimeout(grace);
+    }
+}

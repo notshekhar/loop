@@ -6,6 +6,7 @@ import {
     SessionManager,
     runTurn,
     runHooks,
+    runSessionEndHooks,
     getActiveProvider,
     getMcpManager,
     getExtensionHost,
@@ -142,16 +143,7 @@ export async function runPrint(opts: PrintOptions): Promise<void> {
     if (mcpEnabled) await getMcpManager().close();
     await getExtensionHost().close();
 
-    // SessionEnd hooks: give them a moment, then finish regardless.
-    await Promise.race([
-        runHooks(
-            "SessionEnd",
-            undefined,
-            { session_id: session.id, transcript_path: session.path, reason: "exit" },
-            cwd,
-        ),
-        new Promise((r) => setTimeout(r, 3_000)),
-    ]);
+    await runSessionEndHooks(session, cwd);
 
     reporter.end({
         ok: !reporter.errored,

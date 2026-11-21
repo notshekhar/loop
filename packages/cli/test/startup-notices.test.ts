@@ -78,10 +78,16 @@ describe("the block is emitted before the conversation, not after it", () => {
         expect(banners).toBeLessThan(replay);
     });
 
-    test("so is the no-model guidance", () => {
-        const guidance = app.indexOf("await showNoModelGuidance(");
+    test("so is the no-model guidance, which lands in the startup block whenever it arrives", () => {
+        // Not awaited (it waits on the agent-CLI probes), so order alone can't
+        // place it: writing into the startup block is what keeps it above a
+        // replayed conversation.
+        const guidance = app.indexOf("showNoModelGuidance(core)");
         const replay = app.indexOf("renderSessionBranch(initialSession");
         expect(guidance).toBeGreaterThan(-1);
         expect(guidance).toBeLessThan(replay);
+        const body = app.slice(app.indexOf("async function showNoModelGuidance"));
+        expect(body).toContain("history.addStartupLine(");
+        expect(body.slice(0, body.indexOf("\n}\n"))).not.toContain("history.addSystem(");
     });
 });

@@ -79,6 +79,7 @@ export { loadProjectSkills, type Skill } from "./skills";
 export { generateSessionTitle, cleanTitle } from "./session-title";
 export {
     runHooks,
+    runSessionEndHooks,
     loadHooksConfig,
     hookBus,
     listHooksWithSources,

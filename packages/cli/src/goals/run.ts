@@ -13,6 +13,7 @@ import {
     SessionManager,
     runTurn,
     runHooks,
+    runSessionEndHooks,
     getActiveProvider,
     getExtensionHost,
     getMcpManager,
@@ -122,15 +123,7 @@ export async function runGoal(goal: Goal): Promise<GoalRunResult> {
 
     if (mcpEnabled) await getMcpManager().close();
     await getExtensionHost().close();
-    await Promise.race([
-        runHooks(
-            "SessionEnd",
-            undefined,
-            { session_id: session.id, transcript_path: session.path, reason: "exit" },
-            goal.cwd,
-        ),
-        new Promise((r) => setTimeout(r, 3_000)),
-    ]);
+    await runSessionEndHooks(session, goal.cwd);
 
     // A recovered mid-turn error (event fired, turn still finished) keeps
     // status ok and reports the final response; only a thrown turn is a
