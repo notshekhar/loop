@@ -83,6 +83,9 @@ const result = await Bun.build({
     entrypoints: [join(import.meta.dir, "src/cli.ts")],
     compile: { target: compileTarget as Bun.Build.CompileTarget, outfile: binPath },
     minify: true,
+    // Precompiled bytecode skips parsing the bundle at launch: the first frame
+    // drops from ~200ms to ~100ms, for ~8MB more download (45MB → 53MB gzipped).
+    bytecode: true,
     define: {
         __APP_VERSION__: JSON.stringify(pkg.version),
         __APP_CHANGELOG__: JSON.stringify(changelog),

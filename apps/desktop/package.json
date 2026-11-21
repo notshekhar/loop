@@ -9,7 +9,7 @@
     "start": "bun build.ts && electron .",
     "//dev": "Rebuilds the renderer first. `start` only bundles main/preload and COPIES apps/web/dist, so on its own it launches whatever renderer was built last — and the root `bun run build` does not cover apps/web (it builds packages/web, a different package).",
     "dev": "bun run --filter @loop/web build && bun build.ts && electron .",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "bun check",
     "test": "bun test"
   },
   "dependencies": {
@@ -21,7 +21,6 @@
     "@electron/packager": "^20.2.0",
     "@types/bun": "latest",
     "@types/node": "^26.1.1",
-    "@typescript/native-preview": "catalog:",
     "typescript": "~6.0.3"
   }
 }

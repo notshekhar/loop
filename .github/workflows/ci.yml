@@ -18,11 +18,13 @@ jobs:
             - uses: actions/checkout@v4
             - uses: oven-sh/setup-bun@v2
               with:
-                  bun-version: 1.4.2
+                  bun-version: 1.4.5
             - uses: actions/setup-node@v4
               with:
                   node-version: 22
             - run: bun install --frozen-lockfile
+            # Bundlers only transpile, so this is the one step that sees type errors.
+            - run: bun run typecheck
             # Scoped on purpose. A bare `bun test` walks the whole workspace and
             # picks up apps/web's suite, which is written for vitest — under bun
             # it throws on `vi.waitFor` / `vite-plus/test` and then never exits,

@@ -25,7 +25,7 @@
     "profile:android:hermes": "mkdir -p profiles/review && react-native profile-hermes profiles/review",
     "sync:pierre-icons": "node modules/t3-markdown-text/scripts/sync-pierre-file-icons.mjs",
     "test": "vp test run",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "bun check",
     "web:preview": "LOOP_MOBILE_WEB=1 APP_VARIANT=development expo start --web --port 8099",
     "ios:sim": "bash scripts/ios-sim.sh"
   },

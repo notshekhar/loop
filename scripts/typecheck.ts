@@ -8,54 +8,55 @@
  *
  *   bun run typecheck
  *
- * The two app packages are on tsgo (TypeScript 7's native binary, far faster on
- * a tree that size) and the library packages on plain tsc; the split is only
- * about which binary each package already has installed.
+ * Uses `bun check` (Bun's built-in checker, TypeScript 7 semantics, every core)
+ * rather than tsc/tsgo: the whole repo checks in about a second instead of
+ * fifteen, and no TypeScript compiler has to be installed for it.
  */
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
 
-type Target = { readonly label: string; readonly cwd: string; readonly bin: "tsc" | "tsgo"; readonly project?: string };
+type Target = { readonly label: string; readonly project: string };
 
 const TARGETS: readonly Target[] = [
-    { label: "packages/core", cwd: ROOT, bin: "tsc", project: "packages/core/tsconfig.json" },
-    { label: "packages/tui", cwd: ROOT, bin: "tsc", project: "packages/tui/tsconfig.json" },
-    { label: "packages/cli", cwd: ROOT, bin: "tsc", project: "packages/cli/tsconfig.json" },
-    { label: "packages/sandbox", cwd: ROOT, bin: "tsc", project: "packages/sandbox/tsconfig.json" },
+    { label: "packages/core", project: "packages/core" },
+    { label: "packages/tui", project: "packages/tui" },
+    { label: "packages/cli", project: "packages/cli" },
+    { label: "packages/sandbox", project: "packages/sandbox" },
     // The build scripts sit outside every package's `include`, so nothing was
     // reading them — which is how `import { $ } from "bun"` went missing from
     // build-bin.ts and only the release workflow found out, on the tag.
-    { label: "build scripts", cwd: ROOT, bin: "tsc", project: "tsconfig.build-scripts.json" },
-    { label: "apps/web", cwd: join(ROOT, "apps/web"), bin: "tsgo" },
-    { label: "apps/desktop", cwd: join(ROOT, "apps/desktop"), bin: "tsgo" },
+    { label: "build scripts", project: "tsconfig.build-scripts.json" },
+    { label: "apps/web", project: "apps/web" },
+    { label: "apps/desktop", project: "apps/desktop" },
     // Also typechecks the apps/web client code it runs on the phone, through
     // the same @loop/* aliases — a change there that breaks mobile fails here.
-    { label: "apps/mobile", cwd: join(ROOT, "apps/mobile"), bin: "tsc" },
+    { label: "apps/mobile", project: "apps/mobile" },
 ];
+
+/** Check one target, returning its diagnostics when it fails. */
+function check(target: Target): string | undefined {
+    const result = spawnSync(process.execPath, ["check", "--no-pretty", "-p", target.project], {
+        cwd: ROOT,
+        encoding: "utf8",
+    });
+    if (result.status === 0) return undefined;
+    return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() || `bun check exited ${result.status}`;
+}
 
 const failed: string[] = [];
 
 for (const target of TARGETS) {
-    const args = ["--noEmit", ...(target.project ? ["-p", target.project] : [])];
     process.stdout.write(`${target.label} … `);
-    const result = spawnSync(join(target.cwd, "node_modules/.bin", target.bin), args, {
-        cwd: target.cwd,
-        encoding: "utf8",
-        // A parent NODE_OPTIONS with a --require of a file that no longer exists
-        // (some editors and terminal wrappers leave one behind) makes node die
-        // before the compiler starts. Nothing here needs the parent's options.
-        env: { ...process.env, NODE_OPTIONS: "" },
-    });
-    if (result.status === 0) {
+    const errors = check(target);
+    if (errors === undefined) {
         process.stdout.write("ok\n");
         continue;
     }
     process.stdout.write("FAILED\n");
     failed.push(target.label);
-    const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-    if (output) console.error(`${output}\n`);
+    console.error(`${errors}\n`);
 }
 
 if (failed.length > 0) {

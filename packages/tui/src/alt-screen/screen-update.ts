@@ -7,6 +7,7 @@ import {
     isImageLine,
 } from "../terminal-image";
 import type { KittyImageCache } from "./kitty-cache";
+import { findScrollShift, type ScrollShift, scrollShiftSequence, shiftedScreen } from "./scroll-shift";
 import { HIDE_CURSOR, isWezTerm, SHOW_CURSOR } from "./terminal-modes";
 
 const CLEAR_SCREEN = "\x1b[2J";
@@ -30,9 +31,10 @@ export function deleteAllImagesFor(protocol: ImageProtocol): string {
 }
 
 /**
- * The bytes that turn the previous screen into this one: rewrite only the
- * rows that changed, unless the size changed (redraw everything) or an image
- * is involved (images can't be patched row by row).
+ * The bytes that turn the previous screen into this one: scroll rows that only
+ * moved, then rewrite only the rows still wrong, unless the size changed
+ * (redraw everything) or an image is involved (images can't be patched row by
+ * row).
  */
 export function buildScreenUpdate(input: ScreenUpdateInput): { output: string; fullRedraw: boolean } {
     const { screen, previousScreen, width, height, imageProtocol } = input;
@@ -60,8 +62,12 @@ export function buildScreenUpdate(input: ScreenUpdateInput): { output: string; f
     }
     output += prepared.evictedImageDeletion;
 
+    const shift = redrawImages ? undefined : textScrollShift(previousScreen, screen);
+    const baseline = shift ? shiftedScreen(previousScreen, shift) : previousScreen;
+    if (shift) output += scrollShiftSequence(shift);
+
     const rowsToWrite = Array.from({ length: height }, (_, row) => row).filter(
-        (row) => redrawImages || screen[row] !== previousScreen[row],
+        (row) => redrawImages || screen[row] !== baseline[row],
     );
     // WezTerm erases intersecting Kitty image cells when a later row write touches a covered row.
     // Draw image placements after every clear and text write so nothing later intersects them; preserve
@@ -91,6 +97,12 @@ function imagesNeedRedrawing(input: ScreenUpdateInput, changedRows: boolean[]): 
         }
         return false;
     });
+}
+
+/** A scroll for text-only frames. Images are left alone: a scroll would carry their placements to rows they weren't drawn for. */
+function textScrollShift(previousScreen: readonly string[], screen: readonly string[]): ScrollShift | undefined {
+    if (screen.some(isImageLine) || previousScreen.some(isImageLine)) return undefined;
+    return findScrollShift(previousScreen, screen);
 }
 
 function moveTo(row: number): string {
