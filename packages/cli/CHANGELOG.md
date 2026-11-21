@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.21.44] - 2026-11-21
+
+### Changed
+
+- **Streaming replies scroll instead of repainting the screen.** When a reply grows by a line, every row above it moves up, and loop used to rewrite all of them. It now asks the terminal to scroll those rows and writes only the new ones. The same goes for scrolling back with the wheel. A long streamed reply writes 63% fewer bytes (130 KB → 48 KB), which you'll notice most over SSH, in tmux and in slower terminals. Screens with images keep the old path.
+- **loop opens about twice as fast.** Release binaries now ship precompiled bytecode, so the JavaScript isn't parsed at launch: the first screen appears in ~100 ms instead of ~200 ms, and `loop --version` takes 145 ms instead of 209 ms. Downloads are ~8 MB bigger (45 MB → 53 MB compressed).
+- **Built with Bun 1.4.5**, which brings its TLS, fetch, DNS and HTTP security fixes into the binaries.
+
+### Development
+
+- **The typecheck runs on `bun check`** (Bun's built-in TypeScript 7 checker) instead of tsc and tsgo: the whole repo checks in 1.4 s instead of 15.5 s, and the TypeScript 7 preview packages are gone. CI now runs the typecheck on every push. Before this it only ran the tests.
+
 ## [0.21.43] - 2026-11-20
 
 ### Fixed
