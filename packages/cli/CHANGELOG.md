@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.46] - 2026-11-22
+
+### Added
+
+- **Code Mode** (`/settings` → code mode, or `"codeMode": true`; off by default). The agent gets one `code` tool and writes a JavaScript script that calls its other tools — `await tools.read({ path })`, `await tools.bash({ command })`, MCP tools too — running independent calls together, feeding one result into the next, and returning only what it needs to read. Scripts run in a QuickJS sandbox (WebAssembly, its own worker thread) with no file system, network or `process` of their own, and stop on Esc or after 10 minutes. Every call a script makes goes through the same deny rules, permission prompts, plan mode and hooks as a direct call, and shows as its own row: a run reads `Ran 1 script, Read 1 file, Edited 1 file`, and opening the script row shows the highlighted JavaScript. Reopened sessions draw the same rows, in the terminal and the desktop app. `ask`, `task`, `todo`, `skill`, plan mode and the team tools stay direct. The sandbox is pi-mono's `pi-codemode`.
+- **`/refresh`** reloads the session from the database when another terminal added turns to it, and says how many it loaded. Sending a message in a session that changed elsewhere now warns you first, since that message would branch off before the other terminal's turns.
+
 ## [0.21.45] - 2026-11-21
 
 ### Fixed

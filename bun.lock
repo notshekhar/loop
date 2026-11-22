@@ -12,7 +12,7 @@
     },
     "apps/desktop": {
       "name": "@loop/desktop",
-      "version": "0.0.55",
+      "version": "0.0.56",
       "dependencies": {
         "@notshekhar/loop-core": "workspace:*",
         "electron": "40.10.6",
@@ -180,7 +180,7 @@
     },
     "packages/cli": {
       "name": "@notshekhar/loop",
-      "version": "0.21.45",
+      "version": "0.21.46",
       "bin": {
         "loop": "./dist/cli.js",
         "lp": "./dist/cli.js",
@@ -200,7 +200,7 @@
     },
     "packages/core": {
       "name": "@notshekhar/loop-core",
-      "version": "0.21.45",
+      "version": "0.21.46",
       "dependencies": {
         "@ai-sdk/amazon-bedrock": "^5.0.72",
         "@ai-sdk/anthropic": "^4.0.48",
@@ -249,7 +249,7 @@
     },
     "packages/tui": {
       "name": "@notshekhar/loop-tui",
-      "version": "0.21.45",
+      "version": "0.21.46",
       "dependencies": {
         "get-east-asian-width": "^1.6.0",
         "marked": "^18.0.5",
