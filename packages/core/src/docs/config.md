@@ -53,6 +53,17 @@ Other notable keys (all managed via `/settings` too):
   runs (`○` to do, `◌` in progress, `✓` done, `·` cancelled) and retired into the scrollback
   as a one-line summary when the turn ends. Lists persist with the session
   (`/resume`, `/fork`, `/tree` restore them). Default off.
+- `"codeMode": true` — Code Mode. Default off. The agent gets one `code`
+  tool instead of read/write/edit/bash/grep/find/ls/sql/websearch/MCP and
+  writes JavaScript that calls them (`await tools.read({ path })`): several
+  at once, one result feeding the next, big output filtered before it is
+  read. Scripts run in a QuickJS sandbox (WebAssembly, its own worker thread)
+  with no file system, network, `process` or timers — calling the tools is the
+  only thing a script can do — and stop after 10 minutes or on Esc. Every call
+  goes through the same deny rules, permission prompts, plan mode and hooks as
+  a direct call, and is shown as its own row; the script itself sits in a
+  folded Code row. `ask`, `todo`, `task`, `skill`, the plan-mode and the team
+  tools stay direct. Not used with native agents (Claude Code, Cursor).
 - `"backgroundShells": true` — enables background shells. Default **off**, so
   out of the box nothing the agent runs can outlive its own tool call: the
   `shells` tool is not offered, `run_in_background` is refused, and a command

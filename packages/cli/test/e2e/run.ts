@@ -21,7 +21,7 @@
  *
  * Run: bun packages/cli/test/e2e/run.ts [name ...]
  */
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { Database } from "bun:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -986,6 +986,35 @@ async function testMcpPanel(): Promise<void> {
 
 
 /** A reply the fixture model streams back, in Anthropic's event stream. */
+/** The fixture's reply when it calls a tool: one tool_use block, its input streamed as JSON. */
+function streamedToolCall(id: string, name: string, input: unknown): Response {
+    const sse = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    const message = { id: "msg_tool", type: "message", role: "assistant", model: "fixture", content: [] };
+    const body =
+        sse("message_start", {
+            type: "message_start",
+            message: { ...message, stop_reason: null, stop_sequence: null, usage: { input_tokens: 20, output_tokens: 0 } },
+        }) +
+        sse("content_block_start", {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "tool_use", id, name, input: {} },
+        }) +
+        sse("content_block_delta", {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "input_json_delta", partial_json: JSON.stringify(input) },
+        }) +
+        sse("content_block_stop", { type: "content_block_stop", index: 0 }) +
+        sse("message_delta", {
+            type: "message_delta",
+            delta: { stop_reason: "tool_use", stop_sequence: null },
+            usage: { output_tokens: 15 },
+        }) +
+        sse("message_stop", { type: "message_stop" });
+    return new Response(body, { headers: { "content-type": "text/event-stream" } });
+}
+
 function streamedReply(text: string, inputTokens = 20): Response {
     const sse = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     const body =
@@ -1651,6 +1680,143 @@ async function testResumePaging(): Promise<void> {
 }
 
 /**
+ * Code Mode: the model is offered `code` instead of the file tools, its script
+ * calls them for real — two at once — and each call is drawn as its own row,
+ * live and again when the session is reopened.
+ */
+async function testCodeMode(): Promise<void> {
+    const SCRIPT = [
+        "const [notes, listing] = await Promise.all([",
+        '    tools.read({ path: "notes.txt" }),',
+        '    tools.bash({ command: "ls" }),',
+        "]);",
+        'await tools.write({ path: "out.txt", content: notes.toUpperCase() });',
+        'return { lines: notes.split("\\n").length, sawNotes: listing.includes("notes.txt") };',
+    ].join("\n");
+    const requests: { tools: string[]; messages: string }[] = [];
+    const server = Bun.serve({
+        port: 0,
+        idleTimeout: 30,
+        fetch: async (req) => {
+            const body = (await req.json().catch(() => ({}))) as { tools?: { name: string }[]; messages?: unknown };
+            const tools = (body.tools ?? []).map((t) => t.name);
+            const messages = JSON.stringify(body.messages ?? []);
+            // Side calls (the session title) carry no tools and are not the turn.
+            if (tools.length === 0) return streamedReply("Tidy notes");
+            requests.push({ tools, messages });
+            // First the script; once its result is back, the answer.
+            return messages.includes("tool_result")
+                ? streamedReply("CODE-MODE-DONE.")
+                : streamedToolCall("toolu_code_1", "code", { code: SCRIPT });
+        },
+    });
+    const settings = JSON.stringify({ theme: "night", defaultModel: "custom:fixture/fixture", codeMode: true });
+    try {
+        await withFixtureSession(
+            server.port,
+            async (s) => {
+                writeFileSync(join(s.project, "notes.txt"), "alpha\nbeta\n");
+                const screen = () => s.screenRows().join("\n");
+                await s.pump(7);
+                await s.send("tidy the notes\r", 6.0);
+                check(screen().includes("CODE-MODE-DONE."), "the turn finished", s.screenRows());
+
+                const offered = requests[0]?.tools ?? [];
+                check(offered.includes("code"), "the model is offered code", offered);
+                check(!offered.includes("read") && !offered.includes("bash"), "and not the tools it folds", offered);
+                check(
+                    existsSync(join(s.project, "out.txt")) && readFileSync(join(s.project, "out.txt"), "utf8") === "ALPHA\nBETA\n",
+                    "the script's write really happened",
+                );
+                const result = requests[1]?.messages ?? "";
+                check(result.includes("Script completed (3 tool calls)."), "the model reads the script's result", result.slice(-600));
+                check(result.includes("sawNotes") && !result.includes("ALPHA"), "only what the script returned, not each call's output", result.slice(-600));
+
+                const live = screen();
+                check(/Ran 1 script/.test(live), "the code call folds as a script", s.screenRows());
+                check(/Read 1 file/.test(live) && /Ran 1 command/.test(live), "and its calls as their own rows", s.screenRows());
+
+                const db = new Database(join(s.home, ".loop", "agent.db"), { readonly: true });
+                const row = db.query<{ pub_id: string }, []>("SELECT pub_id FROM sessions ORDER BY id DESC LIMIT 1").get();
+                db.close();
+                await s.restart(["--session", row!.pub_id]);
+                await s.pump(6);
+                const replayed = screen();
+                check(/Ran 1 script/.test(replayed), "reopened, the script row is back", s.screenRows());
+                check(
+                    /Read 1 file/.test(replayed) && /Ran 1 command/.test(replayed) && /Edited 1 file/.test(replayed),
+                    "with every call it made",
+                    s.screenRows(),
+                );
+
+                // The script is detail: hidden until its row is opened (ctrl+e,
+                // select the run, open it, open the code row).
+                check(!replayed.includes("await tools.write"), "the script itself stays folded away", s.screenRows());
+                await s.send("\x05", 1.2);
+                await s.send("\x1b[A", 1.0);
+                await s.send("\x1b[C", 1.0);
+                check(/◆ read notes\.txt/.test(screen()) && /◆ write out\.txt/.test(screen()), "opening the run lists each call", s.screenRows());
+                await s.send("\x1b[C", 1.0);
+                check(screen().includes('await tools.write({ path: "out.txt"'), "opening the code row shows the script", s.screenRows());
+                check(screen().includes('"sawNotes": true'), "above what it returned", s.screenRows());
+            },
+            { settings },
+        );
+    } finally {
+        server.stop(true);
+    }
+}
+
+/**
+ * /refresh: a second process (another terminal) adds a turn to the session
+ * this loop has open. Nothing shows until /refresh, which redraws the
+ * session with it; a second /refresh has nothing left to load.
+ */
+async function testRefresh(): Promise<void> {
+    await withSession({ settings: NOIR, envExtra: { LOOP_SKIP_VERSION_CHECK: "1" } }, async (s) => {
+        const sessionsModule = JSON.stringify(join(import.meta.dir, "..", "..", "..", "core", "src", "sessions", "index.ts"));
+        // Runs as its own process on the harness HOME — the same agent.db the TUI uses.
+        const otherTerminal = (body: string) =>
+            Bun.spawnSync(["bun", "-e", `const { SessionManager } = await import(${sessionsModule}); ${body}`], {
+                env: { ...process.env, HOME: s.home },
+            });
+        // Shaped the way loop saves them: a user's words as a string, a reply as text parts.
+        const say = (role: string, text: string) => {
+            const content = role === "user" ? JSON.stringify(text) : `[{ type: "text", text: "${text}" }]`;
+            return `await session.append({ type: "message", role: "${role}", content: ${content}, ts: Date.now() });`;
+        };
+        const seed = otherTerminal(
+            `const session = await new SessionManager().create({ cwd: ${JSON.stringify(realpathSync(s.project))}, provider: "xai", model: "xai/grok-4" });
+             ${say("user", "FIRST-QUESTION")} ${say("assistant", "FIRST-ANSWER")}
+             console.log(session.id);`,
+        );
+        check(seed.exitCode === 0, "a session is seeded", seed.stderr.toString());
+        const id = seed.stdout.toString().trim();
+        const screen = () => s.screenRows().join("\n");
+
+        await s.restart(["--session", id]);
+        await s.pump(6);
+        check(screen().includes("FIRST-ANSWER"), "loop opens the session", s.screenRows());
+
+        const added = otherTerminal(
+            `const session = await new SessionManager().open(${JSON.stringify(id)});
+             ${say("user", "OTHER-TERMINAL-QUESTION")} ${say("assistant", "OTHER-TERMINAL-ANSWER")}`,
+        );
+        check(added.exitCode === 0, "another process adds a turn", added.stderr.toString());
+        await s.pump(1);
+        check(!screen().includes("OTHER-TERMINAL-ANSWER"), "which this loop can't see yet", s.screenRows());
+
+        await s.send("/refresh\r", 2.0);
+        check(screen().includes("OTHER-TERMINAL-ANSWER"), "/refresh draws the other terminal's turn", s.screenRows());
+        check(screen().includes("· 2 new"), "and says how much it loaded", s.screenRows());
+        check(screen().includes("FIRST-ANSWER"), "with the earlier turn still above it", s.screenRows());
+
+        await s.send("/refresh\r", 1.2);
+        check(screen().includes("already up to date"), "a second /refresh has nothing to load", s.screenRows());
+    });
+}
+
+/**
  * /rc shares the TUI's sessions: a client attached to a session the TUI has
  * open sees the TUI's turns stream live, and a message the client sends runs
  * IN the TUI — on its screen — rather than as a second copy beside it.
@@ -1780,6 +1946,8 @@ const SCENARIOS: Record<string, () => Promise<void>> = {
     "turn-failed": testTurnFailed,
     sessions: testParallelSessions,
     click: testClickSelectsAnEntry,
+    refresh: testRefresh,
+    "code-mode": testCodeMode,
 };
 
 async function main(): Promise<number> {

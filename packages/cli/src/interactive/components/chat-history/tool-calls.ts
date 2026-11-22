@@ -84,6 +84,8 @@ export function stringifyResult(output: unknown): string {
     if (typeof o.stdout === "string" || typeof o.stderr === "string") {
         return `${o.stdout ?? ""}${o.stderr ? `\n[stderr]\n${o.stderr}` : ""}`.trim();
     }
+    // Code Mode's live result (core tools/code-mode): the text the model read.
+    if (typeof o.text === "string" && typeof o.callCount === "number") return o.text;
     if (typeof o.content === "string") return o.content;
     // Raw MCP CallToolResult shape — the LIVE tool-result event carries this
     // ({ content: [{type:"text", text}], structuredContent?, isError? }), while

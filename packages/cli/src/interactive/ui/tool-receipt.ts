@@ -285,6 +285,12 @@ export function formatToolReceipt(
             return `answered · ${clip(only.replace(/^"|"$/g, ""), MAX_RECEIPT - 11)}`;
         }
 
+        case "code": {
+            // core tools/code-mode/result.ts opens every result with this line.
+            const calls = /^Script completed \((\d+) tool calls?\)\./.exec(output);
+            return calls ? plural(Number(calls[1]), "call") : plural(bodyLines(body), "line");
+        }
+
         case "websearch": {
             const results = body.filter((l) => /^\d+\. /.test(l)).length;
             return results > 0 ? plural(results, "result") : plural(bodyLines(body), "line");

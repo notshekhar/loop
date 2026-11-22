@@ -61,6 +61,12 @@ export function formatToolArgs(
       const short = query.length > 60 ? `${query.slice(0, 57)}…` : query;
       return [connection, short].filter(Boolean).join(" · ");
     }
+    case "code": {
+      // The script's first real line; the whole script shows when the row is opened.
+      const code = typeof a.code === "string" ? a.code : "";
+      const first = (code.split("\n").find((l) => l.trim() && !l.trim().startsWith("//")) ?? "").trim();
+      return first.length > 80 ? `${first.slice(0, 77)}…` : first;
+    }
     case "plan": {
       // The plan body renders as markdown below the title — the summary is its
       // first heading, never the raw JSON blob.

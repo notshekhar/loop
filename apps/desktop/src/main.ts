@@ -12,6 +12,8 @@ import { app, BrowserWindow, ipcMain, MessageChannelMain, utilityProcess } from 
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { setCodeModeRuntime } from "@notshekhar/loop-core/code-mode-location";
 
 import { CoreHost } from "./coreHost.js";
 import { LoopProcess, resolveLoopBinary } from "./loopProcess.js";
@@ -46,6 +48,12 @@ const rendererDirectory = resolve(distDirectory, "renderer");
 const preloadPath = resolve(distDirectory, "preload", "index.cjs");
 /** The workspace host's entry, forked as a utility process. Same trap as above. */
 const hostPath = resolve(distDirectory, "host", "index.cjs");
+/**
+ * Code Mode's worker and wasm (build.ts), for the core running in this
+ * process. Once packaged they are unpacked beside the archive (package-app.ts),
+ * and a worker has to be started from that real file, not the asar path.
+ */
+const codeModeDirectory = resolve(distDirectory.replace(/app\.asar(?=[\\/]|$)/, "app.asar.unpacked"), "codemode");
 /** The window icon, copied into dist alongside the renderer by `build.ts`. */
 const appIconPath = resolve(distDirectory, "icon.png");
 
@@ -75,6 +83,12 @@ const loopBinary = resolveLoopBinary(process.env["LOOP_BINARY"], app.getAppPath(
  * binary is the same runtime the CLI uses, so it does the job unchanged.
  */
 if (existsSync(loopBinary)) process.env["LOOP_BUN_BINARY"] ??= loopBinary;
+if (!spawnBinary) {
+  setCodeModeRuntime({
+    workerUrl: pathToFileURL(join(codeModeDirectory, "worker.cjs")),
+    wasmPath: join(codeModeDirectory, "quickjs.wasm"),
+  });
+}
 const loop = spawnBinary
   ? new LoopProcess({ binary: loopBinary, cwd: anchorCwd })
   : new CoreHost({ cwd: anchorCwd });

@@ -6,7 +6,7 @@
 // plus dist/bin/loop-<target>.tar.gz tarball ready to upload to GH Releases.
 
 import { readFileSync, mkdirSync, existsSync, rmSync, copyFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { $ } from "bun";
 import { webAppPackPlugin } from "../core/build-web-app";
 
@@ -79,8 +79,15 @@ const webApp = await webAppPackPlugin("compile", join(import.meta.dir, "dist", "
 // CreateProcess limit once the changelog gets large, which surfaced as a
 // "File name too long" Windows build failure. In-process defines have no such
 // limit, so this builds identically on every platform.
+// Code Mode's worker is a second entrypoint: Bun embeds it, and a worker is
+// started by its path relative to the build root. The root is pinned to
+// packages/ so that path is fixed, whatever the entrypoints have in common.
+const buildRoot = join(import.meta.dir, "..");
+const codeModeWorker = join(buildRoot, "core", "src", "tools", "code-mode", "worker.ts");
+
 const result = await Bun.build({
-    entrypoints: [join(import.meta.dir, "src/cli.ts")],
+    entrypoints: [join(import.meta.dir, "src/bin-entry.ts"), codeModeWorker],
+    root: buildRoot,
     compile: { target: compileTarget as Bun.Build.CompileTarget, outfile: binPath },
     minify: true,
     // Precompiled bytecode skips parsing the bundle at launch: the first frame
@@ -89,6 +96,7 @@ const result = await Bun.build({
     define: {
         __APP_VERSION__: JSON.stringify(pkg.version),
         __APP_CHANGELOG__: JSON.stringify(changelog),
+        __CODE_MODE_WORKER__: JSON.stringify(`./${relative(buildRoot, codeModeWorker)}`),
     },
     plugins: [webApp],
 });

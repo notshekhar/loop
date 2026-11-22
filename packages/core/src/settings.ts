@@ -135,6 +135,12 @@ export interface AppSettings {
      * nothing the agent runs can outlive its own tool call. Set true to let it
      * start servers, watchers and tails that keep going. */
     backgroundShells?: boolean;
+    /**
+     * Code Mode (default off): the model gets one `code` tool and writes
+     * JavaScript that calls the other tools — in parallel, chained, filtered —
+     * in a QuickJS sandbox. Each call is still checked and drawn like a direct one.
+     */
+    codeMode?: boolean;
     /** Live date + hh:mm:ss clock in the footer. Default off. */
     clock?: boolean;
     /** Fire /reminder alerts. Default on; set false to mute reminders entirely. */

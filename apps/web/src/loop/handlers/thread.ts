@@ -303,6 +303,9 @@ function toolOutputText(output: unknown): string | undefined {
     }
   }
 
+  // Code Mode's live result (core tools/code-mode): the text the model read.
+  if (typeof record.text === "string" && typeof record.callCount === "number") return record.text;
+
   // The live stream carries the tool's own `{content: [{type,text}], isError}`
   // instead — the shape the TUI's ToolResultLike reads.
   const content = Array.isArray(record.content) ? record.content : null;

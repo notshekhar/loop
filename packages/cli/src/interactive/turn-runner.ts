@@ -271,6 +271,11 @@ export function createTurnRunner(state: AppState, deps: AppDeps, ctx: CommandCon
         state.oneShotAgent = null;
 
         const activeSession = await ensureSession();
+        // Another terminal added turns this copy can't see; this message will
+        // branch off before them. Said once per turn, and /refresh fixes it.
+        if (activeSession.isBehindDisk()) {
+            history.addSystem(dim("this session changed in another terminal — /refresh to load it"));
+        }
         state.busy = true;
         if (opts?.team) history.addTeamCard(opts.team, finalInput);
         else if (opts?.btw) history.addBtwQuestion(opts.btw, finalInput);

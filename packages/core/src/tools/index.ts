@@ -70,6 +70,8 @@ export function createBaseTools(ctx: ToolContext): ToolSet {
 /** Stable tool name list — agents reference these for per-agent tool selection. */
 export const TOOL_NAMES = ["read", "write", "edit", "bash", "ls", "grep", "find", "sql", "shells"] as const;
 export { createMcpResourceTool, MCP_RESOURCE_TOOL_NAME, type McpResourceToolContext } from "./mcp-resource";
+// Code Mode (the opt-in codeMode setting): one `code` tool whose scripts call the others.
+export * from "./code-mode";
 export {
     buildMcpToolSearchNote,
     createMcpToolsTool,

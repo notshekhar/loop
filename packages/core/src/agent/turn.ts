@@ -27,6 +27,7 @@ import {
     runPromptGates,
 } from "./turn/opening";
 import { assembleTurnTools } from "./turn/tools";
+import { foldIntoCodeTool, isCodeModeOn } from "./turn/code-mode";
 import { buildTurnSystemPrompt, notePrefixChange } from "./turn/system-prompt";
 import {
     compactBeforeFirstStep,
@@ -174,13 +175,7 @@ async function prepareTurn(opts: RunTurnOptions): Promise<PreparedTurn> {
         skills: project.skills,
     });
     const { toolsForTurn, turnContext } = assembled;
-    // Extension middleware may transform the system prompt, scoped by ctx.agent.
-    const system = await applySystemPrompt(
-        buildTurnSystemPrompt(toolsForTurn, { ...project, cwd, agentPrompt: assembled.agentPrompt }),
-        turnContext,
-    );
-    notePrefixChange(session.id, system, toolsForTurn);
-    const tools = withToolHooks(toolsForTurn as typeof assembled.fullToolSet, {
+    const hookCtx = {
         cwd,
         sessionId: session.id,
         transcriptPath: session.path,
@@ -189,7 +184,26 @@ async function prepareTurn(opts: RunTurnOptions): Promise<PreparedTurn> {
         // Empty when no extensions are loaded → withToolHooks is a pass-through.
         callMiddleware: getExtensionHost().getToolCallMiddleware(),
         resultMiddleware: getExtensionHost().getToolResultMiddleware(),
-    });
+    };
+    const hooked = withToolHooks(toolsForTurn as typeof assembled.fullToolSet, hookCtx);
+    // What the model is offered: the hooked tools, or in Code Mode the direct
+    // ones plus `code`. Everything sized or hashed from "the tools" uses this.
+    const codeMode = isCodeModeOn(provider);
+    const tools = codeMode
+        ? ((await foldIntoCodeTool(hooked, {
+              emitter: opts.emitter,
+              session,
+              abortSignal: opts.abortSignal,
+              wrap: (t) => withToolHooks(t, hookCtx),
+          })) as typeof hooked)
+        : hooked;
+    // Extension middleware may transform the system prompt, scoped by ctx.agent.
+    // The prompt still names every tool: in Code Mode they are called from scripts.
+    const system = await applySystemPrompt(
+        buildTurnSystemPrompt(toolsForTurn, { ...project, cwd, agentPrompt: assembled.agentPrompt, codeMode }),
+        turnContext,
+    );
+    notePrefixChange(session.id, system, tools);
     const thinkingLevel: ThinkingLevel = opts.thinkingLevel ?? getSetting("thinkingLevel") ?? "off";
     // Shared provider shaping (see model-call.ts), matching runSubagent by construction.
     const call = buildAgentCallConfig({ provider, modelShortId, thinkingLevel, modelInfo });
@@ -208,7 +222,7 @@ async function prepareTurn(opts: RunTurnOptions): Promise<PreparedTurn> {
             tracker: opts.tracker,
             abortSignal: opts.abortSignal,
             thinkingLevel: opts.thinkingLevel,
-            overheadTokens: estimateOverheadTokens(system, toolsForTurn),
+            overheadTokens: estimateOverheadTokens(system, tools),
             threshold: getSetting("autoCompactThreshold") ?? DEFAULT_AUTO_COMPACT_THRESHOLD,
         },
         ownsContext: isNativeAgentProvider(provider),

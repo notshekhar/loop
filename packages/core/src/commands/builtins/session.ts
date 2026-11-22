@@ -53,6 +53,13 @@ export const navigationCommands: SlashCommand[] = [
     resumeCommand,
     aliasOf(resumeCommand, "sessions"),
     {
+        name: "refresh",
+        description: "Reload this session — picks up turns another terminal added to it",
+        handler: async (ctx) => {
+            await ctx.refreshSession();
+        },
+    },
+    {
         name: "hosts",
         description: "Other machines: switch to one, pair one (/hosts add <link>), /hosts remove <name>",
         handler: async (ctx, args) => {

@@ -74,6 +74,8 @@ const KIND = {
     todo: { past: "Updated", present: "Updating", nounOne: "todo list", nounMany: "todo lists", folds: true },
     artifact: { past: "Created", present: "Creating", nounOne: "artifact", nounMany: "artifacts", folds: true },
     command: { past: "Ran", present: "Running", nounOne: "command", nounMany: "commands", folds: true },
+    // Code Mode's `code` tool: a script whose own calls draw as their own rows.
+    script: { past: "Ran", present: "Running", nounOne: "script", nounMany: "scripts", folds: true },
 
     // Reading or killing a background shell — the noun is the shell, not the
     // command it is running (that row was already printed when it started).
@@ -134,6 +136,7 @@ const BUILTIN: Record<string, VerbGroupKindId> = {
     task: "subagent",
     todo: "todo",
     bash: "command",
+    code: "script",
     shells: "shell",
     edit: "edit",
     write: "edit",

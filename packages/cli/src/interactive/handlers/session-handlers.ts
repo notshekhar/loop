@@ -24,6 +24,7 @@ import {
     teamOf,
     teamsOf,
     type CommandContext,
+    type Session,
 } from "@notshekhar/loop-core";
 import type { AppDeps } from "../deps";
 import type { AppState } from "../state";
@@ -64,7 +65,7 @@ export async function resumeSessionById(state: AppState, deps: AppDeps, idOrPath
     // Never replace a session that is still doing something: it keeps running,
     // and the resumed one opens beside it.
     if (mustStayOpen(state)) await deps.sessions.openNew();
-    const { tui, history, statusLine, tracker, manager, refreshStatusLine } = deps;
+    const { tui, history, manager } = deps;
     try {
         // The `/rc` server may already hold this session — a phone opened it,
         // or is running a turn in it right now. Use its object: a second copy
@@ -76,38 +77,49 @@ export async function resumeSessionById(state: AppState, deps: AppDeps, idOrPath
             opened = await manager.open(idOrPath);
             opened = feed?.openSession(opened.id) ?? opened;
         }
-        state.session = opened;
-        const resumedModel = state.session.lastModel();
-        if (resumedModel) {
-            state.modelId = resumedModel;
-            settingsStore.set("defaultModel", state.modelId);
-            setProjectModel(state.cwd, state.modelId);
-            statusLine.setModel(state.modelId);
-        }
-        statusLine.setSession(state.session.id);
-        // The tab follows the session that is live now — the resumed one's own
-        // name if it has one, and the standing name if it never earned one.
-        setTabName(deps, state.session.getName() || defaultTabName());
-        // Restore cost/usage/ctx from the resumed transcript.
-        state.latestContextTokens = tracker.seedFromSession(state.session).ctxTokens;
-        refreshStatusLine();
-        history.reset();
-        if (idOrPath.endsWith(".jsonl") && state.session.path !== idOrPath) {
-            history.addSystem(`resumed fork ${state.session.id}`);
-            history.addSystem(
-                dim("selected legacy session was forked; new messages and compactions save to this session"),
-            );
-        } else {
-            history.addSystem(`resumed session ${state.session.id}`);
-        }
-        renderSessionBranch(state.session, history, state.modelId, deps.todoPanel);
-        deps.shellsPanel.setShells(listShells(state.session.id));
+        const notices =
+            idOrPath.endsWith(".jsonl") && opened.path !== idOrPath
+                ? [
+                      `resumed fork ${opened.id}`,
+                      dim("selected legacy session was forked; new messages and compactions save to this session"),
+                  ]
+                : [`resumed session ${opened.id}`];
+        showLoadedSession(state, deps, opened, notices);
         // Mid-turn on the server: the rest of that reply streams in here.
-        deps.remote?.followServerTurn(state.session.id);
+        deps.remote?.followServerTurn(opened.id);
     } catch (err) {
         history.addError(`open failed: ${(err as Error).message}`);
     }
     tui.requestRender();
+}
+
+/**
+ * Make `session` the live one and redraw everything that shows it: model,
+ * status line, tab name, cost tracker, transcript, todo and shells panels.
+ * Shared by /resume (a different session) and /refresh (a fresh copy of the
+ * same one), so the two can never disagree about what "showing a session" is.
+ */
+export function showLoadedSession(state: AppState, deps: AppDeps, session: Session, notices: string[]): void {
+    const { history, statusLine, tracker, refreshStatusLine } = deps;
+    state.session = session;
+    const lastModel = session.lastModel();
+    if (lastModel) {
+        state.modelId = lastModel;
+        settingsStore.set("defaultModel", state.modelId);
+        setProjectModel(state.cwd, state.modelId);
+        statusLine.setModel(state.modelId);
+    }
+    statusLine.setSession(session.id);
+    // The tab follows the session that is live now — its own name if it has
+    // one, and the standing name if it never earned one.
+    setTabName(deps, session.getName() || defaultTabName());
+    // Restore cost/usage/ctx from the transcript.
+    state.latestContextTokens = tracker.seedFromSession(session).ctxTokens;
+    refreshStatusLine();
+    history.reset();
+    for (const notice of notices) history.addSystem(notice);
+    renderSessionBranch(session, history, state.modelId, deps.todoPanel);
+    deps.shellsPanel.setShells(listShells(session.id));
 }
 
 /** A session with a turn or a background shell going has to stay reachable, so nothing may replace it in place. */

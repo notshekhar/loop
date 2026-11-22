@@ -20,6 +20,7 @@ import { listAgents } from "../agents";
 import { formatSkillsForPrompt, type Skill } from "../skills";
 import {
     buildBackgroundShellsNote,
+    buildCodeModeNote,
     buildMcpInstructionsNote,
     buildPlanModeNote,
     buildSubagentNote,
@@ -28,6 +29,8 @@ import {
 } from "../system-prompt";
 
 export interface TurnPromptInputs {
+    /** The tools are folded into `code` this turn (turn/code-mode.ts). */
+    codeMode?: boolean;
     cwd: string;
     workspaceContext: string;
     memoryContext: string;
@@ -52,6 +55,7 @@ export function buildTurnSystemPrompt(toolsForTurn: Record<string, unknown>, inp
         : inputs.skillsPrompt;
     return [
         base,
+        inputs.codeMode ? buildCodeModeNote() : "",
         has("task") ? buildSubagentNote(listAgents().map((a) => a.name)) : "",
         teamNote(has),
         has(TODO_TOOL_NAME) ? buildTodoNote() : "",

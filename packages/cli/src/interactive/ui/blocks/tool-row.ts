@@ -13,7 +13,7 @@
  */
 import { wrapTextWithAnsi } from "@notshekhar/loop-tui";
 import { bulletColor, RAIL_WIDTH, railForState, withRail, type RailSpec } from "../rail";
-import { fgHex } from "../theme";
+import { fgHex, highlightCode } from "../theme";
 import { highlightToolSummary, readGutterPrefixes, readLineRangeText, taskPromptSnippet } from "../tool-summary";
 import { fitAroundTail, fitRow } from "../fit";
 import { showsReceipt } from "../tool-detail";
@@ -184,6 +184,10 @@ export function renderTool(state: ToolBlockState, ctx: RenderCtx): string[] | nu
         return finish(lines);
     }
 
+    // A Code Mode script: its calls have rows of their own, so the source is
+    // detail — drawn, highlighted, only once the row is opened.
+    if (state.expanded && state.toolName === "code") lines.push(...scriptLines(state.args, bodyWidth));
+
     // Output: hidden while folded (grok's whole point), shown expanded.
     // Failures fold too — the red diamond + title carry the signal; expand
     // (nav →) to read the error.
@@ -218,4 +222,12 @@ export function renderTool(state: ToolBlockState, ctx: RenderCtx): string[] | nu
         }
     }
     return finish(lines);
+}
+
+/** A Code Mode call's JavaScript, highlighted and wrapped, then a gap before its output. */
+function scriptLines(args: Record<string, unknown>, width: number): string[] {
+    const script = typeof args.code === "string" ? args.code.trim() : "";
+    if (!script) return [];
+    const highlighted = highlightCode(script, "javascript").flatMap((l) => (l ? wrapTextWithAnsi(l, width) : [""]));
+    return [...highlighted, ""];
 }

@@ -102,6 +102,15 @@ const KIND = {
     folds: true,
   },
 
+  // Code Mode's `code` tool: a script whose own calls draw as their own rows.
+  script: {
+    past: "Ran",
+    present: "Running",
+    nounOne: "script",
+    nounMany: "scripts",
+    folds: true,
+  },
+
   // Reading or killing a background shell — the noun is the shell, not the
   // command it is running (that row was already printed when it started).
   shell: { past: "Checked", present: "Checking", nounOne: "shell", nounMany: "shells", folds: true },
@@ -169,6 +178,7 @@ const BUILTIN: Record<string, VerbGroupKindId> = {
   task: "subagent",
   todo: "todo",
   bash: "command",
+  code: "script",
   shells: "shell",
   edit: "edit",
   write: "edit",

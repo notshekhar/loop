@@ -18,6 +18,8 @@ export interface CommandContext {
     /** /steak — GitHub-style token-usage heatmap; arg is an optional year. */
     showSteak(args: string): void;
     showSessions(): Promise<void>;
+    /** /refresh — reload this session from the database when another terminal wrote to it. */
+    refreshSession(): Promise<void>;
     /** /hosts — other machines running loop: switch to one, pair (`add <link>`), `remove <name>`. */
     manageHosts(args: string): Promise<void> | void;
     /** /rc — let other devices control this loop (`/rc off` stops). */

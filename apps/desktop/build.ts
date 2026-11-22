@@ -12,6 +12,7 @@
  */
 import { chmod, cp, mkdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -107,6 +108,32 @@ if (!host.success) {
   throw new Error(`host bundle failed:\n${host.logs.map(String).join("\n")}`);
 }
 
+/**
+ * Code Mode's sandbox, beside the bundle that runs core.
+ *
+ * pi-codemode starts each script in a worker thread from a file next to its
+ * own module and reads `quickjs.wasm` from its package — neither of which
+ * exists once core is bundled into app.cjs. So the worker is bundled as its
+ * own entry, the wasm copied beside it, and main.ts points core at both
+ * (`setCodeModeRuntime`). Packaging unpacks this directory from asar: a worker
+ * is started from a real file.
+ */
+const codeModeDir = join(dist, "codemode");
+const codeModeWorker = await Bun.build({
+  entrypoints: [join(here, "..", "..", "packages", "core", "src", "tools", "code-mode", "worker.ts")],
+  outdir: codeModeDir,
+  target: "node",
+  format: "cjs",
+  naming: "worker.cjs",
+});
+if (!codeModeWorker.success) {
+  throw new Error(`code mode worker bundle failed:\n${codeModeWorker.logs.map(String).join("\n")}`);
+}
+const quickjsWasm = createRequire(join(here, "..", "..", "packages", "core", "package.json")).resolve(
+  "quickjs-wasi/quickjs.wasm",
+);
+await cp(quickjsWasm, join(codeModeDir, "quickjs.wasm"));
+
 const preload = await Bun.build({
   entrypoints: [join(here, "src", "preload.ts")],
   outdir: join(dist, "preload"),
@@ -156,6 +183,7 @@ console.log("desktop bundle ready:");
 console.log(`  main     ${join(dist, "main", "index.cjs")} -> app.cjs`);
 console.log(`  host     ${join(dist, "host", "index.cjs")}`);
 console.log(`  preload  ${join(dist, "preload", "index.cjs")}`);
+console.log(`  codemode ${codeModeDir}`);
 console.log(`  renderer ${join(dist, "renderer")}`);
 console.log(
   bundledBinary

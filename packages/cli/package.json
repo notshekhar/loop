@@ -1,7 +1,7 @@
 {
     "name": "@notshekhar/loop",
     "version": "0.21.45",
-    "description": "loop \u2014 terminal coding agent. Multi-provider, fast, native TUI.",
+    "description": "loop — terminal coding agent. Multi-provider, fast, native TUI.",
     "license": "MIT",
     "type": "module",
     "homepage": "https://github.com/notshekhar/loop#readme",
@@ -51,7 +51,8 @@
         "@notshekhar/loop-tui": "*",
         "chalk": "^5.5.0",
         "croner": "^10.0.1",
-        "highlight.js": "^11.11.1"
+        "highlight.js": "^11.11.1",
+        "quickjs-wasi": "3.6.2"
     },
     "devDependencies": {
         "@xterm/headless": "^6.0.0"

@@ -49,6 +49,10 @@ export function buildTodoNote(): string {
     return `\n\nTodos (todo tool): for any job with 3+ distinct steps, keep a visible checklist the user can watch. Create it when you start, keep exactly one item in_progress (with an activeForm label), and mark each step completed the moment it's done and verified — never batch completions at the end. Capture newly discovered follow-ups as todos; mark abandoned steps cancelled. Each call replaces the whole list, so resend every item. Skip the tool entirely for trivial or single-step requests — when in doubt, use it.`;
 }
 
+export function buildCodeModeNote(): string {
+    return `\n\nCode Mode: you call tools by writing JavaScript in the \`code\` tool — \`await tools.read({ path })\`, \`await tools.bash({ command })\` and so on for every tool named in this prompt that isn't offered directly. Prefer one script over many separate steps: run independent calls together with Promise.all, pass one result into the next call, and return only the part of the output you need to read.`;
+}
+
 /**
  * Each connected MCP server's own usage notes.
  *

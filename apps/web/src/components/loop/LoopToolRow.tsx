@@ -21,6 +21,7 @@
 import {
   BotIcon,
   ChevronDownIcon,
+  CodeIcon,
   ChevronRightIcon,
   CircleAlertIcon,
   CircleDashedIcon,
@@ -38,6 +39,7 @@ import { memo, useEffect, useState, type KeyboardEvent } from "react";
 import type { ScopedThreadRef } from "@loop/contracts";
 
 import { cn } from "../../lib/utils";
+import ChatMarkdown from "../ChatMarkdown";
 import {
   formatDuration,
   formatTaskStatus,
@@ -105,6 +107,8 @@ function ToolIcon({ name, state }: { name: string; state: ToolState }) {
       return <BotIcon aria-hidden className={className} />;
     case "skill":
       return <SparklesIcon aria-hidden className={className} />;
+    case "code":
+      return <CodeIcon aria-hidden className={className} />;
     default:
       return <WrenchIcon aria-hidden className={className} />;
   }
@@ -346,6 +350,18 @@ const SubagentLog = memo(function SubagentLog({
 });
 
 /** A subagent tool's input, which crosses the wire as `unknown`. */
+/** The script as a ```js block, fenced longer than any backtick run inside it. */
+function fencedScript(script: string): string {
+  const longestRun = Math.max(0, ...(script.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(Math.max(3, longestRun + 1));
+  return `${fence}js\n${script}\n${fence}`;
+}
+
+/** The JavaScript of a Code Mode call, or "" for any other tool. */
+function codeModeScript(tool: LoopToolEntry): string {
+  return tool.name === "code" && typeof tool.args.code === "string" ? tool.args.code.trim() : "";
+}
+
 function argsOf(input: unknown): Record<string, unknown> {
   return typeof input === "object" && input !== null && !Array.isArray(input)
     ? (input as Record<string, unknown>)
@@ -438,7 +454,11 @@ const LoopToolRowBody = memo(function LoopToolRowBody({
       : null;
   const shownLines = expanded ? outputLines : outputLines.slice(0, COLLAPSED_OUTPUT_LINES);
   const hiddenCount = outputLines.length - shownLines.length;
-  const canExpand = hiddenCount > 0 || (expanded && outputLines.length > COLLAPSED_OUTPUT_LINES);
+  // A Code Mode script: its calls have rows of their own, so the source is
+  // detail — shown only once the row is opened, which it always can be.
+  const script = codeModeScript(tool);
+  const canExpand =
+    hiddenCount > 0 || (expanded && outputLines.length > COLLAPSED_OUTPUT_LINES) || script !== "";
 
   const toggle = () => setExpanded((value) => !value);
 
@@ -496,6 +516,12 @@ const LoopToolRowBody = memo(function LoopToolRowBody({
       {/* Outside the collapsible body: the card is the point of the row, so it
           must not be hidden behind a disclosure the reader has to find. */}
       {artifactCard ? <ArtifactChip artifact={artifactCard} threadRef={threadRef} /> : null}
+
+      {expanded && script ? (
+        <div className="mt-1 ml-[22px] min-w-0">
+          <ChatMarkdown cwd={cwd} text={fencedScript(script)} />
+        </div>
+      ) : null}
 
       {streamingLines ? (
         <OutputSurface>

@@ -71,6 +71,7 @@ export function createSettingsHandlers(state: AppState, deps: AppDeps): Settings
         todos: false,
         artifacts: false,
         backgroundShells: false,
+        codeMode: false,
         threadTeams: false,
         idleCompact: true,
         clock: false,
@@ -218,6 +219,12 @@ export function createSettingsHandlers(state: AppState, deps: AppDeps): Settings
                         label: `background shells: ${boolSetting("backgroundShells") ? "on" : "off"}`,
                         description:
                             "let bash start servers/watchers that keep running (shells tool + panel); off bounds every command to its own call",
+                    },
+                    {
+                        value: "codeMode",
+                        label: `code mode: ${boolSetting("codeMode") ? "on" : "off"}`,
+                        description:
+                            "the agent writes JavaScript that calls its tools — parallel, chained, filtered — in a QuickJS sandbox; every call is still checked and shown",
                     },
                     {
                         value: "idleCompact",

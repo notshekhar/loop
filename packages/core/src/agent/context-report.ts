@@ -31,7 +31,14 @@ import { loadWorkspaceContext } from "./context";
 import { loadMemoryContext } from "./memory";
 import { loadProjectSkills } from "./skills";
 import { isTrusted } from "./trust";
-import { buildBackgroundShellsNote, buildSubagentNote, buildSystemPrompt, buildTodoNote } from "./system-prompt";
+import {
+    buildBackgroundShellsNote,
+    buildCodeModeNote,
+    buildSubagentNote,
+    buildSystemPrompt,
+    buildTodoNote,
+} from "./system-prompt";
+import { foldIntoCodeTool, isCodeModeOn } from "./turn/code-mode";
 import { applySystemPrompt } from "./turn-middleware";
 import { compactionBlockText, latestCompactEntry } from "./compact";
 
@@ -73,6 +80,12 @@ const chars4 = (n: number) => Math.ceil(n / 4);
 /** Same shape as estimateOverheadTokens: name + description at chars/4 plus a
  * flat allowance per tool for the JSON schema body. */
 const TOOL_SCHEMA_ALLOWANCE_TOKENS = 120;
+
+/** What the folded toolset costs: built the way a Code Mode turn builds it. */
+async function codeModeToolTokens(tools: Record<string, unknown>): Promise<number> {
+    const folded = await foldIntoCodeTool(tools, { emitter: { emit: () => true } as never, wrap: (t) => t });
+    return toolTokens(folded);
+}
 
 function toolTokens(tools: Record<string, unknown>): number {
     let chars = 0;
@@ -186,8 +199,10 @@ export async function buildContextReport(opts: {
     ];
     const todoNote = todosEnabled ? buildTodoNote() : "";
     const backgroundShellsNote = SHELLS_TOOL_NAME in toolSet ? buildBackgroundShellsNote() : "";
+    const codeMode = isCodeModeOn(parseModelId(modelId).provider);
     const systemBase =
         buildSystemPrompt({ cwd, basePrompt: agentPrompt, tools: toolNames }) +
+        (codeMode ? buildCodeModeNote() : "") +
         subagentNote +
         todoNote +
         backgroundShellsNote;
@@ -215,7 +230,9 @@ export async function buildContextReport(opts: {
     const extensionPromptTokens = Math.max(0, systemFinalTokens - systemBaseTokens);
     const systemPromptTokens = Math.min(systemBaseTokens, systemFinalTokens);
 
-    let systemToolTokens = toolTokens(toolSet);
+    // Code Mode sends one `code` tool whose description declares every folded
+    // tool, MCP ones included — so it is measured as that, in one category.
+    let systemToolTokens = codeMode ? await codeModeToolTokens({ ...toolSet, ...mcpTools }) : toolTokens(toolSet);
     if (subagentsEnabled) systemToolTokens += TASK_TOOL_EST_TOKENS;
     if (todosEnabled) systemToolTokens += TODO_TOOL_EST_TOKENS;
 
@@ -246,7 +263,7 @@ export async function buildContextReport(opts: {
             ? [{ key: "extensionPrompt", label: "Extension prompt", tokens: extensionPromptTokens } as ContextCategory]
             : []),
         { key: "systemTools", label: "System tools", tokens: systemToolTokens },
-        ...(mcpToolCount > 0
+        ...(mcpToolCount > 0 && !codeMode
             ? [{ key: "mcpTools", label: "MCP tools", tokens: toolTokens(mcpTools) } as ContextCategory]
             : []),
         ...(workspace.text

@@ -100,7 +100,7 @@ Flags: `--model <provider/id>`, `--provider <id>`, `--cwd <path>`, `--session <i
 
 | Group      | Commands                                                                                                    |
 | ---------- | ----------------------------------------------------------------------------------------------------------- |
-| Sessions   | `/new` `/clear` `/resume` `/sessions` `/session` `/name` `/export` `/import` `/share` `/compact` `/context` |
+| Sessions   | `/new` `/clear` `/resume` `/sessions` `/refresh` `/session` `/name` `/export` `/import` `/share` `/compact` `/context` |
 | Tree       | `/tree` `/fork` `/clone`                                                                                    |
 | Models     | `/model` `/provider` `/thinking` `/scoped-models` (+ Ctrl+P cycle)                                          |
 | Agents     | `/agents` `/<agent> <message>` (one-shot)                                                                   |

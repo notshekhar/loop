@@ -22,6 +22,7 @@ import { createMiscHandlers } from "./handlers/misc-handlers";
 import { createModelHandlers } from "./handlers/model-handlers";
 import { createPermissionHandlers } from "./handlers/permission-handlers";
 import { createSessionHandlers } from "./handlers/session-handlers";
+import { createRefreshHandlers } from "./handlers/session-refresh";
 import { createSessionTreeHandlers } from "./handlers/session-tree-handlers";
 import { createSettingsHandlers } from "./handlers/settings-handlers";
 import { createTimerHandlers } from "./handlers/timer-handlers";
@@ -39,6 +40,7 @@ export function createCommandContext(state: AppState, deps: AppDeps): CommandCon
         ...createMiscHandlers(state, deps),
         ...createModelHandlers(state, deps),
         ...createSessionHandlers(state, deps),
+        ...createRefreshHandlers(state, deps),
         ...createSessionTreeHandlers(state, deps),
         ...createAgentHandlers(state, deps),
         ...createBashDenyHandlers(state, deps),

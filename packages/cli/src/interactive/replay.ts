@@ -1,5 +1,8 @@
 import {
+    type CodeRunPayload,
     type TeamTurnMeta,
+    CODE_TOOL_NAME,
+    isCodeRunPayload,
     isRecapPayload,
     latestTodos,
     parseModelId,
@@ -76,6 +79,7 @@ export function renderBranchEntries(
     }
 
     const provider = providerOf(modelId);
+    const codeRuns = codeRunsOn(path);
     let messageIndex = 0;
     // Subagent entries persist when the run FINISHES — before the step's own
     // assistant message (which persists at step end). Live, the task boxes
@@ -161,6 +165,8 @@ export function renderBranchEntries(
                                 part.toolCallId,
                                 (part.input ?? {}) as Record<string, unknown>,
                             );
+                            const run = part.toolName === CODE_TOOL_NAME ? codeRuns.get(part.toolCallId) : undefined;
+                            if (run) replayCodeRun(history, run);
                         }
                     }
                 } else {
@@ -190,4 +196,26 @@ export function renderBranchEntries(
     // A cut past the last message (nothing survived it) still gets its marker.
     drawBoundary();
     flushSubagents();
+}
+
+/**
+ * Code Mode runs on the branch, by the code call they belong to. A run is
+ * saved while its script executes — before the step's assistant message — so
+ * it is looked up by id rather than drawn where it sits.
+ */
+function codeRunsOn(path: Entry[]): Map<string, CodeRunPayload> {
+    const runs = new Map<string, CodeRunPayload>();
+    for (const e of path) {
+        if (e.type === "custom" && isCodeRunPayload(e.payload)) runs.set(e.payload.toolCallId, e.payload);
+    }
+    return runs;
+}
+
+/** A script's calls, drawn as the rows they were live: right under its Code row. */
+function replayCodeRun(history: ChatHistory, run: CodeRunPayload): void {
+    for (const call of run.calls) {
+        history.addToolCall(call.toolName, call.id, (call.input ?? {}) as Record<string, unknown>);
+        if (call.error !== undefined) history.addToolResult(call.id, call.error, true);
+        else history.addToolResult(call.id, call.output ?? "");
+    }
 }

@@ -172,6 +172,12 @@ export function formatToolArgs(toolName: string, args: Record<string, unknown>, 
             const plan = typeof a.plan === "string" ? a.plan : "";
             return clamp((plan.split("\n")[0] ?? "").replace(/^#+\s*/, "").trim());
         }
+        case "code": {
+            // The script's first real line; the whole script shows when the row is opened.
+            const code = typeof a.code === "string" ? a.code : "";
+            const first = code.split("\n").find((l) => l.trim() && !l.trim().startsWith("//")) ?? "";
+            return clamp(first.trim());
+        }
         default:
             return clamp(JSON.stringify(a));
     }

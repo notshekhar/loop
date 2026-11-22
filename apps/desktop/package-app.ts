@@ -191,7 +191,9 @@ const [appPath] = await packager({
      * silent at package time and shows up as an app that starts and then
      * cannot reach loop at all.
      */
-    asar: { unpack: "{**/*.node,**/spawn-helper,**/dist/bin/*}" },
+    // dist/codemode: Code Mode's worker thread is started from a file, and a
+    // worker script sealed in the archive does not load.
+    asar: { unpack: "{**/*.node,**/spawn-helper,**/dist/bin/*,**/dist/codemode/*}" },
     // Staging already contains exactly what ships; pruning would try to resolve
     // the workspace dependency that was deliberately left out of the manifest.
     prune: false,

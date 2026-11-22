@@ -17,6 +17,7 @@ import type {
     TranscriptTodo,
 } from "./types";
 import { isToolPart } from "./types";
+import { isCodeRunPayload, type CodeRunPayload } from "./code-run";
 import { resultFailure } from "./reduce";
 import { btwOf } from "./btw";
 import { teamPartOf, type TeamEntryMeta } from "./team";
@@ -220,6 +221,7 @@ export function fromEntries(
         });
     };
 
+    const codeRuns = codeRunsIn(entries);
     for (const [position, entry] of entries.entries()) {
         const at = entry.ts ?? 0;
         if (entry.type === "message") {
@@ -272,6 +274,8 @@ export function fromEntries(
                             state: "input-available",
                             input: part.input ?? {},
                         });
+                        const run = codeRuns.get(part.toolCallId);
+                        if (run) target.parts.push(...codeRunParts(run));
                     }
                 }
                 attachRuns();
@@ -342,4 +346,30 @@ function findTool(parts: readonly TranscriptPart[], toolCallId: string): number 
         if (isToolPart(part) && part.toolCallId === toolCallId) return i;
     }
     return -1;
+}
+
+/**
+ * Code Mode runs by the code call they belong to. A run is saved while its
+ * script executes — before the step's assistant message — so it is looked up
+ * by id, not drawn where it sits.
+ */
+function codeRunsIn(entries: readonly EntryLike[]): Map<string, CodeRunPayload> {
+    const runs = new Map<string, CodeRunPayload>();
+    for (const entry of entries) {
+        if (entry.type === "custom" && isCodeRunPayload(entry.payload)) runs.set(entry.payload.toolCallId, entry.payload);
+    }
+    return runs;
+}
+
+/** A script's calls as the tool parts they were live, right after its code part. */
+function codeRunParts(run: CodeRunPayload): ToolPart[] {
+    return run.calls.map((call) => ({
+        type: `tool-${call.toolName}` as const,
+        toolCallId: call.id,
+        toolName: call.toolName,
+        input: call.input ?? {},
+        ...(call.error !== undefined
+            ? { state: "output-error" as const, errorText: call.error }
+            : { state: "output-available" as const, output: call.output }),
+    }));
 }

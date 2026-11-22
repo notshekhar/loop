@@ -29,6 +29,7 @@ Prints the final response to stdout and exits. No UI, pipeable, safe in scripts.
 | ---------------------- | ------------------------------------------------- |
 | `/new`                 | Fresh session (`/clear` also clears the screen)   |
 | `/resume`, `/sessions` | Pick an earlier session in this directory         |
+| `/refresh`             | Reload it after another terminal added turns      |
 | `/session`             | What the current one is                           |
 | `/name <text>`         | Name it, so it's findable later                   |
 | `/export`, `/import`   | Transcript out, transcript in                     |
@@ -117,7 +118,7 @@ The footer shows live cost, usage, and context per step, subagents included. `/c
 
 | Group      | Commands                                                                                                                          |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Sessions   | `/new` `/clear` `/resume` `/sessions` `/session` `/name` `/export` `/import` `/share` `/compact` `/context`                       |
+| Sessions   | `/new` `/clear` `/resume` `/sessions` `/refresh` `/session` `/name` `/export` `/import` `/share` `/compact` `/context`                       |
 | Tree       | `/tree` `/fork` `/clone`                                                                                                          |
 | Models     | `/model` `/provider` `/thinking` `/scoped-models`                                                                                 |
 | Agents     | `/agents` `/<agent> <message>`                                                                                                    |

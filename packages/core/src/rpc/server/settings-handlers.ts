@@ -48,6 +48,12 @@ const WEB_SETTINGS: ReadonlyArray<{ key: keyof AppSettings; label: string; descr
         def: false,
     },
     {
+        key: "codeMode",
+        label: "code mode",
+        description: "the agent writes JavaScript that calls its tools — parallel, chained, filtered — in a sandbox",
+        def: false,
+    },
+    {
         key: "artifacts",
         label: "artifacts",
         description: "let the agent publish documents it writes as pages you can open",

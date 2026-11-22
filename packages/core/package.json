@@ -25,6 +25,9 @@
     "./workspace": {
       "import": "./src/workspace/index.ts"
     },
+    "./code-mode-location": {
+      "import": "./src/tools/code-mode/location.ts"
+    },
     "./transcript": {
       "import": "./src/transcript/index.ts"
     },
@@ -54,6 +57,7 @@
     "@ai-sdk/provider": "4.0.10",
     "@ai-sdk/xai": "^4.0.53",
     "@aws-sdk/credential-providers": "^3.1101.0",
+    "@earendil-works/pi-codemode": "1.6.0",
     "@notshekhar/loop-sandbox": "*",
     "@openrouter/ai-sdk-provider": "^3.0.0",
     "@xterm/headless": "^6.0.0",
@@ -62,6 +66,7 @@
     "configstore": "^8.0.0",
     "diff": "^9.0.0",
     "ollama-ai-provider-v2": "^3.5.1",
+    "quickjs-wasi": "3.6.2",
     "ulid": "^3.0.0",
     "zhipu-ai-provider": "^0.3.1",
     "zod": "^4.3.5"
