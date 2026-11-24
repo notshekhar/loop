@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.21.47] - 2026-11-24
+
+### Added
+
+- **Chat Import** — a new built-in extension (off by default; turn it on in `/extensions` or with `loop enable chat-import`). `/claude-import`, `/codex-import` and `/cursor-import` list that agent's chats from the folder you are in, newest first and searchable; add a session id (or the start of one) to open a chat from anywhere. The chat is drawn in the transcript first, exactly as a reopened session would be — calls renamed to loop's own tools and folded into rows, only the prompts you typed (the context those agents inject is dropped) — and a menu in place of the input asks **Save** (a new session in this folder, which you carry on from) or **Discard** (nothing is written). Cursor's CLI and editor chats are both read. The other agents' files are never changed: a database in WAL mode is read through a copy, because even a read-only open creates a `-shm` file beside it.
+
+### Changed
+
+- **`/shells` opens a picker** of your background shells: pick one, then **Stop it** or **Show its output**, or stop every running one from the first row. The shells panel ends with a line saying so. `/shells kill <id>` and `/shells kill all` still work, and `/shells stop <id>` now does too.
+
 ## [0.21.46] - 2026-11-22
 
 ### Added
