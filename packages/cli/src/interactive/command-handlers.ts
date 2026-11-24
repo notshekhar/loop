@@ -10,6 +10,7 @@ import { createAgentHandlers } from "./handlers/agent-handlers";
 import { createBashDenyHandlers } from "./handlers/bashdeny-handlers";
 import { createContextHandlers } from "./handlers/context-handlers";
 import { createShellsHandlers } from "./handlers/shells-handlers";
+import { createImportPreviewHandlers } from "./handlers/import-preview-handlers";
 import { createNotesHandlers } from "./handlers/notes-handlers";
 import { createDoctorHandlers } from "./handlers/doctor-handlers";
 import { createDatasourceHandlers } from "./handlers/datasource-handlers";
@@ -40,6 +41,7 @@ export function createCommandContext(state: AppState, deps: AppDeps): CommandCon
         ...createMiscHandlers(state, deps),
         ...createModelHandlers(state, deps),
         ...createSessionHandlers(state, deps),
+        ...createImportPreviewHandlers(state, deps),
         ...createRefreshHandlers(state, deps),
         ...createSessionTreeHandlers(state, deps),
         ...createAgentHandlers(state, deps),

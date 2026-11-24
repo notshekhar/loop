@@ -20,6 +20,13 @@ import { accentTitle, dim, dimStruck } from "../ui/text";
 
 const MAX_ROWS = 4;
 
+/**
+ * The panel's last row: where to go to stop one. Shown whenever the panel has
+ * rows at all — tying it to "something is running" would make the panel
+ * shrink mid-turn the moment the last shell exits (see the header).
+ */
+export const SHELLS_HINT = "/shells to stop one or read its output";
+
 function clip(s: string, width: number): string {
     return visibleWidth(s) <= width ? s : truncateToWidth(s, width, "…");
 }
@@ -128,7 +135,8 @@ export class ShellsPanel implements Component {
         const shown = ordered.slice(0, MAX_ROWS);
         const rows = shown.map((s) => formatShellRow(s, width));
         const hidden = ordered.length - shown.length;
-        if (hidden > 0) rows.push(dim(`    +${hidden} more`));
+        const more = hidden > 0 ? `+${hidden} more · ` : "";
+        rows.push(clip(dim(`    ${more}${SHELLS_HINT}`), width));
         return rows;
     }
 }

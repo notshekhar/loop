@@ -7,7 +7,8 @@
 import { describe, expect, test } from "bun:test";
 import { visibleWidth } from "@notshekhar/loop-tui";
 import type { ShellInfo } from "@notshekhar/loop-core";
-import { formatShellRow, ShellsPanel } from "../src/interactive/components/shells-panel";
+import { formatShellRow, SHELLS_HINT, ShellsPanel } from "../src/interactive/components/shells-panel";
+import { shellPickerItems } from "../src/interactive/handlers/shells-handlers";
 
 function shell(over: Partial<ShellInfo> = {}): ShellInfo {
     return {
@@ -95,7 +96,35 @@ describe("panel", () => {
         panel.setShells([shell({ id: "bash_1", status: "exited", exitCode: 0 }), shell({ id: "bash_2" })]);
         panel.retireFinished();
         const rows = panel.render(100);
-        expect(rows).toHaveLength(1);
+        // The shell, then the hint.
+        expect(rows).toHaveLength(2);
         expect(rows[0]).toContain("bash_2");
+    });
+
+    test("says where to stop a shell, and the hint never wraps", () => {
+        const panel = new ShellsPanel();
+        panel.setShells([shell()]);
+        expect(panel.render(100).at(-1)).toContain(SHELLS_HINT);
+        for (const width of [20, 40, 80]) {
+            for (const row of panel.render(width)) expect(visibleWidth(row)).toBeLessThanOrEqual(width);
+        }
+    });
+});
+
+describe("the /shells picker", () => {
+    test("lists running shells first, each by id and command", () => {
+        const items = shellPickerItems([
+            shell({ id: "bash_1", status: "exited", exitCode: 0 }),
+            shell({ id: "bash_2", command: "bun run dev" }),
+        ]);
+        expect(items.map((i) => i.value)).toEqual(["bash_2", "bash_1"]);
+        expect(items[0].label).toContain("bun run dev");
+        expect(items[0].description).toContain("running");
+    });
+
+    test("offers stopping everything only when more than one is running", () => {
+        expect(shellPickerItems([shell({ id: "a" })])[0].label).not.toContain("Stop all");
+        const two = shellPickerItems([shell({ id: "a" }), shell({ id: "b" })]);
+        expect(two[0].label).toBe("Stop all 2 running shells");
     });
 });

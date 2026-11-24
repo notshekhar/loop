@@ -82,6 +82,7 @@ panel). They can be enabled/disabled/reloaded but not uninstalled.
 | `wayfinder` | Charts a big, foggy effort as a map of decision tickets. `/wayfinder <idea\|map url>`.                                         |
 | `anatomy`   | Explains an idea as a crafted, interactive isometric figure. `/anatomy <idea>`. On by default; downloads its kit on first use. |
 | `rtk`       | Rewrites bash commands through the `rtk` binary to compress output. No-op if `rtk` isn't on PATH.                              |
+| `chat-import` | Imports a Claude Code, Codex or Cursor chat from this folder: preview it, then save or discard. `/claude-import` · `/codex-import` · `/cursor-import [session id]`. |
 
 `lsp` finds a language server in the project's `node_modules/.bin`, then on
 `PATH`. Only if neither has one does it install: npm packages and `go install`

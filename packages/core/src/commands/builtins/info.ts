@@ -37,7 +37,7 @@ export const statusCommands: SlashCommand[] = [
     {
         name: "shells",
         description:
-            "Background shells: /shells lists · /shells run <cmd> · /shells <id> shows output · /shells kill <id>|all",
+            "Background shells: /shells picks one to stop or read · /shells run <cmd> · /shells <id> · /shells kill <id>|all",
         handler: (ctx, args) => ctx.manageShells(args ?? ""),
     },
     notesCommand,

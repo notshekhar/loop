@@ -105,13 +105,13 @@ class NodeSqliteDatabase implements SqliteDatabase {
     readonly #db: NodeDatabase;
     readonly #cache = new Map<string, SqliteStatement<never>>();
 
-    constructor(path: string) {
+    constructor(path: string, readonly = false) {
         const { DatabaseSync } = require_("node:sqlite") as {
             DatabaseSync: new (path: string, options?: Record<string, unknown>) => NodeDatabase;
         };
         // `allowExtension` stays off: core loads no SQLite extensions, and the
         // session DB is a file other tools can write.
-        this.#db = new DatabaseSync(path);
+        this.#db = new DatabaseSync(path, { readOnly: readonly });
     }
 
     query<Row = unknown>(sql: string): SqliteStatement<Row> {
@@ -175,19 +175,21 @@ class NodeSqliteDatabase implements SqliteDatabase {
 }
 
 /**
- * Open the session database.
+ * Open the session database — or, with `readonly`, another program's
+ * database that must never be written to.
  *
  * Under Bun this IS `new Database(path, ...)` — same class, same behaviour,
  * no wrapper in the path. Only Node gets the adapter above.
  */
-export function openSqlite(path: string, options?: { create?: boolean }): SqliteDatabase {
+export function openSqlite(path: string, options?: { create?: boolean; readonly?: boolean }): SqliteDatabase {
+    const readonly = options?.readonly ?? false;
     if (isBunRuntime()) {
         const { Database } = require_("bun:sqlite") as {
             Database: new (path: string, options?: Record<string, unknown>) => SqliteDatabase;
         };
-        return new Database(path, { create: options?.create ?? true });
+        return new Database(path, readonly ? { readonly: true } : { create: options?.create ?? true });
     }
-    return new NodeSqliteDatabase(path);
+    return new NodeSqliteDatabase(path, readonly);
 }
 
 /**

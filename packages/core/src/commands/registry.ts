@@ -1,3 +1,13 @@
+import type { Entry } from "../types";
+
+/** Another agent's chat, read into loop's shape, waiting to be saved or thrown away. */
+export interface ImportPreview {
+    /** The agent it came from: "Claude Code". */
+    source: string;
+    title: string;
+    entries: Entry[];
+}
+
 export interface CommandContext {
     emit(event: string, data?: unknown): void;
     setModel(modelId: string): Promise<void> | void;
@@ -9,7 +19,7 @@ export interface CommandContext {
     showCost(): void;
     /** /context — context-window usage breakdown (grid + categories). */
     showContext(): Promise<void>;
-    manageShells(args: string): void;
+    manageShells(args: string): Promise<void> | void;
     /**
      * /notes — this session's notes: pick one to submit or delete, add one,
      * or remove them all. `/notes <text>` (also `/note <text>`) adds a note.
@@ -54,6 +64,13 @@ export interface CommandContext {
     attachImage(path?: string): Promise<void> | void;
     exportSession(target?: string): Promise<void>;
     importSession(path: string): Promise<void>;
+    /**
+     * Show an imported chat in the transcript, then ask whether to keep it:
+     * saving makes it a new session in this folder and switches to it,
+     * discarding puts the transcript back as it was. Nothing is written
+     * before the user says save.
+     */
+    previewImport(chat: ImportPreview): Promise<void>;
     reload(): Promise<void>;
     showChangelog(): void;
     manageAgents(): Promise<void>;
