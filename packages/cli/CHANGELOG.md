@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.21.48] - 2026-11-28
+
+### Added
+
+- **Imported chats show what they cost, and Save puts it in the cost ledger.** The Chat Import preview now has a `Cost ·` line — tokens in and out and dollars, per model — read from Claude Code's and Codex's own token counts and priced at the same rates loop bills its own calls at. Cursor records no counts, so its tokens are estimated from the text (~4 characters a token) at your current model's prices, and the line starts with `~`. Saving writes one ledger row per call, dated when the call happened, so `/cost`'s days, months and lifetime include it.
+- **`/import`** lists Claude Code, Codex and Cursor chats from this folder in one picker. A chat you already imported is marked, and importing it again offers **Open it** instead of a second copy (and a second bill).
+- **Native agents get loop's MCP servers and project rules.** Claude Code and Codex can call the MCP servers you set up in loop, and each agent is handed the AGENTS.md / CLAUDE.md it doesn't read by itself.
+
+### Changed
+
+- **Codex runs on `codex app-server`**: replies stream, a session resumes across turns, Esc interrupts the turn, and Codex's plan shows as loop's todo list. Its command and file-change approvals come to loop's own prompt.
+- **Claude Code asks before its own tools** (web fetch, edits outside the folder…) with the rule it would save, and **always** is remembered by Claude Code. Its shell commands go through loop's bash permission rules.
+- Switching models no longer starts a native agent's session over; images you attach reach Cursor and Antigravity too; Claude Code's subagents show progress while they run; Claude Code turns billed to an API key show the real cost Claude reports.
+- **Quitting says what it would stop.** With turns, background shells or team threads still running, Ctrl+C / Ctrl+D must be pressed twice and the warning names them; running turns are saved where they stopped. Processes started by loop's MCP and language servers are stopped on the way out instead of being left running.
+
 ## [0.21.47] - 2026-11-24
 
 ### Added
