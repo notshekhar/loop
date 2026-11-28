@@ -357,6 +357,13 @@ export function runningShellCount(sessionId: string | undefined): number {
     return n;
 }
 
+/** Running shells across every session — what quitting would stop. */
+export function runningShellTotal(): number {
+    let n = 0;
+    for (const s of sessions.values()) for (const rec of s.byId.values()) if (rec.status === "running") n++;
+    return n;
+}
+
 export interface ShellReadResult {
     info: ShellInfo;
     /** Output since the last read (or since `from`), newest-first-truncated. */

@@ -8,10 +8,17 @@
  */
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { TUI } from "@notshekhar/loop-tui";
-import { SessionManager, type Entry, type ImportPreview } from "@notshekhar/loop-core";
+import {
+    findChatImport,
+    getDb,
+    SessionManager,
+    sumLedgerForSession,
+    type Entry,
+    type ImportPreview,
+} from "@notshekhar/loop-core";
 import { useTempSessionDb } from "../../core/test/helpers/temp-db";
 import { ChatHistory } from "../src/interactive/components/chat-history";
-import { createImportPreviewHandlers } from "../src/interactive/handlers/import-preview-handlers";
+import { createImportPreviewHandlers, importChoices } from "../src/interactive/handlers/import-preview-handlers";
 import type { AppDeps } from "../src/interactive/deps";
 import type { AppState } from "../src/interactive/state";
 import { initTheme } from "../src/interactive/ui/theme";
@@ -42,9 +49,30 @@ const CHAT: ImportPreview = {
         },
         { type: "message", role: "assistant", content: [{ type: "text", text: "There are three." }], ts: 4 },
     ] as Entry[],
+    origin: { source: "claude-code", chatId: "chat-1" },
+    cost: {
+        usd: 0.5,
+        inputTokens: 1_200_000,
+        outputTokens: 9_400,
+        cacheReadTokens: 1_000_000,
+        approximate: false,
+        byModel: ["claude-opus-5-5 · 2 calls · $0.500"],
+        calls: [1, 2].map((n) => ({
+            ts: Date.UTC(2026, 10, 1, 12, n),
+            model: "claude-code/claude-opus-5-5",
+            usage: {
+                inputTokens: 600_000,
+                outputTokens: 4_700,
+                inputTokenDetails: { noCacheTokens: 100_000, cacheReadTokens: 500_000, cacheWriteTokens: 0 },
+            },
+            usd: 0.25,
+            prices: { input: 1, output: 0, cacheRead: 0.3, cacheWrite: 1.25 },
+            estimated: false,
+        })),
+    },
 };
 
-async function harness(answer: "save" | "discard" | null) {
+async function harness(answer: "save" | "discard" | "open" | null) {
     const manager = new SessionManager();
     const existing = await manager.create({ cwd: CWD, provider: "xai", model: "xai/m" });
     await existing.append({ type: "message", role: "user", content: "the chat I had open", ts: 1 });
@@ -104,7 +132,40 @@ describe("import preview", () => {
         expect(h.preview()).toContain("how many files?");
         expect(h.preview()).toContain("There are three.");
         expect(h.preview()).not.toContain("the chat I had open");
+        expect(h.preview()).toContain("Cost · 1.2M tokens in · 9.4k out · $0.500");
         expect(h.sessionsWhileAsking()).toBe(before);
+    });
+
+    test("Save files each call in the cost ledger, dated when it happened", async () => {
+        const h = await harness("save");
+        await h.handlers.previewImport(CHAT);
+        const saved = h.state.session!;
+        expect(sumLedgerForSession(saved.id)).toMatchObject({ rows: 2, usd: 0.5, inputTokens: 1_200_000, outputTokens: 9_400 });
+        const rows = getDb()
+            .query<{ source: string; provider: string; day: string }, [string]>(
+                "SELECT source, provider, day FROM cost_ledger WHERE session_pub = ?",
+            )
+            .all(saved.id);
+        expect(rows).toEqual([
+            { source: "import", provider: "claude-code", day: "2026-11-01" },
+            { source: "import", provider: "claude-code", day: "2026-11-01" },
+        ]);
+        expect(findChatImport("claude-code", "chat-1")).toBe(saved.id);
+    });
+
+    test("a chat imported before opens its session — never a second copy or a second bill", async () => {
+        const first = await harness("save");
+        await first.handlers.previewImport(CHAT);
+        const pub = first.state.session!.id;
+
+        const again = await harness("open");
+        const before = again.sessionsHere();
+        const chat = { ...CHAT, importedAs: pub };
+        expect(importChoices(CWD, chat).map((c) => c.label)).toEqual(["Open it", "Discard"]);
+        await again.handlers.previewImport(chat);
+        expect(again.sessionsHere()).toBe(before);
+        expect(again.state.session!.id).toBe(pub);
+        expect(sumLedgerForSession(pub).rows).toBe(2);
     });
 
     test("Save makes it a session in this folder, named, and the live one", async () => {

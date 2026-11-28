@@ -11,11 +11,12 @@
  * across a compaction the link is `logicalParentUuid` instead.
  */
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { readJsonl, readJsonlHead } from "./files";
 import { type ChatSource, type ChatSummary, type ImportedChat, matchId, type SourceRoots, titleFrom } from "./source";
 import { outputText, translateToolCall } from "./tool-calls";
 import { parseTimestamp, TranscriptBuilder } from "./transcript";
+import { claudeCalls, type ImportedCall } from "./usage";
 import { userPrompt } from "./user-text";
 
 interface ClaudeBlock {
@@ -52,7 +53,9 @@ export function claudeCodeSource(roots: SourceRoots): ChatSource {
     const projects = join(roots.home, ".claude", "projects");
     const dirOf = (cwd: string) => join(projects, claudeProjectFolder(cwd));
     return {
+        id: "claude-code",
         label: "Claude Code",
+        pricing: { agent: "claude-code", vendor: "anthropic" },
         list: (cwd) => listIn(dirOf(cwd)),
         load(id, cwd) {
             const path = findChat(dirOf(cwd), id) ?? findAnywhere(projects, id);
@@ -109,7 +112,14 @@ function readChat(path: string): ImportedChat {
         id: basename(path, ".jsonl"),
         title: titleFrom(title ?? records.map(promptOf).find(Boolean)),
         entries: builder.build(),
+        calls: [...claudeCalls(records), ...subagentCalls(path)],
     };
+}
+
+/** Subagents (Task) keep their own transcripts beside the chat — their calls were paid for too. */
+function subagentCalls(chatPath: string): ImportedCall[] {
+    const dir = join(dirname(chatPath), basename(chatPath, ".jsonl"), "subagents");
+    return chatFiles(dir).flatMap((path) => claudeCalls(readJsonl(path)));
 }
 
 const isConversation = (r: ClaudeRecord) =>

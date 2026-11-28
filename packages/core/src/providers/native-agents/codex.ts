@@ -5,35 +5,32 @@ import type {
     LanguageModelV4StreamPart,
     LanguageModelV4StreamResult,
 } from "@ai-sdk/provider";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { answerCodexRequest } from "./codex-approvals";
+import { CodexTurnReader } from "./codex-events";
+import { CodexRpc } from "./codex-rpc";
+import { writeTurnImages } from "./images";
+import { nativeMcpServers, type NativeMcpServer } from "./mcp-servers";
 import { cachedProbe, peekProbe } from "./probe-cache";
-import { findExecutable, runCommand, spawnJsonLines } from "./process";
-import { mapCodexItem } from "./tool-map";
+import { findExecutable, runCommand } from "./process";
 import {
     type Effort,
-    finishReason,
     generateFromStream,
-    getSessionLink,
-    makeUsage,
+    linkNativeSession,
     nearestEffort,
-    PartWriter,
-    planPrompt,
     type PromptPlan,
-    readTurnContext,
     requestedEffort,
-    setSessionLink,
-    streamFrom,
+    streamNativeTurn,
+    systemPromptOf,
     trackTurnProcess,
+    type TurnOutcome,
     waitForPreviousTurn,
     type NativeAgentTurnContext,
 } from "./shared";
 
 /**
- * OpenAI's Codex as an ai-sdk provider, driving the user's `codex` CLI in
- * headless mode (`codex exec --json`). The CLI's own login (ChatGPT or an API
- * key) authenticates; loop stores nothing.
+ * OpenAI's Codex as an ai-sdk provider, driving the user's `codex` CLI over
+ * its app-server protocol (see codex-rpc.ts). The CLI's own login (ChatGPT or
+ * an API key) authenticates; loop stores nothing.
  */
 // Not plain "codex": the desktop/web app inherits t3code's own `codex` driver
 // kind, and sharing its id hides the models the same way it did for Cursor.
@@ -120,46 +117,65 @@ export function codexEffort(model: CodexModel | undefined, requested: Effort | u
     return nearestEffort(requested, model.efforts);
 }
 
-// ---- argv --------------------------------------------------------------------
+// ---- thread settings -------------------------------------------------------
+
+/** How a thread may act: the sandbox, and whether Codex asks before stepping out of it. */
+export interface CodexPolicy {
+    sandbox: "read-only" | "workspace-write" | "danger-full-access";
+    approvalPolicy: "never" | "untrusted";
+}
 
 /**
- * The command line for one turn. Kept pure for tests: everything the CLI is
- * told about permissions, model and session lives here.
- *
- * `exec resume` takes no --sandbox or --cd, so the sandbox goes through `-c`
- * (it works for both) and the directory is the process's own cwd.
+ * Loop's modes in Codex's terms. Kept pure for tests.
+ * - utility call (title, recap): read-only, nothing to ask about;
+ * - plan mode: read-only;
+ * - approvals on: the workspace sandbox, and Codex asks — loop answers each
+ *   request with its own bash gate (see codex-approvals.ts);
+ * - otherwise: full access, never asks.
  */
-export function codexArgs(input: {
+export function codexPolicy(ctx: NativeAgentTurnContext | undefined): CodexPolicy {
+    if (!ctx || ctx.planMode) return { sandbox: "read-only", approvalPolicy: "never" };
+    if (ctx.approvals) return { sandbox: "workspace-write", approvalPolicy: "untrusted" };
+    return { sandbox: "danger-full-access", approvalPolicy: "never" };
+}
+
+/** loop's MCP servers as Codex `mcp_servers` config entries. */
+export function codexMcpConfig(servers: readonly NativeMcpServer[]): Record<string, unknown> | undefined {
+    if (servers.length === 0) return undefined;
+    const entries = servers.map((s) => {
+        const base =
+            s.kind === "stdio"
+                ? { command: s.command, args: s.args, ...(s.env ? { env: s.env } : {}) }
+                : { url: s.url, ...(s.headers ? { http_headers: s.headers } : {}) };
+        return [s.name, { ...base, ...(s.deniedTools.length ? { disabled_tools: s.deniedTools } : {}) }] as const;
+    });
+    return { mcp_servers: Object.fromEntries(entries) };
+}
+
+/** `thread/start` / `thread/resume` parameters for one turn. */
+export function codexThreadParams(input: {
     model: string;
-    effort?: Effort;
-    resumeId?: string;
-    ctx?: NativeAgentTurnContext;
-    images?: readonly string[];
-}): string[] {
-    const args = ["exec"];
-    if (input.resumeId) args.push("resume");
-    args.push("--json", "--skip-git-repo-check", "-m", input.model);
-    if (input.effort) args.push("-c", `model_reasoning_effort="${input.effort}"`);
-    const { ctx } = input;
-    if (!ctx) {
-        // A utility call (title, recap, summary): no tools worth running, no session kept.
-        args.push("-c", 'sandbox_mode="read-only"', "--ephemeral");
-    } else if (ctx.planMode) {
-        args.push("-c", 'sandbox_mode="read-only"');
-    } else if (ctx.approvals) {
-        // Headless Codex cannot ask; the sandbox is the closest thing to "ask first".
-        args.push("-c", 'sandbox_mode="workspace-write"');
-    } else {
-        args.push("--dangerously-bypass-approvals-and-sandbox");
-    }
-    for (const image of input.images ?? []) args.push("-i", image);
-    if (input.resumeId) args.push(input.resumeId);
-    // The prompt arrives on stdin.
-    args.push("-");
-    return args;
+    ctx: NativeAgentTurnContext | undefined;
+    instructions: string;
+    mcp: readonly NativeMcpServer[];
+}): Record<string, unknown> {
+    const config = input.ctx ? codexMcpConfig(input.mcp) : undefined;
+    return {
+        model: input.model,
+        ...(input.ctx ? { cwd: input.ctx.cwd } : {}),
+        ...codexPolicy(input.ctx),
+        ...(input.instructions ? { developerInstructions: input.instructions } : {}),
+        ...(config ? { config } : {}),
+        // A utility call keeps no thread on disk.
+        ...(input.ctx ? {} : { ephemeral: true }),
+    };
 }
 
 // ---- the model ---------------------------------------------------------------
+
+const CLIENT_INFO = { name: "loop", title: "loop", version: "1" };
+/** After an interrupt, how long Codex gets to close the turn before loop stops waiting. */
+const INTERRUPT_GRACE_MS = 3_000;
 
 export class CodexLanguageModel implements LanguageModelV4 {
     readonly specificationVersion = "v4" as const;
@@ -175,15 +191,8 @@ export class CodexLanguageModel implements LanguageModelV4 {
     async doStream(options: LanguageModelV4CallOptions): Promise<LanguageModelV4StreamResult> {
         const binary = findCodexBinary();
         if (!binary) throw new Error("Codex is not installed (no `codex` on PATH). Install it, then run `codex login`.");
-        const ctx = readTurnContext(options, CODEX_PROVIDER);
-        const link = ctx ? getSessionLink(CODEX_PROVIDER, ctx.loopSessionId) : undefined;
-        const plan = planPrompt(options.prompt, link, this.modelId);
-        return streamFrom(async (enqueue) => {
-            const outcome = await this.runTurn(binary, options, ctx, plan, enqueue);
-            if (outcome === "missing-session") {
-                await this.runTurn(binary, options, ctx, planPrompt(options.prompt, undefined, this.modelId), enqueue);
-            }
-        });
+        // loop's system prompt rides as the thread's developer instructions.
+        return streamNativeTurn(CODEX_PROVIDER, options, {}, (ctx, plan, enqueue) => this.runTurn(binary, options, ctx, plan, enqueue));
     }
 
     private async runTurn(
@@ -192,125 +201,110 @@ export class CodexLanguageModel implements LanguageModelV4 {
         ctx: NativeAgentTurnContext | undefined,
         plan: PromptPlan,
         enqueue: (part: LanguageModelV4StreamPart) => void,
-    ): Promise<"done" | "missing-session"> {
-        const model = modelFor(this.modelId);
-        const effort = codexEffort(model, requestedEffort(options));
-        // Codex reads images from files; they live only as long as the turn.
-        const imageDir = plan.images.length ? mkdtempSync(join(tmpdir(), "loop-codex-")) : undefined;
-        const images = plan.images.map((img, i) => {
-            const ext = img.mediaType.split("/")[1]?.replace("jpeg", "jpg") ?? "png";
-            const path = join(imageDir!, `image-${i}.${ext}`);
-            writeFileSync(path, Buffer.from(img.base64, "base64"));
-            return path;
-        });
-        const args = codexArgs({ model: this.modelId, effort, resumeId: plan.resumeId, ctx, images });
-
-        // No system-prompt flag: utility calls carry their instructions inline.
-        const system = ctx
-            ? ""
-            : options.prompt
-                  .filter((m) => m.role === "system")
-                  .map((m) => m.content as string)
-                  .join("\n\n");
-        const stdin = `${system ? `${system}\n\n` : ""}${plan.text}`;
-
-        const w = new PartWriter(enqueue, CODEX_PROVIDER);
-        const toolNames = new Map<string, string>();
-        let producedOutput = false;
-        let finished = false;
-        let failure: string | undefined;
-        let exit: { code: number | null; stderr: string } | undefined;
-        let sessionId = plan.resumeId;
-
+    ): Promise<TurnOutcome> {
         const gateKey = ctx ? `${CODEX_PROVIDER}:${ctx.loopSessionId}` : undefined;
         await waitForPreviousTurn(gateKey);
+        const reader = new CodexTurnReader(enqueue, CODEX_PROVIDER, this.modelId);
+        const rpc = new CodexRpc(binary, [], { cwd: ctx?.cwd }, {
+            onNotification: (method, params) => reader.onNotification(method, params),
+            onRequest: (method, params) => answerCodexRequest(method, params, ctx, options.abortSignal),
+        });
+        trackTurnProcess(gateKey, rpc.exited);
+        const images = writeTurnImages(plan.images);
         try {
-            for await (const ev of spawnJsonLines(binary, args, {
-                cwd: ctx?.cwd,
-                stdin,
-                signal: options.abortSignal,
-                onExit: (code, stderr) => (exit = { code, stderr }),
-                onSpawn: (exited) => trackTurnProcess(gateKey, exited),
-            })) {
-                const type = ev.type as string;
-                if (type === "thread.started") {
-                    sessionId = String(ev.thread_id);
-                    if (ctx) {
-                        setSessionLink(CODEX_PROVIDER, ctx.loopSessionId, {
-                            nativeId: sessionId,
-                            seen: plan.seen,
-                            model: this.modelId,
-                            updatedAt: Date.now(),
-                        });
-                    }
-                    enqueue({ type: "response-metadata", id: sessionId, modelId: this.modelId });
-                } else if (type === "item.started" || type === "item.updated" || type === "item.completed") {
-                    const item = (ev.item ?? {}) as Record<string, unknown>;
-                    const id = `codex-${String(item.id ?? "")}`;
-                    const kind = String(item.type ?? "");
-                    if (kind === "agent_message") {
-                        if (type === "item.completed") {
-                            w.text(String(item.text ?? ""));
-                            w.endText();
-                            producedOutput = true;
-                        }
-                    } else if (kind === "reasoning") {
-                        if (type === "item.completed") {
-                            w.reasoning(String(item.text ?? ""));
-                            w.endReasoning();
-                            producedOutput = true;
-                        }
-                    } else if (kind === "error") {
-                        // A non-fatal warning from the agent; the turn carries on.
-                        if (type === "item.completed" && item.message) w.reasoning(`⚠ ${String(item.message)}\n`);
-                    } else {
-                        const mapped = mapCodexItem(item);
-                        if (!toolNames.has(id)) {
-                            toolNames.set(id, mapped.name);
-                            w.toolCall(id, mapped.name, mapped.input);
-                        }
-                        if (type === "item.completed") w.toolResult(id, mapped.name, mapped.result ?? "", mapped.isError === true);
-                        producedOutput = true;
-                    }
-                } else if (type === "turn.completed") {
-                    w.endAll();
-                    const u = (ev.usage ?? {}) as Record<string, number>;
-                    const cached = u.cached_input_tokens ?? 0;
-                    const cacheWrite = u.cache_write_input_tokens ?? 0;
-                    enqueue({
-                        type: "finish",
-                        usage: makeUsage({
-                            // Codex's input_tokens already include the cached share.
-                            input: Math.max(0, (u.input_tokens ?? 0) - cached - cacheWrite),
-                            cacheRead: cached,
-                            cacheWrite,
-                            output: u.output_tokens,
-                            reasoning: u.reasoning_output_tokens,
-                        }),
-                        finishReason: finishReason("stop"),
-                        providerMetadata: { [CODEX_PROVIDER]: { sessionId: sessionId ?? null, model: this.modelId } },
-                    });
-                    finished = true;
-                } else if (type === "turn.failed") {
-                    failure = String((ev.error as { message?: unknown })?.message ?? "the turn failed");
-                } else if (type === "error") {
-                    failure = String(ev.message ?? "unknown error");
-                }
-            }
+            await rpc.request("initialize", { clientInfo: CLIENT_INFO, capabilities: null });
+            rpc.notify("initialized");
+            const threadId = await this.openThread(rpc, plan, ctx, options);
+            if (!threadId) return "missing-session";
+            reader.threadId = threadId;
+            linkNativeSession(CODEX_PROVIDER, ctx, threadId, plan.seen);
+            enqueue({ type: "response-metadata", id: threadId, modelId: this.modelId });
+            const turn = await rpc.request<{ turn: { id: string } }>("turn/start", {
+                threadId,
+                input: codexInput(plan.text, images.paths),
+                model: this.modelId,
+                ...effortParam(this.modelId, options),
+            });
+            await settleTurn(rpc, reader, { threadId, turnId: turn.turn.id }, options.abortSignal);
+        } catch (err) {
+            reader.endUnfinished(err instanceof Error ? err.message : String(err), options.abortSignal?.aborted === true);
         } finally {
-            if (imageDir) rmSync(imageDir, { recursive: true, force: true });
+            images.dispose();
+            // The session gate (trackTurnProcess) waits on the exit; the turn doesn't have to.
+            void rpc.close();
         }
-
-        if (finished) return "done";
-        w.endAll();
-        if (options.abortSignal?.aborted) {
-            enqueue({ type: "finish", usage: makeUsage({}), finishReason: finishReason("other", "aborted") });
-            return "done";
-        }
-        if (!producedOutput && plan.resumeId) return "missing-session";
-        const detail = failure ?? (exit?.stderr.trim() || `codex exited with code ${exit?.code ?? "?"}`);
-        throw new Error(`Codex: ${detail}`);
+        return "done";
     }
+
+    /** Start a thread, or resume the linked one; undefined when the linked one is gone. */
+    private async openThread(
+        rpc: CodexRpc,
+        plan: PromptPlan,
+        ctx: NativeAgentTurnContext | undefined,
+        options: LanguageModelV4CallOptions,
+    ): Promise<string | undefined> {
+        const params = codexThreadParams({
+            model: this.modelId,
+            ctx,
+            instructions: systemPromptOf(options.prompt),
+            mcp: ctx ? nativeMcpServers(ctx.cwd) : [],
+        });
+        if (!plan.resumeId) {
+            const started = await rpc.request<{ thread: { id: string } }>("thread/start", params);
+            return started.thread.id;
+        }
+        try {
+            const resumed = await rpc.request<{ thread: { id: string } }>("thread/resume", {
+                ...params,
+                threadId: plan.resumeId,
+                excludeTurns: true,
+            });
+            return resumed.thread.id;
+        } catch {
+            // Deleted, expired or unreadable: the caller re-seeds a fresh thread.
+            return undefined;
+        }
+    }
+}
+
+/** The user's message: text, plus images as local files Codex reads itself. */
+function codexInput(text: string, imagePaths: readonly string[]): unknown[] {
+    return [
+        ...(text ? [{ type: "text", text, text_elements: [] }] : []),
+        ...imagePaths.map((path) => ({ type: "localImage", path })),
+    ];
+}
+
+function effortParam(modelId: string, options: LanguageModelV4CallOptions): { effort?: Effort } {
+    const effort = codexEffort(modelFor(modelId), requestedEffort(options));
+    return effort ? { effort } : {};
+}
+
+/**
+ * Wait for the turn to end. Esc asks Codex to interrupt (so its thread is
+ * left in a clean state) instead of killing the process mid-write; if it
+ * doesn't close the turn promptly, loop stops waiting anyway. A server that
+ * dies first ends the turn with whatever it printed.
+ */
+async function settleTurn(
+    rpc: CodexRpc,
+    reader: CodexTurnReader,
+    ids: { threadId: string; turnId: string },
+    signal: AbortSignal | undefined,
+): Promise<void> {
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    const abandoned = new Promise<void>((resolve) => {
+        const onAbort = () => {
+            void rpc.request("turn/interrupt", ids).catch(() => {});
+            grace = setTimeout(resolve, INTERRUPT_GRACE_MS);
+        };
+        if (signal?.aborted) onAbort();
+        else signal?.addEventListener("abort", onAbort, { once: true });
+        void reader.settled.then(() => signal?.removeEventListener("abort", onAbort));
+    });
+    await Promise.race([reader.settled, abandoned, rpc.exited]);
+    clearTimeout(grace);
+    reader.endUnfinished("codex app-server exited before the turn finished", signal?.aborted === true);
 }
 
 export function createCodexModel(modelId: string): LanguageModelV4 {

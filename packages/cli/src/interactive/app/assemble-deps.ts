@@ -4,6 +4,7 @@
  */
 import type { AppDeps } from "../deps";
 import type { ScrollbackFocus } from "../scrollback-focus";
+import { stillRunning } from "../still-running";
 import { resolveModelId } from "./boot";
 import { rosterOf, type AppCore } from "./context";
 import type { Layout } from "./layout";
@@ -71,7 +72,7 @@ export function assembleAppDeps(core: AppCore, parts: DepsParts): AppDeps {
             switchTo: (slot) => slots.switchTo(slot),
             openNew: () => rosterOf(core).openNew(),
             showSwitcher: () => rosterOf(core).showSwitcher(),
-            runningElsewhere: () => slots.all().filter((s) => s.busy && !slots.isForeground(s)).length,
+            stillRunning: () => stillRunning(slots),
         },
         isForeground: () => true,
         settleTurn: (failed) => slots.settle(slots.foreground, failed),

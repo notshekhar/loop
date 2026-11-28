@@ -16,11 +16,24 @@ export function ago(ms: number, now = Date.now()): string {
     return new Date(ms).toISOString().slice(0, 10);
 }
 
-/** One row per chat: its title, then when, which variant, and enough of the id to tell two apart. */
-export function chatPickerItems(chats: readonly ChatSummary[], now = Date.now()): UiSelectItem[] {
+/** A picker row's chat: `imported` when it is already a loop session. */
+export type PickerChat = ChatSummary & { imported?: boolean };
+
+/**
+ * One row per chat: its title, then when, which variant, whether it is
+ * already imported, and enough of the id to tell two apart (after any
+ * `source:` prefix the all-agents picker puts on it).
+ */
+export function chatPickerItems(chats: readonly PickerChat[], now = Date.now()): UiSelectItem[] {
     return chats.map((chat) => ({
         value: chat.id,
         label: chat.title,
-        description: [ago(chat.updatedAt, now), chat.origin, chat.id.slice(0, 8)].filter(Boolean).join(" · "),
+        description: [ago(chat.updatedAt, now), chat.origin, chat.imported ? "imported" : "", shortId(chat.id)]
+            .filter(Boolean)
+            .join(" · "),
     }));
+}
+
+function shortId(id: string): string {
+    return id.slice(id.indexOf(":") + 1, id.indexOf(":") + 9);
 }

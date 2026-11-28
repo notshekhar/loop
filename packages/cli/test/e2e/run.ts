@@ -369,11 +369,9 @@ async function testShellsFollowTheSession(): Promise<void> {
             await s.send("hello\r", 3);
             check(onScreen("fake-reply"), "the first message was answered", s.screenRows().slice(-12));
             await s.send("/shells\r", 1.5);
-            check(
-                onScreen("bash_1  running"),
-                "/shells still lists the shell started before it",
-                s.screenRows().slice(-12),
-            );
+            check(onScreen("bash_1"), "/shells still lists the shell started before it", s.screenRows().slice(-12));
+            // Bare /shells is a picker; close it before typing the next command.
+            await s.send("\x1b", 1);
 
             await s.send("/new\r", 2.5);
             check(onScreen("keeps running in the background"), "/new keeps a session with a shell running");
@@ -389,6 +387,126 @@ async function testShellsFollowTheSession(): Promise<void> {
         });
     } finally {
         server.stop();
+    }
+}
+
+/**
+ * A stdio MCP server shaped like an `npx` wrapper: it answers the handshake,
+ * ignores stdin closing, and runs a worker of its own (`sleep <marker>`).
+ */
+const STUB_MCP_SERVER = `
+const { spawn } = require("child_process");
+spawn("sleep", [process.argv[2]], { stdio: "ignore" });
+setInterval(() => {}, 1 << 30);
+let buf = "";
+process.stdin.on("data", (d) => {
+    buf += d;
+    for (let i; (i = buf.indexOf("\\n")) >= 0; ) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 1);
+        if (!line.trim()) continue;
+        const m = JSON.parse(line);
+        if (m.id === undefined) continue;
+        const result =
+            m.method === "initialize"
+                ? { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "stub", version: "1" } }
+                : m.method === "tools/list"
+                  ? { tools: [{ name: "noop", description: "noop", inputSchema: { type: "object" } }] }
+                  : {};
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result }) + "\\n");
+    }
+});
+`;
+
+/** A provider that streams half an answer and then never finishes it. */
+function hangingModelServer(port: number, partial: string): { stop(): void } {
+    const event = (e: { type: string }) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`;
+    const message = { id: "m", type: "message", role: "assistant", model: "fake-1", content: [], usage: { input_tokens: 5, output_tokens: 1 } };
+    const head = [
+        { type: "message_start", message: { ...message, stop_reason: null } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: partial } },
+    ]
+        .map(event)
+        .join("");
+    const server = Bun.serve({
+        port,
+        hostname: "127.0.0.1",
+        idleTimeout: 0,
+        fetch: () =>
+            new Response(new ReadableStream({ start: (c) => c.enqueue(new TextEncoder().encode(head)) }), {
+                headers: { "content-type": "text/event-stream" },
+            }),
+    });
+    return { stop: () => server.stop(true) };
+}
+
+/** Pids of processes whose whole command line is `command` — a substring would match the shell running this suite. */
+function processesMatching(command: string): number[] {
+    const out = Bun.spawnSync(["ps", "-Ao", "pid=,command="]).stdout.toString();
+    return out
+        .split("\n")
+        .map((l) => /^\s*(\d+)\s+(.*)$/.exec(l))
+        .filter((m) => m?.[2]?.trim() === command)
+        .map((m) => Number(m![1]));
+}
+
+/**
+ * Quitting with work still running: /exit says what it would stop and asks;
+ * confirming stops a background shell, a busy session's turn (saved where it
+ * stopped) and an MCP server together with the worker IT started — which
+ * used to be handed to pid 1 and run on forever.
+ */
+async function testQuitStopsEverything(): Promise<void> {
+    const port = 47396;
+    const marker = "7793";
+    const server = hangingModelServer(port, "half-an-answer");
+    const scratch = mkdtempSync(join(tmpdir(), "loop-quit-"));
+    const stub = join(scratch, "mcp.js");
+    writeFileSync(stub, STUB_MCP_SERVER);
+    const auth = {
+        active: "custom:fake",
+        customProviders: {
+            fake: { name: "fake", sdk: "anthropic", baseURL: `http://127.0.0.1:${port}`, apiKey: "k", models: [{ id: "fake-1", name: "Fake" }] },
+        },
+    };
+    const settings = { defaultModel: "custom:fake/fake-1", mcpServers: { stub: { command: "node", args: [stub, marker] } } };
+    try {
+        await withSession({ settings: JSON.stringify(settings) }, async (s) => {
+            s.writeHome(".loop/auth.json", JSON.stringify(auth));
+            await s.pump(6);
+            const onScreen = (text: string) => s.screenRows().some((r) => r.includes(text));
+            await s.send("/shells run sleep 7794\r", 1.5);
+            await s.send("hello there\r", 3);
+            // + New session: the first one keeps its turn running out of sight.
+            await s.send("\x13", 1);
+            await s.send("\r", 2);
+            check(processesMatching(`sleep ${marker}`).length === 1, "the MCP server's worker is running");
+
+            await s.send("/exit\r", 1.5);
+            check(
+                onScreen("Quit? That stops 1 background shell and 1 running session."),
+                "/exit says what quitting would stop",
+                s.screenRows().slice(-8),
+            );
+            await s.send("\r", 4);
+            check(onScreen("Stopped 1 running turn"), "quitting reports the turn it stopped", s.screenRows().slice(-8));
+            check(processesMatching(`sleep ${marker}`).length === 0, "the MCP server's worker died with loop");
+            check(processesMatching("sleep 7794").length === 0, "the background shell died with loop");
+
+            const db = new Database(join(s.home, ".loop", "agent.db"), { readonly: true });
+            const saved = db.query("SELECT payload FROM entries WHERE role = 'assistant'").all() as { payload: string }[];
+            db.close();
+            check(
+                saved.some((r) => r.payload.includes("half-an-answer") && r.payload.includes('"interrupted":true')),
+                "the busy session saved its half-finished answer as interrupted",
+                saved,
+            );
+        });
+    } finally {
+        server.stop();
+        for (const pid of processesMatching(`sleep ${marker}`)) process.kill(pid, "SIGKILL");
+        rmSync(scratch, { recursive: true, force: true });
     }
 }
 
@@ -421,11 +539,13 @@ async function testShellsPanel(): Promise<void> {
             "/shells lists it",
         );
         check(!hasDuplicates(s), "listing printed nothing twice", duplicates(s));
+        // Bare /shells is a picker; close it before typing the next command.
+        await s.send("\x1b", 1);
 
         await s.send("/shells kill all\r", 2.0);
         rows = s.screenRows();
         check(
-            rows.some((r) => r.includes("Killed")),
+            rows.some((r) => r.includes("Stopped 1 shell")),
             "killing it is reported",
             rows.slice(-12),
         );
@@ -1940,6 +2060,7 @@ const SCENARIOS: Record<string, () => Promise<void>> = {
     shells: testShellsPanel,
     "shells-esc": testShellsSurviveEsc,
     "shells-sessions": testShellsFollowTheSession,
+    quit: testQuitStopsEverything,
     "mcp-surfaces": testMcpSurfaces,
     "mcp-panel": testMcpPanel,
     nav: testNavigationIsFocusOnly,

@@ -98,29 +98,36 @@ describe("claude reasoning options", () => {
 describe("prompt planning", () => {
     const user = (text: string): LanguageModelV4Message => ({ role: "user", content: [{ type: "text", text }] });
     const assistant = (text: string): LanguageModelV4Message => ({ role: "assistant", content: [{ type: "text", text }] });
-    const link = (seen: number) => ({ nativeId: "native-1", seen, model: "sonnet", updatedAt: 0 });
+    const link = (seen: number) => ({ nativeId: "native-1", seen, updatedAt: 0 });
 
     test("first turn sends the message alone", () => {
-        const plan = planPrompt([{ role: "system", content: "sys" }, user("hi")], undefined, "sonnet");
+        const plan = planPrompt([{ role: "system", content: "sys" }, user("hi")], undefined);
         expect(plan).toMatchObject({ text: "hi", seen: 1 });
         expect(plan.resumeId).toBeUndefined();
     });
     test("resumes when only its own reply came in between", () => {
-        const plan = planPrompt([user("hi"), assistant("hello"), user("next")], link(1), "sonnet");
+        const plan = planPrompt([user("hi"), assistant("hello"), user("next")], link(1));
         expect(plan).toMatchObject({ resumeId: "native-1", text: "next", seen: 3 });
     });
     test("re-seeds when another model answered in between", () => {
         const prompt = [user("hi"), assistant("a"), user("q2"), assistant("b"), user("q3")];
-        const plan = planPrompt(prompt, link(1), "sonnet");
+        const plan = planPrompt(prompt, link(1));
         expect(plan.resumeId).toBeUndefined();
         expect(plan.text).toContain("<conversation-so-far>");
         expect(plan.text).toEndWith("q3");
     });
-    test("re-seeds after a model switch within the provider", () => {
-        expect(planPrompt([user("hi"), assistant("a"), user("q")], link(1), "opus").resumeId).toBeUndefined();
+    test("a model switch within the provider keeps the native session", () => {
+        // The link doesn't record a model: the CLI is told the new one on resume.
+        expect(planPrompt([user("hi"), assistant("a"), user("q")], link(1)).resumeId).toBe("native-1");
     });
     test("re-seeds when history shrank (compaction)", () => {
-        expect(planPrompt([user("summary"), user("q")], link(5), "sonnet").resumeId).toBeUndefined();
+        expect(planPrompt([user("summary"), user("q")], link(5)).resumeId).toBeUndefined();
+    });
+    test("inlineSystem leads a fresh session with loop's prompt, and only a fresh one", () => {
+        const prompt: LanguageModelV4Message[] = [{ role: "system", content: "loop context" }, user("hi"), assistant("a"), user("q")];
+        expect(planPrompt(prompt, undefined, { inlineSystem: true }).text).toStartWith("loop context\n\n");
+        expect(planPrompt(prompt, link(1), { inlineSystem: true }).text).toBe("q");
+        expect(planPrompt(prompt, undefined).text).not.toContain("loop context");
     });
 });
 

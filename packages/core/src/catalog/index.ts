@@ -220,6 +220,8 @@ let mergedCache: Record<string, ModelInfo> | null = null;
  * window at all, and compaction never runs. Set by getCatalog.
  */
 let customModelFallback: ((id: string) => ModelInfo | undefined) | null = null;
+/** The last catalog build's vendor lookup — see vendorModelPrices. */
+let vendorLookup: VendorCatalogResolver | null = null;
 
 /**
  * The model's info from a catalog getCatalog returned, including custom
@@ -665,6 +667,8 @@ export async function getCatalog(opts: GetCatalogOptions = {}): Promise<Record<s
         get: (key) => byShortId.get(key),
     });
 
+    vendorLookup = vendorCatalog;
+
     const customMeta = storedCustomMeta();
     customModelFallback = (id) => {
         const slash = id.indexOf("/");
@@ -844,6 +848,26 @@ export async function getModel(id: string): Promise<ModelInfo | undefined> {
 }
 
 let FALLBACK_BY_ID: Record<string, ModelInfo> | null = null;
+/**
+ * $/MTok for a model named the way its VENDOR names it (`claude-opus-5-5`,
+ * `anthropic/claude-opus-5-5-20261001`, `gpt-5.6-sol`) — what another agent's
+ * logs record — rather than by a loop model id. Uses the same lookup that
+ * prices loop's gateway and native-agent models: vendor-qualified first, then
+ * the bare id, with or without a date suffix. Undefined when no catalog knows it.
+ */
+export async function vendorModelPrices(modelId: string): Promise<ModelInfo["cost"] | undefined> {
+    await getCatalog();
+    const cost = vendorLookup?.resolve(modelId)?.cost;
+    if (!cost || cost.input === undefined || cost.output === undefined) return undefined;
+    return {
+        input: cost.input,
+        output: cost.output,
+        cacheRead: cost.cacheRead ?? cost.input,
+        cacheWrite: cost.cacheWrite ?? cost.input,
+        ...(cost.reasoning !== undefined ? { reasoning: cost.reasoning } : {}),
+    };
+}
+
 export function getModelSync(id: string): ModelInfo | undefined {
     if (mergedCache?.[id]) return mergedCache[id];
     if (GENERATED_MODELS[id]) return GENERATED_MODELS[id];

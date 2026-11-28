@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir } from "../../brand";
+import { readJsonFile, updateJsonFile } from "./json-store";
 
 /**
  * Detection results for the native agents (is the CLI installed, is it signed
@@ -13,31 +13,23 @@ interface Entry<T> {
     ts: number;
 }
 
+type Entries = Record<string, Entry<unknown>>;
+
 const FILE = () => join(getConfigDir(), "native-agents.json");
 const TTL_MS = 60 * 60 * 1000;
-let mem: Record<string, Entry<unknown>> | undefined;
+/** Read once for the synchronous peeks; refreshed by every write. */
+let mem: Entries | undefined;
 const inFlight = new Map<string, Promise<unknown>>();
 
-function load(): Record<string, Entry<unknown>> {
-    if (mem) return mem;
-    try {
-        mem = JSON.parse(readFileSync(FILE(), "utf8")) as Record<string, Entry<unknown>>;
-    } catch {
-        mem = {};
-    }
+function load(): Entries {
+    mem ??= readJsonFile<Entries>(FILE());
     return mem;
 }
 
-function save(): void {
-    try {
-        const dir = getConfigDir();
-        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-        const tmp = `${FILE()}.${process.pid}.tmp`;
-        writeFileSync(tmp, JSON.stringify(mem ?? {}, null, 2));
-        renameSync(tmp, FILE());
-    } catch {
-        /* cache only */
-    }
+function store(key: string, entry: Entry<unknown>): void {
+    // Merge into the file as it is now: another loop process may have probed
+    // a different agent since this one loaded it.
+    mem = updateJsonFile<Entries>(FILE(), (current) => ({ ...current, [key]: entry }));
 }
 
 /** Last known value without probing (undefined if never probed). */
@@ -56,8 +48,7 @@ export async function cachedProbe<T>(key: string, probe: () => Promise<T>, opts:
         if (pending) return pending;
         const p = probe()
             .then((value) => {
-                load()[key] = { value, ts: Date.now() };
-                save();
+                store(key, { value, ts: Date.now() });
                 return value;
             })
             .finally(() => inFlight.delete(key));

@@ -21,10 +21,6 @@ import { cursorSource } from "../src/extensions/builtin/chat-import/cursor";
 import { withForeignSqlite } from "../src/extensions/builtin/chat-import/files";
 import { TranscriptBuilder } from "../src/extensions/builtin/chat-import/transcript";
 import { userPrompt } from "../src/extensions/builtin/chat-import/user-text";
-import chatImport from "../src/extensions/builtin/chat-import/index";
-import { getBuiltin } from "../src/extensions/builtin";
-import type { ExtensionAPI } from "../src/extensions/api";
-import type { ImportPreview, SlashCommand } from "../src/commands";
 
 const CWD = "/work/my.app";
 const OTHER = "/work/other";
@@ -401,91 +397,5 @@ describe("other programs' databases", () => {
         expect(rows).toEqual([{ v: "in the wal" }]);
         expect([fingerprint(path), fingerprint(`${path}-wal`)]).toEqual(before);
         expect(existsSync(join(left, "chat.db-shm"))).toBe(false);
-    });
-});
-
-describe("the extension's commands", () => {
-    /** Activate it with a scripted picker; LOOP_IMPORT_HOME points every reader at the fake home. */
-    function activate(pick: (items: Array<{ value: string; label: string }>) => { value: string } | null) {
-        const commands = new Map<string, SlashCommand>();
-        const pickers: string[] = [];
-        const api = {
-            commands: { register: (cmd: SlashCommand) => commands.set(cmd.name, cmd) },
-            ui: {
-                search: async (items: Array<{ value: string; label: string }>, title?: string) => {
-                    pickers.push(title ?? "");
-                    return pick(items);
-                },
-            },
-        } as unknown as ExtensionAPI;
-        chatImport.activate!(api);
-        return { commands, pickers };
-    }
-
-    async function run(command: SlashCommand, args: string) {
-        const events: string[] = [];
-        const previews: ImportPreview[] = [];
-        const ctx = {
-            cwd: CWD,
-            emit: (event: string, data?: unknown) => events.push(`${event}: ${String(data ?? "")}`),
-            previewImport: async (chat: ImportPreview) => {
-                previews.push(chat);
-            },
-        };
-        await command.handler(ctx as never, args);
-        return { events, previews };
-    }
-
-    beforeEach(() => {
-        process.env.LOOP_IMPORT_HOME = home;
-        const dir = join(home, ".claude", "projects", claudeProjectFolder(CWD));
-        mkdirSync(dir, { recursive: true });
-        writeFileSync(
-            join(dir, "dddd-4444.jsonl"),
-            lines([
-                { uuid: "u1", parentUuid: null, type: "user", message: { role: "user", content: "hello there" } },
-                { uuid: "a1", parentUuid: "u1", type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "hi" }] } },
-            ]),
-        );
-    });
-    afterEach(() => {
-        delete process.env.LOOP_IMPORT_HOME;
-    });
-
-    test("registers one command per agent", () => {
-        expect([...activate(() => null).commands.keys()].sort()).toEqual(["claude-import", "codex-import", "cursor-import"]);
-    });
-
-    test("bare: pick a chat from this folder, and it goes to the preview", async () => {
-        const { commands, pickers } = activate((items) => items[0]);
-        const { previews } = await run(commands.get("claude-import")!, "");
-        expect(pickers).toEqual(["Claude Code chats in this folder"]);
-        expect(previews.map((p) => [p.source, p.title, p.entries.length])).toEqual([["Claude Code", "hello there", 2]]);
-    });
-
-    test("with an id: no picker, straight to the preview", async () => {
-        const { commands, pickers } = activate(() => null);
-        const { previews } = await run(commands.get("claude-import")!, "dddd-4444");
-        expect(pickers).toEqual([]);
-        expect(previews).toHaveLength(1);
-    });
-
-    test("an unknown id says so, and nothing is previewed", async () => {
-        const { commands } = activate(() => null);
-        const { events, previews } = await run(commands.get("claude-import")!, "nope");
-        expect(previews).toEqual([]);
-        expect(events).toEqual(["error: no Claude Code chat with id nope"]);
-    });
-
-    test("a folder with no chats says how to import one from elsewhere instead of an empty picker", async () => {
-        const { commands, pickers } = activate(() => null);
-        const { events } = await run(commands.get("codex-import")!, "");
-        expect(pickers).toEqual([]);
-        expect(events[0]).toContain("no Codex chats in /work/my.app");
-        expect(events[0]).toContain("/codex-import <session id>");
-    });
-
-    test("ships as a builtin, off until enabled", () => {
-        expect(getBuiltin("chat-import")?.defaultEnabled).toBe(false);
     });
 });

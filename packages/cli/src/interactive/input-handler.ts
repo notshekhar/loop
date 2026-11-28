@@ -35,6 +35,7 @@ import { copyToClipboard, readClipboardText } from "./clipboard";
 import { traceEvent } from "./debug-log";
 import { pickImageFile, readClipboardImageToFile } from "./clipboard-image";
 import { ClipboardImageTip } from "./clipboard-tip";
+import { describeStillRunning } from "./still-running";
 import {
     agentExists,
     getAppProfile,
@@ -96,11 +97,31 @@ function droppedAttachments(
     return { allowed: allowed.map((i) => i.path), rejected: rejected.map((i) => i.path) };
 }
 
+/** How soon the second press of a quit key must follow the first. */
+const QUIT_CONFIRM_MS = 1_000;
+
 export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandContext): InputListener {
     const { tui, history, queuedMessages, renderPending, hideWorking, cleanExit, editor, statusLine, scrollbackFocus } =
         deps;
     /** Nothing typed: where a bare ctrl+e can only mean nav (keys.ts:isCtrlE). */
     const promptEmpty = (): boolean => (editor.getText?.() ?? "") === "";
+
+    /**
+     * Quitting stops everything still running in this loop, so a quit key
+     * that would stop something must be pressed twice — and the warning says
+     * what it would stop. Ctrl+D with nothing running still quits at once.
+     */
+    const pressToQuit = (key: "Ctrl+C" | "Ctrl+D", code: number): void => {
+        const running = describeStillRunning(deps.sessions.stillRunning());
+        const now = Date.now();
+        if (now - state.lastQuitPressAt < QUIT_CONFIRM_MS || (key === "Ctrl+D" && !running)) {
+            cleanExit(code);
+            return;
+        }
+        state.lastQuitPressAt = now;
+        history.addSystem(running ? `Press ${key} again to quit — that stops ${running}.` : `Press ${key} again to quit.`);
+        tui.requestRender();
+    };
 
     const clipboardTip = new ClipboardImageTip();
     // Coming back to the terminal is when a freshly copied image is worth
@@ -425,7 +446,7 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
             return { consume: true };
         }
         if (isCtrlD(data) && !state.busy && editorFocused) {
-            cleanExit(0);
+            pressToQuit("Ctrl+D", 0);
             return { consume: true };
         }
         if (isCtrlC(data)) {
@@ -440,21 +461,7 @@ export function createInputHandler(state: AppState, deps: AppDeps, ctx: CommandC
                 tui.requestRender();
                 return { consume: true };
             }
-            const now = Date.now();
-            if (now - state.lastCtrlCAt < 1000) {
-                cleanExit(130);
-                return { consume: true };
-            }
-            state.lastCtrlCAt = now;
-            // Quitting takes every session in this loop with it; say so when
-            // some are still working where you cannot see them.
-            const running = deps.sessions.runningElsewhere();
-            history.addSystem(
-                running > 0
-                    ? `Press Ctrl+C again to quit — ${running} session${running === 1 ? " is" : "s are"} still running in the background.`
-                    : "Press Ctrl+C again to quit.",
-            );
-            tui.requestRender();
+            pressToQuit("Ctrl+C", 130);
             return { consume: true };
         }
         // Esc with a stray idle selection just drops it (safety net).

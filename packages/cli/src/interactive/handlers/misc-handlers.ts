@@ -28,6 +28,7 @@ import { loadChangelogEntries } from "../../changelog";
 import { resolveAvailableUpdate, runUpgrade } from "../../commands";
 import { accent, dim, heading, warn } from "../ui/text";
 import { theme } from "../ui/theme";
+import { describeStillRunning } from "../still-running";
 
 type MiscHandlers = Pick<
     CommandContext,
@@ -300,7 +301,9 @@ export function createMiscHandlers(state: AppState, deps: AppDeps): MiscHandlers
             editor.setText?.(`${current}${sep}${token} `);
             tui.requestRender();
         },
-        exit() {
+        async exit() {
+            const running = describeStillRunning(deps.sessions.stillRunning());
+            if (running && !(await confirmQuit(selectOnce, running))) return;
             cleanExit(0);
         },
         setCwd(p) {
@@ -485,4 +488,16 @@ export function createMiscHandlers(state: AppState, deps: AppDeps): MiscHandlers
             tui.requestRender();
         },
     };
+}
+
+/** /exit with work still running: stop it and quit, or stay. */
+async function confirmQuit(selectOnce: AppDeps["selectOnce"], running: string): Promise<boolean> {
+    const pick = await selectOnce(
+        [
+            { value: "quit", label: "Stop them and quit", description: running },
+            { value: "stay", label: "Keep working" },
+        ],
+        `Quit? That stops ${running}.`,
+    );
+    return pick?.value === "quit";
 }

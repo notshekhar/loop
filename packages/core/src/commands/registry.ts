@@ -1,4 +1,19 @@
+import type { ImportedCallCost } from "../sessions/chat-imports";
 import type { Entry } from "../types";
+
+/** What an imported chat cost, as estimated from its calls (see chat-import/cost.ts). */
+export interface ImportCostEstimate {
+    usd: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    /** Some calls' tokens were estimated from text, or priced at a stand-in model. */
+    approximate: boolean;
+    /** One line per model: "claude-opus-5-5 · 42 calls · $3.12". */
+    byModel: string[];
+    /** What saving writes to the ledger. */
+    calls: ImportedCallCost[];
+}
 
 /** Another agent's chat, read into loop's shape, waiting to be saved or thrown away. */
 export interface ImportPreview {
@@ -6,6 +21,11 @@ export interface ImportPreview {
     source: string;
     title: string;
     entries: Entry[];
+    /** Which importer and chat — so the chat is recorded, and never imported twice. */
+    origin: { source: string; chatId: string };
+    cost: ImportCostEstimate;
+    /** Already a loop session (this pub id): offer to open it instead of a duplicate. */
+    importedAs?: string;
 }
 
 export interface CommandContext {
@@ -48,7 +68,8 @@ export interface CommandContext {
      * the background.
      */
     askBtw?(question: string): Promise<void> | void;
-    exit(): void;
+    /** Quit; may first ask, when quitting would stop work still running. */
+    exit(): Promise<void> | void;
     cwd: string;
     setCwd(p: string): void;
     startLogin(provider?: string): Promise<void>;

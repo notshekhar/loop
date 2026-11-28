@@ -26,7 +26,8 @@ export interface AppState {
     pinnedInput: boolean;
     abort: AbortController;
     pendingInjection: string | null;
-    lastCtrlCAt: number;
+    /** When a quit key was last pressed — the second press within a second quits. */
+    lastQuitPressAt: number;
     /** Resolves when trust prompt + SessionStart hooks settle; the first turn
      * awaits it so hook-injected context isn't lost to a fast first prompt. */
     startupHooksDone: Promise<void> | null;

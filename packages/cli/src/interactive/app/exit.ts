@@ -10,7 +10,11 @@ import {
     getExtensionHost,
     killAllBashChildren,
     getAppProfile,
+    snapshotOwnProcesses,
+    stopProcesses,
+    type OwnProcess,
 } from "@notshekhar/loop-core";
+import { interruptRunningTurns } from "../still-running";
 import { stopSystemSchemeProbes } from "../ui/system-scheme";
 import { printResumeHint } from "../resume-hint";
 import { resetCanvasWash } from "../ui/canvas-wash";
@@ -29,13 +33,24 @@ export interface ExitParts {
 }
 
 export function createCleanExit(core: AppCore, parts: ExitParts): (code?: number) => void {
+    let leaving = false;
     return (code = 0) => {
+        // The way out now waits for turns to settle; a second call in that
+        // window would tear everything down twice.
+        if (leaving) return;
+        leaving = true;
+        // FIRST, while the tree is whole: closing an MCP server below kills
+        // only that process, and its own children go to pid 1 the same moment.
+        const children = snapshotOwnProcesses();
         leaveScreen(core, parts);
-        printLeftovers(core);
+        // After leaveScreen released the team runtime, so a thread that
+        // settles here cannot hand its mail to a new turn on the way out.
+        const turns = interruptRunningTurns(core.slots);
+        printLeftovers(core, turns.count);
         // Put the tab back to a plain name: whatever spinner frame was showing
         // would otherwise be the last thing this terminal was told.
         parts.reporters.stopTerminalTitle();
-        releaseAndExit(core, parts.reporters, code);
+        void turns.settled.then(() => releaseAndExit(core, parts.reporters, code, children));
     };
 }
 
@@ -66,7 +81,7 @@ function leaveScreen(core: AppCore, parts: ExitParts): void {
     resetCanvasWash();
 }
 
-function printLeftovers(core: AppCore): void {
+function printLeftovers(core: AppCore, interrupted: number): void {
     const { slots, state } = core;
     // Background shells die with the loop that started them. They are
     // process-lifetime by design (nothing is persisted, nothing is adopted
@@ -77,6 +92,11 @@ function printLeftovers(core: AppCore): void {
     if (strayShells > 0) {
         process.stdout.write(`\nStopped ${strayShells} background shell${strayShells === 1 ? "" : "s"}.\n`);
     }
+    if (interrupted > 0) {
+        process.stdout.write(
+            `\nStopped ${interrupted} running turn${interrupted === 1 ? "" : "s"} — saved where ${interrupted === 1 ? "it" : "they"} stopped.\n`,
+        );
+    }
     printResumeHint(state.session?.id);
     // The others died with this process too; each can be picked up again.
     const others = slots.all().filter((s) => !slots.isForeground(s) && s.session);
@@ -86,7 +106,7 @@ function printLeftovers(core: AppCore): void {
     }
 }
 
-function releaseAndExit(core: AppCore, reporters: PaneReporters, code: number): void {
+function releaseAndExit(core: AppCore, reporters: PaneReporters, code: number, children: OwnProcess[]): void {
     const { state } = core;
     // Tear down MCP transports (stdio subprocesses, sockets) on the way out.
     void getMcpManager().close();
@@ -114,6 +134,9 @@ function releaseAndExit(core: AppCore, reporters: PaneReporters, code: number): 
         ]),
         new Promise((r) => setTimeout(r, EXIT_GRACE_MS)),
     ]).finally(() => {
+        // Whatever the closes above left behind — a server that ignored its
+        // SIGTERM, the processes a server started.
+        stopProcesses(children);
         // Checkpoint + close the session DB last — SessionEnd hooks above
         // may still read it, and bun:sqlite close is synchronous.
         closeDb();

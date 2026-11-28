@@ -34,3 +34,14 @@ export function formatTokens(n: number): string {
     if (v < 10_000_000_000_000) return `${(v / 1_000_000_000_000).toFixed(1)}T`;
     return `${Math.round(v / 1_000_000_000_000)}T`;
 }
+
+/** Dollars at a precision that still shows something: `$0.000034`, `$0.412`, `$3.12`. */
+export function fmtUsd(usd: number | undefined): string {
+    if (usd === undefined) return "—";
+    if (usd === 0) return "$0";
+    if (usd < 0.000001) return "<$0.000001";
+    // Two significant figures below a cent: $0.000034, not $0.0000.
+    if (usd < 0.01) return `$${usd.toPrecision(2)}`;
+    if (usd < 1) return `$${usd.toFixed(3)}`;
+    return `$${usd.toFixed(2)}`;
+}

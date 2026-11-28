@@ -4,8 +4,10 @@ import { findCodexBinary, type CodexProbe } from "./codex";
 import { findCursorBinary, type CursorProbe } from "./cursor";
 export {
     CODEX_PROVIDER,
-    codexArgs,
     codexEffort,
+    codexMcpConfig,
+    codexPolicy,
+    codexThreadParams,
     createCodexModel,
     findCodexBinary,
     parseCodexModels,
@@ -37,9 +39,11 @@ import type { NativeAgentProviderId } from "./shared";
 export {
     isNativeAgentProvider,
     NATIVE_AGENT_PROVIDERS,
+    NATIVE_CONTEXT_FILES,
     type NativeAgentProviderId,
     type NativeAgentTurnContext,
 } from "./shared";
+export { setNativeProgressSink, type NativeProgressSink } from "./progress";
 export {
     CLAUDE_CODE_PROVIDER,
     claudeReasoningOptions,

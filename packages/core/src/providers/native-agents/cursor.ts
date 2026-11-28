@@ -6,25 +6,19 @@ import type {
     LanguageModelV4StreamResult,
 } from "@ai-sdk/provider";
 import { cachedProbe, peekProbe } from "./probe-cache";
-import { findExecutable, runCommand, spawnJsonLines } from "./process";
-import { mapCursorTool } from "./tool-map";
+import { findExecutable, runCommand, stripAnsi } from "./process";
+import { attachedImagesNote, writeTurnImages } from "./images";
+import { CURSOR_PROVIDER, CursorTurnReader } from "./cursor-events";
+import { runJsonLinesTurn } from "./json-lines-turn";
 import {
     type Effort,
     EFFORT_ORDER,
-    finishReason,
     generateFromStream,
-    getSessionLink,
-    makeUsage,
     nearestEffort,
-    PartWriter,
-    planPrompt,
     type PromptPlan,
-    readTurnContext,
     requestedEffort,
-    setSessionLink,
-    streamFrom,
-    trackTurnProcess,
-    waitForPreviousTurn,
+    streamNativeTurn,
+    type TurnOutcome,
     type NativeAgentTurnContext,
 } from "./shared";
 
@@ -33,10 +27,7 @@ import {
  * headless mode (`-p --output-format stream-json`). The CLI's own login (or
  * CURSOR_API_KEY) authenticates; loop stores nothing.
  */
-// Not plain "cursor": the desktop/web app inherits t3code's own `cursor`
-// driver (default model, slug aliases, a settings block that defaults to
-// disabled), and sharing its id silently hid every model from the picker.
-export const CURSOR_PROVIDER = "cursor-agent" as const;
+export { CURSOR_PROVIDER };
 
 export function findCursorBinary(): string | undefined {
     return findExecutable(["cursor-agent"], "CURSOR_AGENT_BIN");
@@ -163,20 +154,19 @@ export interface CursorProbe {
 }
 
 const PROBE_KEY = CURSOR_PROVIDER;
-const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
 
 export async function probeCursor(opts: { refresh?: boolean } = {}): Promise<CursorProbe | null> {
     const binary = findCursorBinary();
     if (!binary) return null;
     return cachedProbe<CursorProbe | null>(PROBE_KEY, async () => {
         const status = await runCommand(binary, ["status"], { timeoutMs: 15_000 });
-        const statusText = (status.stdout + status.stderr).replace(ANSI, "");
+        const statusText = stripAnsi(status.stdout + status.stderr);
         const login = /logged in as\s+(\S+)/i.exec(statusText);
         const loggedIn = Boolean(login) || Boolean(process.env.CURSOR_API_KEY);
         if (!loggedIn) return { binary, loggedIn: false, families: [] };
         const list = await runCommand(binary, ["--list-models"], { timeoutMs: 30_000 });
         const models: Array<{ id: string; name: string }> = [];
-        for (const raw of list.stdout.replace(ANSI, "").split("\n")) {
+        for (const raw of stripAnsi(list.stdout).split("\n")) {
             const m = /^\s*([A-Za-z0-9][\w.\-\[\]=,]*)\s+-\s+(.+?)\s*$/.exec(raw);
             if (!m) continue;
             // Zero-width characters ride along in some display names.
@@ -197,50 +187,6 @@ export function resolveCursorModel(modelId: string, effort: Effort | undefined):
     return family ? selectCursorVariant(family, effort).id : modelId;
 }
 
-// ---- stream-json → ai-sdk ----------------------------------------------------
-
-/** `{ shellToolCall: {...} }` → kind `shell` and its payload. */
-function toolKindOf(call: Record<string, unknown>): { kind: string; body: Record<string, unknown> } {
-    const key = Object.keys(call).find((k) => k.endsWith("ToolCall")) ?? Object.keys(call)[0] ?? "tool";
-    return { kind: key.replace(/ToolCall$/, ""), body: (call[key] ?? {}) as Record<string, unknown> };
-}
-
-const NOISY_ARG_KEYS = new Set([
-    "toolCallId",
-    "parsingResult",
-    "simpleCommands",
-    "hasInputRedirect",
-    "hasOutputRedirect",
-    "hookAdditionalContexts",
-]);
-
-function cleanArgs(args: unknown): unknown {
-    if (!args || typeof args !== "object") return args ?? {};
-    return Object.fromEntries(Object.entries(args).filter(([k]) => !NOISY_ARG_KEYS.has(k)));
-}
-
-function toolResultOf(name: string, body: Record<string, unknown>): { value: unknown; isError: boolean } {
-    const result = (body.result ?? {}) as Record<string, unknown>;
-    if (result.error !== undefined || result.failure !== undefined || result.rejected !== undefined) {
-        return { value: result.error ?? result.failure ?? result.rejected, isError: true };
-    }
-    const success = (result.success ?? result) as Record<string, unknown>;
-    if (name === "shell" && typeof success === "object") {
-        const out = String(success.stdout ?? "");
-        const err = String(success.stderr ?? "");
-        const code = Number(success.exitCode ?? 0);
-        return {
-            value: `${out}${err ? `${out ? "\n" : ""}[stderr]\n${err}` : ""}${code ? `\n[exit ${code}]` : ""}`,
-            isError: code !== 0,
-        };
-    }
-    if (success && typeof success === "object") {
-        const { interleavedOutput: _drop, ...rest } = success;
-        return { value: rest, isError: false };
-    }
-    return { value: success ?? "", isError: false };
-}
-
 // ---- the model ---------------------------------------------------------------
 
 export class CursorLanguageModel implements LanguageModelV4 {
@@ -257,15 +203,10 @@ export class CursorLanguageModel implements LanguageModelV4 {
     async doStream(options: LanguageModelV4CallOptions): Promise<LanguageModelV4StreamResult> {
         const binary = findCursorBinary();
         if (!binary) throw new Error("Cursor's CLI is not installed (no `cursor-agent` on PATH). Install it, then run `cursor-agent login`.");
-        const ctx = readTurnContext(options, CURSOR_PROVIDER);
-        const link = ctx ? getSessionLink(CURSOR_PROVIDER, ctx.loopSessionId) : undefined;
-        const plan = planPrompt(options.prompt, link, this.modelId);
-        return streamFrom(async (enqueue) => {
-            const outcome = await this.runTurn(binary, options, ctx, plan, enqueue);
-            if (outcome === "missing-session") {
-                await this.runTurn(binary, options, ctx, planPrompt(options.prompt, undefined, this.modelId), enqueue);
-            }
-        });
+        // No system-prompt flag: loop's prompt leads the first message instead.
+        return streamNativeTurn(CURSOR_PROVIDER, options, { inlineSystem: true }, (ctx, plan, enqueue) =>
+            this.runTurn(binary, options, ctx, plan, enqueue),
+        );
     }
 
     private async runTurn(
@@ -274,7 +215,23 @@ export class CursorLanguageModel implements LanguageModelV4 {
         ctx: NativeAgentTurnContext | undefined,
         plan: PromptPlan,
         enqueue: (part: LanguageModelV4StreamPart) => void,
-    ): Promise<"done" | "missing-session"> {
+    ): Promise<TurnOutcome> {
+        const images = writeTurnImages(plan.images);
+        try {
+            return await this.runProcess(binary, options, ctx, plan, `${plan.text}${attachedImagesNote(images.paths)}`, enqueue);
+        } finally {
+            images.dispose();
+        }
+    }
+
+    private async runProcess(
+        binary: string,
+        options: LanguageModelV4CallOptions,
+        ctx: NativeAgentTurnContext | undefined,
+        plan: PromptPlan,
+        stdin: string,
+        enqueue: (part: LanguageModelV4StreamPart) => void,
+    ): Promise<TurnOutcome> {
         const variant = resolveCursorModel(this.modelId, requestedEffort(options));
         const args = ["-p", "--output-format", "stream-json", "--stream-partial-output", "--trust", "--model", variant];
         if (plan.resumeId) args.push("--resume", plan.resumeId);
@@ -284,105 +241,18 @@ export class CursorLanguageModel implements LanguageModelV4 {
         else args.push("--force");
         if (ctx) args.push("--workspace", ctx.cwd);
 
-        // No system-prompt flag: utility calls carry their instructions inline.
-        const system = ctx
-            ? ""
-            : options.prompt
-                  .filter((m) => m.role === "system")
-                  .map((m) => m.content as string)
-                  .join("\n\n");
-        const imageNote = plan.images.length ? `\n\n[${plan.images.length} image(s) attached — not supported by Cursor's CLI]` : "";
-        const stdin = `${system ? `${system}\n\n` : ""}${plan.text}${imageNote}`;
-
-        const w = new PartWriter(enqueue, CURSOR_PROVIDER);
-        const toolNames = new Map<string, string>();
-        let producedOutput = false;
-        let finished = false;
-        let exit: { code: number | null; stderr: string } | undefined;
-        let sessionId = plan.resumeId;
-
-        // One cursor-agent process per loop session at a time — see waitForPreviousTurn.
-        const gateKey = ctx ? `${CURSOR_PROVIDER}:${ctx.loopSessionId}` : undefined;
-        await waitForPreviousTurn(gateKey);
-        for await (const ev of spawnJsonLines(binary, args, {
-            cwd: ctx?.cwd,
+        return runJsonLinesTurn({
+            provider: CURSOR_PROVIDER,
+            label: "Cursor",
+            binary,
+            args,
             stdin,
+            ctx,
+            plan,
             signal: options.abortSignal,
-            onExit: (code, stderr) => (exit = { code, stderr }),
-            onSpawn: (exited) => trackTurnProcess(gateKey, exited),
-        })) {
-            const type = ev.type as string;
-            const subtype = ev.subtype as string | undefined;
-            if (type === "system" && subtype === "init") {
-                sessionId = String(ev.session_id);
-                if (ctx) {
-                    setSessionLink(CURSOR_PROVIDER, ctx.loopSessionId, {
-                        nativeId: sessionId,
-                        seen: plan.seen,
-                        model: this.modelId,
-                        updatedAt: Date.now(),
-                    });
-                }
-                enqueue({ type: "response-metadata", id: sessionId, modelId: variant });
-            } else if (type === "thinking") {
-                if (subtype === "delta") w.reasoning(String(ev.text ?? ""));
-                else if (subtype === "completed") w.endReasoning();
-                producedOutput = true;
-            } else if (type === "assistant") {
-                // Deltas carry a timestamp; the consolidated copy of each
-                // segment (model_call_id, or no timestamp) closes it instead.
-                const text = ((ev.message as { content?: Array<{ text?: string }> })?.content ?? [])
-                    .map((c) => c.text ?? "")
-                    .join("");
-                if (ev.model_call_id !== undefined || ev.timestamp_ms === undefined) w.endText();
-                else w.text(text);
-                producedOutput = true;
-            } else if (type === "tool_call") {
-                const id = String(ev.call_id ?? "").replace(/\s+/g, "_");
-                const { kind, body } = toolKindOf((ev.tool_call ?? {}) as Record<string, unknown>);
-                const mapped = mapCursorTool(kind, cleanArgs(body.args));
-                if (subtype === "started") {
-                    toolNames.set(id, mapped.name);
-                    w.toolCall(id, mapped.name, mapped.input);
-                } else if (subtype === "completed") {
-                    if (!toolNames.has(id)) w.toolCall(id, mapped.name, mapped.input);
-                    const { value, isError } = toolResultOf(kind, body);
-                    w.toolResult(id, toolNames.get(id) ?? mapped.name, value, isError);
-                }
-                producedOutput = true;
-            } else if (type === "result") {
-                w.endAll();
-                const isError = ev.is_error === true || subtype !== "success";
-                if (isError) enqueue({ type: "error", error: new Error(`Cursor: ${String(ev.result ?? ev.error ?? subtype)}`) });
-                const u = (ev.usage ?? {}) as Record<string, number>;
-                const cacheRead = u.cacheReadTokens ?? 0;
-                const cacheWrite = u.cacheWriteTokens ?? 0;
-                enqueue({
-                    type: "finish",
-                    usage: makeUsage({
-                        input: Math.max(0, (u.inputTokens ?? 0) - cacheRead - cacheWrite),
-                        cacheRead,
-                        cacheWrite,
-                        output: u.outputTokens,
-                    }),
-                    finishReason: finishReason(isError ? "error" : "stop", subtype),
-                    providerMetadata: {
-                        [CURSOR_PROVIDER]: { sessionId: sessionId ?? null, model: variant, requestId: (ev.request_id as string) ?? null },
-                    },
-                });
-                finished = true;
-            }
-        }
-
-        if (finished) return "done";
-        w.endAll();
-        if (options.abortSignal?.aborted) {
-            enqueue({ type: "finish", usage: makeUsage({}), finishReason: finishReason("other", "aborted") });
-            return "done";
-        }
-        const detail = exit?.stderr.replace(ANSI, "").trim() || `cursor-agent exited with code ${exit?.code ?? "?"}`;
-        if (!producedOutput && plan.resumeId) return "missing-session";
-        throw new Error(`Cursor: ${detail}`);
+            reader: new CursorTurnReader(enqueue, { variant, plan, ctx }),
+            enqueue,
+        });
     }
 }
 

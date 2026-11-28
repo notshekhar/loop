@@ -7,6 +7,7 @@ import { brandEnv } from "../brand";
 import { Experimental_StdioMCPTransport } from "@ai-sdk/mcp/mcp-stdio";
 import type { MCPClientConfig, OAuthClientProvider } from "@ai-sdk/mcp";
 import { isHttpServer, resolveSecretMap, resolveSecrets, type McpServerConfig } from "./config";
+import { ensureOwnProcessSweep } from "../tools/utils/own-processes";
 
 // The client accepts either a transport-config object (http/sse) or a custom
 // transport instance (stdio). MCPTransportConfig isn't re-exported, so derive
@@ -31,6 +32,9 @@ export function buildTransport(cfg: McpServerConfig, authProvider?: OAuthClientP
             authProvider,
         };
     }
+    // The SDK stops only the server it spawned; what that server started
+    // (npx's node, a Python venv's worker) would outlive loop without this.
+    ensureOwnProcessSweep();
     return new Experimental_StdioMCPTransport({
         command: cfg.command,
         args: cfg.args,

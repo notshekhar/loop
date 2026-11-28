@@ -35,7 +35,7 @@ function shared(): SharedState {
         cycleCustomAgent: null,
         scrollbackFocus: false,
         pinnedInput: false,
-        lastCtrlCAt: 0,
+        lastQuitPressAt: 0,
         timerEndsAt: null,
         timerLabel: "",
     };

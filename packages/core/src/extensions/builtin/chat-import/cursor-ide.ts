@@ -52,7 +52,10 @@ export function cursorIdeSource(roots: SourceRoots): ChatSource {
     const query = <T>(use: (db: SqliteDatabase) => T, fallback: T): T =>
         existsSync(database) ? withForeignSqlite(database, use) : fallback;
     return {
+        id: "cursor",
         label: "Cursor",
+        // Cursor records no model: its calls are estimated and priced at loop's current one.
+        pricing: { agent: "cursor-agent" },
         list: (cwd) => query((db) => composersIn(db, cwd).flatMap(summarize), []),
         load: (id, cwd) =>
             query((db) => {

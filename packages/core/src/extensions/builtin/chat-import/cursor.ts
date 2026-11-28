@@ -10,7 +10,10 @@ import type { ChatSource, SourceRoots } from "./source";
 export function cursorSource(roots: SourceRoots): ChatSource {
     const parts = [cursorCliSource(roots), cursorIdeSource(roots)];
     return {
+        id: "cursor",
         label: "Cursor",
+        // Cursor records no model: its calls are estimated and priced at loop's current one.
+        pricing: { agent: "cursor-agent" },
         list: (cwd) => parts.flatMap((p) => p.list(cwd)).sort((a, b) => b.updatedAt - a.updatedAt),
         load(id, cwd) {
             for (const part of parts) {

@@ -13,6 +13,7 @@ import type { TodoPanel } from "./components/todo-panel";
 import type { ShellsPanel } from "./components/shells-panel";
 import type { ScrollbackFocus } from "./scrollback-focus";
 import type { SessionSlot } from "./slots";
+import type { StillRunning } from "./still-running";
 
 /** The `/rc` server's side of this loop's sessions (ServeHandle.live). */
 export type LiveTurnFeed = ServeHandle["live"];
@@ -65,8 +66,8 @@ export interface AppDeps {
         openNew(): Promise<SessionSlot>;
         /** The Ctrl+S picker. */
         showSwitcher(): Promise<void>;
-        /** How many sessions other than the one on screen have a turn running. */
-        runningElsewhere(): number;
+        /** What quitting would stop: shells, running sessions, team threads. */
+        stillRunning(): StillRunning;
     };
     /** Whether the session these deps act on is the one on screen. Always
      * true for the app's own deps; a background turn's deps say no. */

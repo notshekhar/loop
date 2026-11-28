@@ -21,28 +21,9 @@ import {
     type ShellInfo,
 } from "./utils/shell-registry";
 import { DEFAULT_MAX_BYTES, formatSize } from "./utils/truncate";
-import {
-    DEFAULT_BASH_DENY,
-    denyPattern,
-    findDeniedCommand,
-    formatApprovalRefusal,
-    formatDenyRefusal,
-    isCommandAllowed,
-    suggestAllowPatterns,
-} from "./utils/command-deny";
-import {
-    evaluateBashRules,
-    formatAskUnavailableRefusal,
-    formatRuleDenyRefusal,
-    getPermissionRules,
-    isDangerousCommand,
-} from "./utils/permission-rules";
-import { findContextFileDeletion, formatContextFileRefusal } from "./utils/context-file-guard";
-import { getBashApprovalBridge } from "./approval-bridge";
+import { gateBashCommand } from "./utils/bash-gate";
 import { isPlanModeActive } from "./utils/plan-mode";
-import { getSetting, setSetting } from "../settings";
-import { canonicalProjectDir } from "../agent/trust";
-import { addProjectBashAllow, getProjectBashAllow } from "../sessions/projects";
+import { getSetting } from "../settings";
 import { sandbox, type SandboxConfig } from "@notshekhar/loop-sandbox";
 
 /**
@@ -366,88 +347,8 @@ Set run_in_background for a command that is not supposed to finish — a dev ser
                     );
                 }
             }
-            // Denylist guardrail: refuse blocked commands before anything runs.
-            // Read live so settings edits apply without a restart; an unset
-            // bashDeny falls back to the seeded defaults. Checked against the
-            // raw command (before commandPrefix) so the user's text is judged.
-            const denied = findDeniedCommand(command, getSetting("bashDeny") ?? DEFAULT_BASH_DENY);
-            if (denied) throw new Error(formatDenyRefusal(denied));
-
-            // Permission rules (settings `permissions` + trusted project files):
-            // deny > ask > allow, judged against the raw command like the
-            // denylist. Deny/ask match per executed segment; allow matches the
-            // whole string only, so an allowed prefix can't smuggle segments.
-            const rules = getPermissionRules(ctx.cwd);
-            const ruleVerdict = evaluateBashRules(command, rules);
-            const commandLabel = `\`${command.split("\n")[0].slice(0, 80)}\``;
-            if (ruleVerdict?.action === "deny") throw new Error(formatRuleDenyRefusal(commandLabel, ruleVerdict));
-
             const signal = options?.abortSignal ?? ctx.abortSignal;
-            const bridge = getBashApprovalBridge();
-            const projectDir = canonicalProjectDir(ctx.cwd);
-
-            // Remembered "always allow" grants: per-project (the approval
-            // prompt's persistence) plus the legacy global bashAllow list. A
-            // dangerous command (rm, git push, kill, …) never rides a
-            // remembered grant — it prompts again; only an explicit allow RULE
-            // in configuration approves it silently.
-            const grants = [
-                ...getProjectBashAllow(projectDir),
-                ...(getSetting("bashAllow") ?? []).map(denyPattern).filter((p) => p.length > 0),
-            ];
-            const remembered = isCommandAllowed(command, grants) && !isDangerousCommand(command);
-
-            // Show the approval prompt and apply the decision. "always"
-            // persists per-project allow grants; "never" persists the same
-            // patterns into the bashDeny guardrail.
-            const promptUser = async (title?: string): Promise<void> => {
-                if (!bridge) return; // no UI — callers gate on bridge first
-                const patterns = suggestAllowPatterns(command);
-                const decision = await bridge.confirm(
-                    { kind: "bash", command, cwd: ctx.cwd, patterns, title },
-                    { signal },
-                );
-                if (signal?.aborted) throw new Error("Command aborted");
-                if (decision === "never") {
-                    const denyList = (getSetting("bashDeny") ?? DEFAULT_BASH_DENY)
-                        .map(denyPattern)
-                        .filter((p) => p.length > 0);
-                    setSetting("bashDeny", [...denyList, ...patterns.filter((p) => !denyList.includes(p))]);
-                    throw new Error(formatApprovalRefusal(command));
-                }
-                if (decision === "deny") throw new Error(formatApprovalRefusal(command));
-                if (decision === "always" && patterns.length > 0) addProjectBashAllow(projectDir, patterns);
-            };
-
-            // Workspace context files (AGENTS.md / CLAUDE.md) are never
-            // deleted or moved on the model's initiative: prompt when
-            // interactive, fail closed otherwise. Remembered grants don't
-            // satisfy this (like other dangerous commands); only an explicit
-            // whole-command allow rule in configuration skips it.
-            const contextHit = ruleVerdict?.action !== "allow" ? findContextFileDeletion(command) : null;
-            if (contextHit) {
-                if (!bridge) throw new Error(formatContextFileRefusal(contextHit));
-                await promptUser(`deletes workspace context file ${contextHit.file}`);
-            } else if (ruleVerdict?.action === "ask") {
-                // An ask rule forces a prompt in every mode — even when the
-                // bashApprove setting is off. A remembered grant satisfies it
-                // (grok parity) unless the command is dangerous. Without an
-                // interactive bridge (print mode / RPC) it fails closed.
-                if (!remembered) {
-                    if (!bridge) throw new Error(formatAskUnavailableRefusal(commandLabel, ruleVerdict));
-                    await promptUser(`rule ${ruleVerdict.source} requires approval`);
-                }
-            } else if (ruleVerdict?.action !== "allow") {
-                // No rule matched: the opt-in bashApprove policy (default off)
-                // prompts for anything not remembered. Needs the interactive
-                // bridge — the setting is inert in print mode / RPC. Subagent
-                // bash goes through this same tool, so the safeguard covers
-                // delegation too.
-                if (getSetting("bashApprove") === true && bridge && !remembered) {
-                    await promptUser();
-                }
-            }
-            // ruleVerdict "allow": explicit configuration — skip all prompting.
+            await gateBashCommand(command, { cwd: ctx.cwd, signal });
             const output = new OutputAccumulator({ tempFilePrefix: "loop-bash" });
             // Named so promotion can detach it: the registry takes the stream
             // over, and two writers on one child duplicate every chunk.

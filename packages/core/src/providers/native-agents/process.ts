@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { ensureOwnProcessSweep } from "../../tools/utils/own-processes";
 import { accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -40,6 +41,13 @@ function isExecutable(path: string): boolean {
     } catch {
         return false;
     }
+}
+
+const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
+
+/** A CLI's output without its colour codes. */
+export function stripAnsi(text: string): string {
+    return text.replace(ANSI, "");
 }
 
 /**
@@ -87,6 +95,8 @@ export async function* spawnJsonLines(
         onSpawn?: (exited: Promise<void>) => void;
     },
 ): AsyncGenerator<Record<string, unknown>> {
+    // A native agent runs tools of its own; they must not outlive loop either.
+    ensureOwnProcessSweep();
     const child: ChildProcess = spawn(bin, [...args], {
         cwd: opts.cwd,
         env: process.env,

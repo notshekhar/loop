@@ -96,6 +96,7 @@ export {
     onShellChange,
     readShell,
     runningShellCount,
+    runningShellTotal,
     setShellPanelPresent,
     takeShellNotices,
     MAX_BACKGROUND_SHELLS,
@@ -111,6 +112,14 @@ export { getShellConfig, getShellEnv, killTrackedDetachedChildren } from "./util
 // Registering a shell the USER started (/shells run) — same registry, so the
 // agent can read a server its user launched.
 export { registerShell } from "./utils/shell-registry";
+// Everything else loop started (MCP and language servers, and what THEY
+// started), stopped on the way out.
+export {
+    ensureOwnProcessSweep,
+    snapshotOwnProcesses,
+    stopProcesses,
+    type OwnProcess,
+} from "./utils/own-processes";
 // Bash denylist guardrail — types + defaults for the /bashdeny management UI.
 export {
     DEFAULT_BASH_DENY,

@@ -192,7 +192,7 @@ function createSlots(
             agentExists(savedAgent) && (!isBuiltinAgent(savedAgent) || isHiddenAgent(savedAgent)) ? savedAgent : null,
         scrollbackFocus: false,
         pinnedInput: Boolean(settingsStore.get("pinnedInput")),
-        lastCtrlCAt: 0,
+        lastQuitPressAt: 0,
         timerEndsAt: null,
         timerLabel: "",
     };

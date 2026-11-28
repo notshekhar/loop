@@ -6,6 +6,7 @@
  * fresh results after an edit.
  */
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { ensureOwnProcessSweep } from "../../../tools/utils/own-processes";
 import { readFile } from "node:fs/promises";
 import { type Diagnostic, type JsonRpcMessage, type PublishDiagnosticsParams, pathToUri } from "./protocol";
 
@@ -63,6 +64,9 @@ export class LspClient {
 
     async start(): Promise<void> {
         if (this.proc) return;
+        // Several servers run their real work in a child of their own (tsserver
+        // under typescript-language-server); kill() only reaches the parent.
+        ensureOwnProcessSweep();
         const proc = spawn(this.spec.command, this.spec.args, {
             cwd: this.rootPath,
             stdio: ["pipe", "pipe", "pipe"],

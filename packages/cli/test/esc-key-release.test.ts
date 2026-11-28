@@ -15,7 +15,7 @@ function makeHarness() {
         modelId: "xai/grok-build-0.1",
         busy: true,
         abort: new AbortController(),
-        lastCtrlCAt: 0,
+        lastQuitPressAt: 0,
         agent: "default",
     };
     const editor: any = { focused: true, isShowingAutocomplete: () => false };

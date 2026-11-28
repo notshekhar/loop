@@ -37,7 +37,10 @@ export type LedgerSource =
     // A turn a thread team started (teams/): a member's first job, a message
     // from a teammate, a report reaching its lead. Turns the user starts in
     // the same session stay "turn", so /cost can tell the two apart.
-    | "team";
+    | "team"
+    // A chat imported from another agent (Claude Code, Codex, Cursor): its
+    // calls priced at the catalog's rates and dated when they happened.
+    | "import";
 
 export interface LedgerContext {
     source: LedgerSource;

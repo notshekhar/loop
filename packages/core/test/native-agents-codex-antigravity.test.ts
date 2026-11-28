@@ -1,20 +1,23 @@
 /**
- * Codex (`codex exec --json`) and Antigravity (`agy -p --output-format
+ * Codex (app-server protocol) and Antigravity (`agy -p --output-format
  * stream-json`) as native agents: what each CLI is told, and how what it
  * reports is read. The fixtures are the CLIs' real output (codex-cli 0.153,
- * agy 1.3), trimmed.
+ * agy 1.3), trimmed. The Codex turn itself runs end to end in
+ * native-agents-codex-app-server.test.ts.
  */
 import { describe, expect, test } from "bun:test";
 import {
     antigravityArgs,
-    codexArgs,
     codexEffort,
+    codexMcpConfig,
+    codexPolicy,
+    codexThreadParams,
     groupCursorModels,
     isNativeAgentProvider,
     parseAntigravityModels,
     parseCodexModels,
 } from "../src/providers/native-agents";
-import { mapAntigravityTool, mapCodexItem, unwrapShell } from "../src/providers/native-agents/tool-map";
+import { mapAntigravityTool, mapCodexItem, mapCodexPlan, unwrapShell } from "../src/providers/native-agents/tool-map";
 
 const ctx = { loopSessionId: "s1", cwd: "/repo", planMode: false, approvals: false };
 
@@ -59,42 +62,38 @@ describe("codex models", () => {
     });
 });
 
-describe("codex command line", () => {
-    test("a full-access turn reads the prompt from stdin", () => {
-        expect(codexArgs({ model: "gpt-5.6-sol", effort: "high", ctx })).toEqual([
-            "exec",
-            "--json",
-            "--skip-git-repo-check",
-            "-m",
-            "gpt-5.6-sol",
-            "-c",
-            'model_reasoning_effort="high"',
-            "--dangerously-bypass-approvals-and-sandbox",
-            "-",
-        ]);
+describe("codex thread settings", () => {
+    test("each loop mode maps to a sandbox and an approval policy", () => {
+        expect(codexPolicy(ctx)).toEqual({ sandbox: "danger-full-access", approvalPolicy: "never" });
+        expect(codexPolicy({ ...ctx, planMode: true })).toEqual({ sandbox: "read-only", approvalPolicy: "never" });
+        expect(codexPolicy({ ...ctx, approvals: true })).toEqual({ sandbox: "workspace-write", approvalPolicy: "untrusted" });
+        expect(codexPolicy(undefined)).toEqual({ sandbox: "read-only", approvalPolicy: "never" });
     });
 
-    test("a resumed turn names the session before the prompt", () => {
-        const args = codexArgs({ model: "m", resumeId: "abc", ctx });
-        expect(args.slice(0, 2)).toEqual(["exec", "resume"]);
-        expect(args.slice(-2)).toEqual(["abc", "-"]);
+    test("a utility call keeps no thread and gets no MCP servers", () => {
+        const params = codexThreadParams({
+            model: "m",
+            ctx: undefined,
+            instructions: "write a title",
+            mcp: [{ name: "gh", kind: "stdio", command: "gh-mcp", args: [], deniedTools: [] }],
+        });
+        expect(params).toMatchObject({ model: "m", ephemeral: true, developerInstructions: "write a title" });
+        expect(params.config).toBeUndefined();
     });
 
-    test("plan mode is read-only; asking for approvals is the sandbox", () => {
-        expect(codexArgs({ model: "m", ctx: { ...ctx, planMode: true } })).toContain('sandbox_mode="read-only"');
-        const approvals = codexArgs({ model: "m", ctx: { ...ctx, approvals: true } });
-        expect(approvals).toContain('sandbox_mode="workspace-write"');
-        expect(approvals).not.toContain("--dangerously-bypass-approvals-and-sandbox");
-    });
-
-    test("a utility call keeps no session", () => {
-        const args = codexArgs({ model: "m" });
-        expect(args).toContain("--ephemeral");
-        expect(args).toContain('sandbox_mode="read-only"');
-    });
-
-    test("images are attached as files", () => {
-        expect(codexArgs({ model: "m", ctx, images: ["/tmp/a.png"] })).toContain("/tmp/a.png");
+    test("loop's MCP servers become mcp_servers config, denied tools disabled", () => {
+        expect(
+            codexMcpConfig([
+                { name: "gh", kind: "stdio", command: "gh-mcp", args: ["--x"], env: { T: "1" }, deniedTools: ["delete_repo"] },
+                { name: "docs", kind: "http", url: "https://d.example/mcp", headers: { A: "b" }, deniedTools: [] },
+            ]),
+        ).toEqual({
+            mcp_servers: {
+                gh: { command: "gh-mcp", args: ["--x"], env: { T: "1" }, disabled_tools: ["delete_repo"] },
+                docs: { url: "https://d.example/mcp", http_headers: { A: "b" } },
+            },
+        });
+        expect(codexMcpConfig([])).toBeUndefined();
     });
 });
 
@@ -102,40 +101,55 @@ describe("codex items as loop tools", () => {
     test("a command is bash, without the shell wrapper", () => {
         const mapped = mapCodexItem({
             id: "item_0",
-            type: "command_execution",
+            type: "commandExecution",
             command: `/bin/zsh -lc "sed -n '1,20p' note.txt"`,
-            aggregated_output: "hello\n",
-            exit_code: 0,
+            aggregatedOutput: "hello\n",
+            exitCode: 0,
             status: "completed",
         });
         expect(mapped).toMatchObject({ name: "bash", input: { command: "sed -n '1,20p' note.txt" }, result: "hello\n", isError: false });
     });
 
-    test("a failing command is an error with its exit code", () => {
-        const mapped = mapCodexItem({ type: "command_execution", command: "false", aggregated_output: "", exit_code: 1, status: "failed" });
-        expect(mapped.isError).toBe(true);
-        expect(mapped.result).toContain("[exit 1]");
+    test("a failing or declined command is an error", () => {
+        const failed = mapCodexItem({ type: "commandExecution", command: "false", aggregatedOutput: "", exitCode: 1, status: "failed" });
+        expect(failed?.isError).toBe(true);
+        expect(failed?.result).toContain("[exit 1]");
+        const declined = mapCodexItem({ type: "commandExecution", command: "rm x", aggregatedOutput: null, exitCode: null, status: "declined" });
+        expect(declined).toMatchObject({ isError: true, result: "\n[declined by the user]" });
     });
 
-    test("one changed file is an edit (or a write when added); several are one patch", () => {
-        expect(mapCodexItem({ type: "file_change", changes: [{ path: "/r/a.ts", kind: "update" }], status: "completed" })).toMatchObject({
-            name: "edit",
-            input: { path: "/r/a.ts" },
-        });
-        expect(mapCodexItem({ type: "file_change", changes: [{ path: "/r/b.ts", kind: "add" }] }).name).toBe("write");
+    test("one changed file is an edit (or a write when added) showing its diff; several are one patch", () => {
         expect(
-            mapCodexItem({ type: "file_change", changes: [{ path: "a", kind: "add" }, { path: "b", kind: "delete" }] }).name,
+            mapCodexItem({ type: "fileChange", changes: [{ path: "/r/a.ts", kind: { type: "update", move_path: null }, diff: "-a\n+b" }], status: "completed" }),
+        ).toMatchObject({ name: "edit", input: { path: "/r/a.ts" }, result: "-a\n+b" });
+        expect(mapCodexItem({ type: "fileChange", changes: [{ path: "/r/b.ts", kind: { type: "add" }, diff: "" }] })?.name).toBe("write");
+        expect(
+            mapCodexItem({ type: "fileChange", changes: [{ path: "a", kind: { type: "add" } }, { path: "b", kind: { type: "delete" } }] })?.name,
         ).toBe("apply_patch");
     });
 
-    test("mcp calls keep the server__tool shape; todos become loop's list", () => {
-        expect(mapCodexItem({ type: "mcp_tool_call", server: "gh", tool: "search", arguments: { q: "x" } }).name).toBe("gh__search");
-        expect(mapCodexItem({ type: "todo_list", items: [{ text: "a", completed: true }, { text: "b", completed: false }] }).input).toEqual({
+    test("mcp calls keep the server__tool shape; the plan becomes loop's todo list", () => {
+        expect(mapCodexItem({ type: "mcpToolCall", server: "gh", tool: "search", arguments: { q: "x" }, status: "completed" })?.name).toBe(
+            "gh__search",
+        );
+        expect(
+            mapCodexPlan([
+                { step: "a", status: "completed" },
+                { step: "b", status: "inProgress" },
+                { step: "c", status: "pending" },
+            ]).input,
+        ).toEqual({
             todos: [
                 { content: "a", status: "completed" },
-                { content: "b", status: "pending" },
+                { content: "b", status: "in_progress" },
+                { content: "c", status: "pending" },
             ],
         });
+    });
+
+    test("messages and reasoning are not tools", () => {
+        expect(mapCodexItem({ type: "agentMessage", id: "m", text: "hi" })).toBeUndefined();
+        expect(mapCodexItem({ type: "reasoning", id: "r", summary: [], content: [] })).toBeUndefined();
     });
 
     test("only a real shell wrapper is unwrapped", () => {

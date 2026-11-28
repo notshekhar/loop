@@ -144,13 +144,25 @@ export function priceUsage(
  * machines with a different/missing catalog. An unknown model stays unstamped
  * (fall back to catalog pricing on read, exactly the pre-stamp behavior).
  */
+/**
+ * Providers whose usage block can carry the authoritative billed cost:
+ * openrouter (includes its fee), and Claude Code signed in with an API key
+ * (its own total for the turn, subagents included — see claude-code-events.ts;
+ * a subscription login reports nothing, so its turns stay at plan cost).
+ */
+const REPORTS_BILLED_COST = new Set(["openrouter", "claude-code"]);
+
+/** The provider-reported billed USD on a usage block, when it is trusted. */
+export function reportedCost(provider: string, usage: UsageBlock): number | undefined {
+    return REPORTS_BILLED_COST.has(provider) && typeof usage.cost === "number" ? usage.cost : undefined;
+}
+
 export function stampUsageCost(modelId: string, usage: UsageBlock): UsageBlock {
     const { provider } = parseModelId(modelId);
     const priced = priceUsage(modelId, usage);
-    // openrouter reports the authoritative billed cost on the block itself
-    // (includes their fee) — prefer it for the total, keep the catalog split
-    // as the informational breakdown when available.
-    const usd = provider === "openrouter" && typeof usage.cost === "number" ? usage.cost : priced?.usd;
+    // A reported cost is the truth for the total; the catalog split stays as
+    // the informational breakdown when available.
+    const usd = reportedCost(provider, usage) ?? priced?.usd;
     if (usd === undefined) return usage;
     return { ...usage, usd, ...(priced ? { usdDetails: priced.details } : {}) };
 }
@@ -183,8 +195,7 @@ export class CostTracker {
         // ran — trust it over re-pricing, which drifts with catalog changes
         // and shows $0 when the stamped model is unknown on this machine.
         if (typeof usage.usd === "number" && Number.isFinite(usage.usd)) return usage.usd;
-        if (typeof usage.cost === "number" && provider === "openrouter") return usage.cost;
-        return priceUsage(modelId, usage)?.usd ?? 0;
+        return reportedCost(provider, usage) ?? priceUsage(modelId, usage)?.usd ?? 0;
     }
 
     private accumulateSession(modelId: string, provider: string, usage: UsageBlock): number {
@@ -229,7 +240,7 @@ export class CostTracker {
                 model: modelId,
                 usage,
                 usd,
-                providerCost: provider === "openrouter" && typeof usage.cost === "number" ? usage.cost : undefined,
+                providerCost: reportedCost(provider, usage),
                 prices: priceSnapshot(modelId),
                 estimated,
                 ctx: { source: ctx.source ?? "turn", cwd: ctx.cwd, sessionPub: ctx.sessionPub },

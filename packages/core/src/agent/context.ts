@@ -25,7 +25,12 @@ export function findRepoRoot(start: string): string {
     }
 }
 
-export function loadWorkspaceContext(cwd: string): WorkspaceContext {
+/**
+ * `skip` names context files (as listed in CONTEXT_FILES) to leave out of the
+ * repo walk — the ones a native agent already loads by itself. The global
+ * files in loop's home are never skipped: no other agent reads those.
+ */
+export function loadWorkspaceContext(cwd: string, opts: { skip?: readonly string[] } = {}): WorkspaceContext {
     const root = findRepoRoot(cwd);
     const dirsToCheck = new Set<string>([root, cwd]);
     // walk cwd up to root, collecting any intermediate dir
@@ -38,7 +43,7 @@ export function loadWorkspaceContext(cwd: string): WorkspaceContext {
     // Global files first so they read as base rules; workspace files can refine them.
     const candidatePaths: string[] = [...GLOBAL_CONTEXT_FILES];
     for (const d of dirsToCheck) {
-        for (const rel of CONTEXT_FILES) candidatePaths.push(join(d, rel));
+        for (const rel of CONTEXT_FILES) if (!opts.skip?.includes(rel)) candidatePaths.push(join(d, rel));
     }
 
     const collected: string[] = [];

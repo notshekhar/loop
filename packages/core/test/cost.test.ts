@@ -206,6 +206,14 @@ describe("usd stamping", () => {
         expect(stampUsageCost("nope/not-a-model", u)).toBe(u);
     });
 
+    test("Claude Code's reported cost (an API-key login) is the billed total; other providers' stray cost isn't", () => {
+        expect(stampUsageCost("claude-code/sonnet", { ...usage(100, 10), cost: 0.42 }).usd).toBe(0.42);
+        expect(
+            new CostTracker({ persist: false }).add("claude-code/sonnet", { ...usage(100, 10), cost: 0.42 }).usd,
+        ).toBe(0.42);
+        expect(stampUsageCost("xai/grok-build-0.1", { ...usage(0, 0), cost: 9 }).usd).toBe(0);
+    });
+
     test("openrouter prefers the provider-reported cost for the total", () => {
         const stamped = stampUsageCost("openrouter/some-model", { ...usage(100, 10), cost: 0.42 });
         expect(stamped.usd).toBe(0.42);

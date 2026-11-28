@@ -14,6 +14,7 @@ import { readJsonl, readJsonlHead } from "./files";
 import { type ChatSource, type ChatSummary, type ImportedChat, matchId, type SourceRoots, titleFrom } from "./source";
 import { outputText, parseJsonish, translateToolCall } from "./tool-calls";
 import { parseTimestamp, TranscriptBuilder } from "./transcript";
+import { codexCalls } from "./usage";
 import { userPrompt } from "./user-text";
 
 interface CodexItem {
@@ -48,7 +49,9 @@ export function codexSource(roots: SourceRoots): ChatSource {
     const files = () => rolloutFiles(sessions).flatMap(describe);
     const inFolder = (cwd: string) => files().filter((f) => samePath(f.cwd, cwd));
     return {
+        id: "codex",
         label: "Codex",
+        pricing: { agent: "codex-cli", vendor: "openai" },
         list: (cwd) =>
             inFolder(cwd)
                 .flatMap(summarize)
@@ -102,7 +105,12 @@ function readChat(file: CodexFile): ImportedChat {
             addItem(builder, record.payload, record, parseTimestamp(record.timestamp));
         }
     }
-    return { id: file.id, title: titleFrom(records.map(promptOf).find(Boolean)), entries: builder.build() };
+    return {
+        id: file.id,
+        title: titleFrom(records.map(promptOf).find(Boolean)),
+        entries: builder.build(),
+        calls: codexCalls(records),
+    };
 }
 
 function addItem(builder: TranscriptBuilder, item: CodexItem, record: CodexRecord, ts?: number): void {

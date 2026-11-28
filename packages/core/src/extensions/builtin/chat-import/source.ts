@@ -5,6 +5,7 @@
  */
 import { homedir } from "node:os";
 import type { Entry } from "../../../types";
+import type { ImportedCall } from "./usage";
 
 /** One chat in a picker. */
 export interface ChatSummary {
@@ -21,11 +22,21 @@ export interface ImportedChat {
     id: string;
     title: string;
     entries: Entry[];
+    /** The API calls the chat made, as the source logged them; absent when it logs none (they are estimated). */
+    calls?: ImportedCall[];
 }
 
 export interface ChatSource {
+    /** Stable key an import is recorded under: "claude-code". */
+    readonly id: string;
     /** Shown in titles and notices: "Claude Code". */
     readonly label: string;
+    /**
+     * How its calls are priced and filed: the loop provider id that runs this
+     * agent (the ledger's provider), and the vendor its model names belong to
+     * (`anthropic` for `claude-opus-5-5`) when one does.
+     */
+    readonly pricing: { agent: string; vendor?: string };
     /** Chats recorded in `cwd`, newest first. */
     list(cwd: string): ChatSummary[];
     /**

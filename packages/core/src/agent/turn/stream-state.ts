@@ -157,7 +157,7 @@ export class TurnStreamState {
         if ((part as { finishReason?: string }).finishReason === "error") return;
         // Cost accrues per step, not at turn end — the footer updates live,
         // and an aborted turn keeps the cost of the steps that already ran.
-        const usage = (part as { usage?: UsageBlock }).usage;
+        const usage = withReportedCost(part as { usage?: UsageBlock; providerMetadata?: unknown });
         if (usage) {
             this.lastStepUsage = usage;
             const { breakdown } = this.billing.onStepUsage(usage);
@@ -199,4 +199,16 @@ export class TurnStreamState {
         if (this.recoverable(error)) this.streamError = error;
         else this.emitter.emit("error", error);
     }
+}
+
+/**
+ * A native agent that knows what its turn cost (Claude Code on an API key)
+ * says so in the step's provider metadata as `billedUsd`; it rides on the
+ * usage block as `cost`, where billing reads a provider-reported cost.
+ */
+function withReportedCost(part: { usage?: UsageBlock; providerMetadata?: unknown }): UsageBlock | undefined {
+    if (!part.usage) return undefined;
+    const meta = (part.providerMetadata ?? {}) as Record<string, { billedUsd?: unknown } | undefined>;
+    const billed = Object.values(meta).find((m) => typeof m?.billedUsd === "number")?.billedUsd as number | undefined;
+    return billed === undefined ? part.usage : { ...part.usage, cost: billed };
 }

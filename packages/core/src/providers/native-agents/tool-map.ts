@@ -123,65 +123,85 @@ export interface MappedCodexItem extends MappedTool {
 }
 
 /**
- * Codex reports its work as typed items (`command_execution`, `file_change`,
- * …) rather than named tool calls; each becomes the loop tool doing that job.
+ * Codex (app-server protocol) reports its work as typed thread items
+ * (`commandExecution`, `fileChange`, …) rather than named tool calls; each
+ * becomes the loop tool doing that job. Undefined for items that are not
+ * tools (messages, reasoning, the user's own message).
  */
-export function mapCodexItem(item: Rec): MappedCodexItem {
+export function mapCodexItem(item: Rec): MappedCodexItem | undefined {
+    const failed = item.status === "failed" || item.status === "declined";
     switch (item.type) {
-        case "command_execution": {
-            const exit = num(item.exit_code);
+        case "commandExecution": {
+            const exit = num(item.exitCode);
+            const declined = item.status === "declined" ? "\n[declined by the user]" : "";
             return {
                 name: "bash",
                 input: defined({ command: unwrapShell(str(item.command) ?? "") }),
-                result: `${str(item.aggregated_output) ?? ""}${exit ? `\n[exit ${exit}]` : ""}`,
-                isError: (exit !== undefined && exit !== 0) || item.status === "failed",
+                result: `${str(item.aggregatedOutput) ?? ""}${exit ? `\n[exit ${exit}]` : ""}${declined}`,
+                isError: (exit !== undefined && exit !== null && exit !== 0) || failed,
             };
         }
-        case "file_change": {
-            const changes = (Array.isArray(item.changes) ? item.changes : []) as Rec[];
-            const paths = changes.map((c) => str(c.path)).filter((p): p is string => Boolean(p));
-            const failed = item.status === "failed";
-            // One file reads as an edit of it; several as one patch naming each.
-            if (paths.length === 1) {
-                const kind = str(changes[0].kind);
-                return {
-                    name: kind === "add" ? "write" : "edit",
-                    input: { path: paths[0] },
-                    result: failed ? "patch failed" : `${kind ?? "update"} ${paths[0]}`,
-                    isError: failed,
-                };
-            }
-            return {
-                name: "apply_patch",
-                input: { files: changes.map((c) => ({ path: str(c.path), kind: str(c.kind) })) },
-                result: failed ? "patch failed" : changes.map((c) => `${str(c.kind) ?? "update"} ${str(c.path)}`).join("\n"),
-                isError: failed,
-            };
-        }
-        case "mcp_tool_call": {
-            const error = (item.error as Rec | undefined)?.message;
+        case "fileChange":
+            return mapCodexFileChange((Array.isArray(item.changes) ? item.changes : []) as Rec[], failed, item.status === "declined");
+        case "mcpToolCall": {
+            const error = str((item.error as Rec | null | undefined)?.message);
+            const content = (item.result as Rec | null | undefined)?.content;
             return {
                 name: `${str(item.server) ?? "mcp"}__${str(item.tool) ?? "tool"}`,
                 input: item.arguments ?? {},
-                result: error ?? item.result ?? "",
-                isError: error !== undefined || item.status === "failed",
+                result: error ?? content ?? "",
+                isError: error !== undefined || failed,
             };
         }
-        case "web_search":
-            return { name: "websearch", input: defined({ query: str(item.query) }), result: "" };
-        case "todo_list": {
-            const items = (Array.isArray(item.items) ? item.items : []) as Rec[];
+        case "dynamicToolCall":
             return {
-                name: "todo",
-                input: {
-                    todos: items.map((t) => ({ content: str(t.text) ?? "", status: t.completed === true ? "completed" : "pending" })),
-                },
-                result: "",
+                name: str(item.tool) ?? "tool",
+                input: item.arguments ?? {},
+                result: item.contentItems ?? "",
+                isError: item.success === false || failed,
             };
-        }
+        case "webSearch":
+            return { name: "websearch", input: defined({ query: str(item.query) }), result: item.results ?? "" };
+        case "imageView":
+            return { name: "read", input: defined({ path: str(item.path) }), result: "" };
+        case "collabAgentToolCall":
+            return {
+                name: "task",
+                input: defined({ description: str(item.tool), prompt: str(item.prompt) }),
+                result: "",
+                isError: failed,
+            };
         default:
-            return { name: str(item.type) ?? "tool", input: item, result: "" };
+            return undefined;
     }
+}
+
+/** One file reads as an edit of it (a write when added); several as one patch naming each. */
+function mapCodexFileChange(changes: Rec[], failed: boolean, declined: boolean): MappedCodexItem {
+    const kindOf = (c: Rec) => str((c.kind as Rec | undefined)?.type) ?? "update";
+    const outcome = declined ? "declined by the user" : "patch failed";
+    if (changes.length === 1) {
+        const c = changes[0];
+        return {
+            name: kindOf(c) === "add" ? "write" : "edit",
+            input: { path: str(c.path) },
+            result: failed ? outcome : str(c.diff) || `${kindOf(c)} ${str(c.path)}`,
+            isError: failed,
+        };
+    }
+    return {
+        name: "apply_patch",
+        input: { files: changes.map((c) => ({ path: str(c.path), kind: kindOf(c) })) },
+        result: failed ? outcome : changes.map((c) => `${kindOf(c)} ${str(c.path)}`).join("\n"),
+        isError: failed,
+    };
+}
+
+/** Codex's plan (`turn/plan/updated`) as loop's todo list. */
+export function mapCodexPlan(plan: unknown): MappedTool {
+    const steps = (Array.isArray(plan) ? plan : []) as Rec[];
+    const status = (s: unknown) => (s === "completed" ? "completed" : s === "inProgress" ? "in_progress" : "pending");
+    return { name: "todo", input: { todos: steps.map((t) => ({ content: str(t.step) ?? "", status: status(t.status) })) } };
 }
 
 /** `/bin/zsh -lc "ls -la"` → `ls -la`: Codex reports the shell wrapper it ran. */

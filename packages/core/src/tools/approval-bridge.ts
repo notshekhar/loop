@@ -6,12 +6,18 @@
  * there (ask permission rules fail closed with a refusal instead).
  *
  * One bridge serves every prompt kind — bash commands (the original
- * bashApprove flow), path-rule prompts on file tools, and the plan-mode
- * entry/exit confirmations — distinguished by `kind` so the UI can word each
- * one.
+ * bashApprove flow), path-rule prompts on file tools, the plan-mode
+ * entry/exit confirmations, and a native agent's own tools (Claude Code's
+ * Edit, WebFetch, MCP calls…) — distinguished by `kind` so the UI can word
+ * each one.
  */
 
-export type ApprovalKind = "bash" | "path" | "plan" | "exit-plan";
+/**
+ * "tool": a native agent's tool call. Its `patterns` are the agent's own
+ * permission rules (`Edit(src/**)`), which the AGENT remembers on
+ * always/never — loop persists nothing for this kind.
+ */
+export type ApprovalKind = "bash" | "path" | "plan" | "exit-plan" | "tool";
 
 export interface BashApprovalRequest {
     /** What kind of approval this is; absent = "bash" (pre-kind callers). */

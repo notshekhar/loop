@@ -10,9 +10,9 @@ import type {
     LanguageModelV4StreamResult,
     LanguageModelV4Usage,
 } from "@ai-sdk/provider";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir } from "../../brand";
+import { readJsonFile, updateJsonFile } from "./json-store";
 
 /**
  * Native-agent providers: Claude Code, Cursor, Codex and Antigravity run their OWN agent loop
@@ -27,6 +27,19 @@ export const NATIVE_AGENT_PROVIDERS: readonly NativeAgentProviderId[] = ["claude
 export function isNativeAgentProvider(provider: string): provider is NativeAgentProviderId {
     return (NATIVE_AGENT_PROVIDERS as readonly string[]).includes(provider);
 }
+
+/**
+ * The workspace context files each CLI already loads by itself from the repo,
+ * so loop's prompt for it leaves them out instead of sending them twice.
+ * Claude Code reads CLAUDE.md, not AGENTS.md; Codex reads AGENTS.md; Cursor
+ * reads both. Antigravity's rules are its own, so it gets every file.
+ */
+export const NATIVE_CONTEXT_FILES: Record<NativeAgentProviderId, readonly string[]> = {
+    "claude-code": ["CLAUDE.md"],
+    "codex-cli": ["AGENTS.md"],
+    "cursor-agent": ["AGENTS.md", "CLAUDE.md"],
+    antigravity: [],
+};
 
 /**
  * Per-turn context loop hands the provider through providerOptions[provider]
@@ -67,44 +80,67 @@ interface SessionLink {
     nativeId: string;
     /** Non-system prompt messages the native session had seen when it last ran. */
     seen: number;
-    model: string;
     updatedAt: number;
 }
 
-const LINKS_FILE = () => join(getConfigDir(), "native-agent-sessions.json");
-let linksCache: Record<string, SessionLink> | undefined;
+type Links = Record<string, SessionLink>;
 
-function readLinks(): Record<string, SessionLink> {
-    if (linksCache) return linksCache;
-    try {
-        linksCache = JSON.parse(readFileSync(LINKS_FILE(), "utf8")) as Record<string, SessionLink>;
-    } catch {
-        linksCache = {};
-    }
-    return linksCache;
-}
+const LINKS_FILE = () => join(getConfigDir(), "native-agent-sessions.json");
+/** Keep the file bounded: the most recently used links win. */
+const MAX_LINKS = 500;
 
 const linkKey = (provider: NativeAgentProviderId, loopSessionId: string) => `${provider}:${loopSessionId}`;
 
+// Read from disk on every turn, never from a copy: another loop process (a
+// second terminal on the same session, /refresh) may have moved the link on.
 export function getSessionLink(provider: NativeAgentProviderId, loopSessionId: string): SessionLink | undefined {
-    return readLinks()[linkKey(provider, loopSessionId)];
+    return readJsonFile<Links>(LINKS_FILE())[linkKey(provider, loopSessionId)];
 }
 
 export function setSessionLink(provider: NativeAgentProviderId, loopSessionId: string, link: SessionLink): void {
-    const links = readLinks();
-    links[linkKey(provider, loopSessionId)] = link;
-    // Bound the file: keep the 500 most recently used links.
-    const entries = Object.entries(links).sort((a, b) => b[1].updatedAt - a[1].updatedAt);
-    linksCache = Object.fromEntries(entries.slice(0, 500));
-    try {
-        const dir = getConfigDir();
-        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-        const tmp = `${LINKS_FILE()}.${process.pid}.tmp`;
-        writeFileSync(tmp, JSON.stringify(linksCache, null, 2), { mode: 0o600 });
-        renameSync(tmp, LINKS_FILE());
-    } catch {
-        /* a lost link only costs a re-seed next turn */
-    }
+    updateJsonFile<Links>(
+        LINKS_FILE(),
+        (links) => {
+            const entries = Object.entries({ ...links, [linkKey(provider, loopSessionId)]: link });
+            entries.sort((a, b) => b[1].updatedAt - a[1].updatedAt);
+            return Object.fromEntries(entries.slice(0, MAX_LINKS));
+        },
+        // Session ids are private: a link lets anyone resume that native session.
+        { mode: 0o600 },
+    );
+}
+
+/** Record that `nativeId` now continues this loop session, having seen `seen` messages. */
+export function linkNativeSession(
+    provider: NativeAgentProviderId,
+    ctx: NativeAgentTurnContext | undefined,
+    nativeId: string,
+    seen: number,
+): void {
+    if (ctx) setSessionLink(provider, ctx.loopSessionId, { nativeId, seen, updatedAt: Date.now() });
+}
+
+/** What one native turn attempt reports: done, or "the session to resume is gone". */
+export type TurnOutcome = "done" | "missing-session";
+
+/**
+ * The shape every native provider's doStream shares: plan the prompt against
+ * the session link, run the turn, and when the native session turned out to
+ * be deleted or expired, run it once more as a fresh session seeded with
+ * loop's transcript.
+ */
+export function streamNativeTurn(
+    provider: NativeAgentProviderId,
+    options: LanguageModelV4CallOptions,
+    planOpts: { inlineSystem?: boolean },
+    runTurn: (ctx: NativeAgentTurnContext | undefined, plan: PromptPlan, enqueue: (part: LanguageModelV4StreamPart) => void) => Promise<TurnOutcome>,
+): LanguageModelV4StreamResult {
+    const ctx = readTurnContext(options, provider);
+    const link = ctx ? getSessionLink(provider, ctx.loopSessionId) : undefined;
+    return streamFrom(async (enqueue) => {
+        const outcome = await runTurn(ctx, planPrompt(options.prompt, link, planOpts), enqueue);
+        if (outcome === "missing-session") await runTurn(ctx, planPrompt(options.prompt, undefined, planOpts), enqueue);
+    });
 }
 
 // ---- prompt planning ---------------------------------------------------------
@@ -124,12 +160,22 @@ export interface PromptPlan {
  * Decide what the native agent must be told this turn.
  *
  * Resume when the messages since the native session last ran are exactly its
- * own reply (assistant/tool) followed by the new user message(s). Anything
- * else — another model answered in between, loop compacted or edited the
- * history, the link is missing — starts a fresh native session seeded with
- * loop's transcript, so the agent never loses context loop still shows.
+ * own reply (assistant/tool) followed by the new user message(s) — whichever
+ * of the provider's models ran it: each CLI switches models inside a session
+ * the way its own /model does. Anything else — another provider answered in
+ * between, loop compacted or edited the history, the link is missing — starts
+ * a fresh native session seeded with loop's transcript, so the agent never
+ * loses context loop still shows.
+ *
+ * `inlineSystem` is for CLIs with no system-prompt flag: loop's system prompt
+ * leads the first message of a fresh session (the agent keeps it in its own
+ * session after that, so a resumed turn doesn't repeat it).
  */
-export function planPrompt(prompt: LanguageModelV4Message[], link: SessionLink | undefined, model: string): PromptPlan {
+export function planPrompt(
+    prompt: LanguageModelV4Message[],
+    link: SessionLink | undefined,
+    opts: { inlineSystem?: boolean } = {},
+): PromptPlan {
     const msgs = prompt.filter((m) => m.role !== "system");
     let firstNew = msgs.length;
     while (firstNew > 0 && msgs[firstNew - 1].role === "user") firstNew--;
@@ -138,21 +184,26 @@ export function planPrompt(prompt: LanguageModelV4Message[], link: SessionLink |
 
     const resumable =
         link !== undefined &&
-        link.model === model &&
         link.seen <= firstNew &&
         msgs.slice(link.seen, firstNew).every((m) => m.role === "assistant" || m.role === "tool");
     if (resumable) return { resumeId: link.nativeId, text, images, seen: msgs.length };
 
+    const system = opts.inlineSystem ? systemPromptOf(prompt) : "";
     const history = msgs.slice(0, firstNew);
-    if (history.length === 0) return { text, images, seen: msgs.length };
-    return {
-        text:
-            "You are continuing a conversation that started before this session. " +
-            "The transcript so far is below; treat it as your own prior context.\n\n" +
-            `<conversation-so-far>\n${renderTranscript(history)}\n</conversation-so-far>\n\n${text}`,
-        images,
-        seen: msgs.length,
-    };
+    const seeded = history.length
+        ? "You are continuing a conversation that started before this session. " +
+          "The transcript so far is below; treat it as your own prior context.\n\n" +
+          `<conversation-so-far>\n${renderTranscript(history)}\n</conversation-so-far>\n\n${text}`
+        : text;
+    return { text: system ? `${system}\n\n${seeded}` : seeded, images, seen: msgs.length };
+}
+
+/** Loop's system prompt for this call: every system message, in order. */
+export function systemPromptOf(prompt: LanguageModelV4Message[]): string {
+    return prompt
+        .filter((m) => m.role === "system")
+        .map((m) => m.content as string)
+        .join("\n\n");
 }
 
 const SEED_LIMIT = 200_000;

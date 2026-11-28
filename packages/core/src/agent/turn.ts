@@ -29,6 +29,7 @@ import {
 import { assembleTurnTools } from "./turn/tools";
 import { foldIntoCodeTool, isCodeModeOn } from "./turn/code-mode";
 import { buildTurnSystemPrompt, notePrefixChange } from "./turn/system-prompt";
+import { buildNativeAgentPrompt, forwardNativeProgress } from "./turn/native-agent";
 import {
     compactBeforeFirstStep,
     commitRequestedBoundary,
@@ -139,7 +140,13 @@ async function runTurnInner(opts: RunTurnOptions): Promise<void> {
         turnContext: turn.turnContext,
     });
 
-    const state = await streamTurn(opts, turn, createMessageBuilder(opts.session, attachments, injected));
+    const stopProgress = turn.ownsContext ? forwardNativeProgress(opts.session.id, opts.emitter) : undefined;
+    let state: Awaited<ReturnType<typeof streamTurn>>;
+    try {
+        state = await streamTurn(opts, turn, createMessageBuilder(opts.session, attachments, injected));
+    } finally {
+        stopProgress?.();
+    }
 
     scheduleTurnRecap(opts, state.assistantText, state.toolsUsed);
     scheduleIdleCompaction({
@@ -199,8 +206,11 @@ async function prepareTurn(opts: RunTurnOptions): Promise<PreparedTurn> {
         : hooked;
     // Extension middleware may transform the system prompt, scoped by ctx.agent.
     // The prompt still names every tool: in Code Mode they are called from scripts.
+    const ownsContext = isNativeAgentProvider(provider);
     const system = await applySystemPrompt(
-        buildTurnSystemPrompt(toolsForTurn, { ...project, cwd, agentPrompt: assembled.agentPrompt, codeMode }),
+        ownsContext
+            ? buildNativeAgentPrompt(provider, cwd, project)
+            : buildTurnSystemPrompt(toolsForTurn, { ...project, cwd, agentPrompt: assembled.agentPrompt, codeMode }),
         turnContext,
     );
     notePrefixChange(session.id, system, tools);
@@ -225,7 +235,7 @@ async function prepareTurn(opts: RunTurnOptions): Promise<PreparedTurn> {
             overheadTokens: estimateOverheadTokens(system, tools),
             threshold: getSetting("autoCompactThreshold") ?? DEFAULT_AUTO_COMPACT_THRESHOLD,
         },
-        ownsContext: isNativeAgentProvider(provider),
+        ownsContext,
     };
 }
 

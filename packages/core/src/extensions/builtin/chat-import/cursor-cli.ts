@@ -56,7 +56,10 @@ export function cursorCliSource(roots: SourceRoots): ChatSource {
     const inFolder = (cwd: string) => chatDirs(join(chats, cursorFolderHash(cwd)));
     const everywhere = () => (existsSync(chats) ? readdirSync(chats).flatMap((d) => chatDirs(join(chats, d))) : []);
     return {
+        id: "cursor",
         label: "Cursor CLI",
+        // Cursor records no model: its calls are estimated and priced at loop's current one.
+        pricing: { agent: "cursor-agent" },
         list: (cwd) =>
             inFolder(cwd)
                 .flatMap(summarize)

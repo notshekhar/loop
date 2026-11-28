@@ -162,6 +162,17 @@ CREATE TABLE IF NOT EXISTS team_member_runs (
     created_at  INTEGER NOT NULL
 );
 
+-- Chats brought in from other agents (sessions/chat-imports.ts): which loop
+-- session each became, so the same chat is never imported — or billed to the
+-- ledger — twice. A new table, so no schema_version bump.
+CREATE TABLE IF NOT EXISTS imported_chats (
+    source      TEXT NOT NULL,
+    chat_id     TEXT NOT NULL,
+    session_pub TEXT NOT NULL,
+    imported_at INTEGER NOT NULL,
+    PRIMARY KEY (source, chat_id)
+);
+
 -- Notes a session keeps for later (sessions/notes.ts). Per session, never
 -- global; a new table so no schema_version bump, as with the teams tables.
 CREATE TABLE IF NOT EXISTS session_notes (

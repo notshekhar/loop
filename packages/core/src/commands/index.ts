@@ -18,7 +18,13 @@ import {
 import { appCommands, configCommands, gatewaysCommand, soundCommand } from "./builtins/settings";
 import { registerPromptCommands, registerSkillCommands } from "./builtins/skills-and-prompts";
 
-export { CommandRegistry, type CommandContext, type ImportPreview, type SlashCommand } from "./registry";
+export {
+    CommandRegistry,
+    type CommandContext,
+    type ImportCostEstimate,
+    type ImportPreview,
+    type SlashCommand,
+} from "./registry";
 export { INIT_PROMPT } from "./builtins/info";
 export { registerAliasCommand } from "./builtins/alias";
 export { registerAgentCommand } from "./builtins/agent-commands";

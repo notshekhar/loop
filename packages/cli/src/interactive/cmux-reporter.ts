@@ -116,7 +116,7 @@ export interface CmuxSessionRef {
 /** One approval, in cmux's terms rather than the TUI's. */
 export interface CmuxApprovalRequest {
     /** "exit-plan" becomes an ExitPlanMode card; everything else a permission card. */
-    kind: "bash" | "path" | "plan" | "exit-plan";
+    kind: "bash" | "path" | "plan" | "exit-plan" | "tool";
     /** Tool the approval is for ("bash", "write", …) — the card's title. */
     toolName: string;
     /** The command / path / plan the user is being asked about. */
